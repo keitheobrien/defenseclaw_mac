@@ -42,6 +42,8 @@ struct MainWindow: View {
         .overlay(alignment: .top) {
             if let err = appState.lastGatewayError, case .unauthorized = err {
                 tokenBanner
+            } else if appState.availableUpdate != nil, !appState.updateBannerDismissed {
+                updateBanner
             }
         }
         .sheet(isPresented: .constant(!appState.installDetected)) {
@@ -88,6 +90,48 @@ struct MainWindow: View {
         case .aiDiscovery: AIDiscoveryView()
         case .registries: RegistriesView()
         case .setup: SetupView()
+        }
+    }
+
+    private var updateBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "arrow.down.circle.fill")
+            VStack(alignment: .leading, spacing: 1) {
+                Text("DefenseClaw for macOS \(appState.availableUpdate?.tag ?? "") is available")
+                    .font(.callout.weight(.semibold))
+                Text(upgradeStatusText)
+                    .font(.caption2)
+                    .opacity(0.85)
+            }
+            switch appState.upgradeState {
+            case .downloading, .installing:
+                ProgressView().controlSize(.small).padding(.leading, 4)
+            default:
+                Button("Upgrade & Restart") { appState.performUpgrade() }
+                    .controlSize(.small)
+                    .keyboardShortcut("u", modifiers: [.command, .shift])
+                if let url = appState.availableUpdate.flatMap({ URL(string: $0.htmlURL) }) {
+                    Link("Release notes", destination: url)
+                        .font(.caption)
+                }
+                Button { appState.updateBannerDismissed = true } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+        .padding(10)
+        .background(Cisco.blue.opacity(0.95), in: RoundedRectangle(cornerRadius: 8))
+        .foregroundStyle(.white)
+        .padding(.top, 6)
+    }
+
+    private var upgradeStatusText: String {
+        switch appState.upgradeState {
+        case .idle, .checking: "Current version: \(UpdateChecker.currentVersion) — ⌘⇧U to upgrade and restart"
+        case .downloading: "Downloading release…"
+        case .installing: "Installing and restarting…"
+        case .failed(let why): "Upgrade failed: \(why)"
         }
     }
 

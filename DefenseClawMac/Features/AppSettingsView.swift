@@ -20,6 +20,7 @@ struct AppSettingsView: View {
 }
 
 private struct GeneralSettings: View {
+    @Environment(AppState.self) private var appState
     @AppStorage("showDockIcon") private var showDockIcon = true
     @AppStorage("hideOnClose") private var hideOnClose = true
     @AppStorage("hideOnMinimize") private var hideOnMinimize = true
@@ -44,6 +45,32 @@ private struct GeneralSettings: View {
                         launchAtLogin = SMAppService.mainApp.status == .enabled
                     }
                 }
+
+            Section("Updates") {
+                LabeledContent("Installed version", value: UpdateChecker.currentVersion)
+                if let update = appState.availableUpdate {
+                    LabeledContent("Available", value: update.tag)
+                    HStack {
+                        Button("Upgrade & Restart") { appState.performUpgrade() }
+                        switch appState.upgradeState {
+                        case .downloading: Text("Downloading…").font(.caption).foregroundStyle(.secondary)
+                        case .installing: Text("Installing…").font(.caption).foregroundStyle(.secondary)
+                        case .failed(let why): Text(why).font(.caption).foregroundStyle(Cisco.red)
+                        default: EmptyView()
+                        }
+                    }
+                } else {
+                    HStack {
+                        Button(appState.upgradeState == .checking ? "Checking…" : "Check for Updates") {
+                            Task { await appState.checkForUpdates(force: true) }
+                        }
+                        .disabled(appState.upgradeState == .checking)
+                        Text("Up to date — checks GitHub Releases every 6 hours.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
             Text("The menu bar shield is always available while DefenseClaw is running.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
