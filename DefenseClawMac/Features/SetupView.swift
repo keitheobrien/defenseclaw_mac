@@ -39,6 +39,10 @@ struct WizardDefinition: Identifiable {
     var commandMap: [String: String] = [:]
     /// Append --yes (only where the CLI supports -y/--yes).
     var appendYes: Bool = false
+    /// Append --non-interactive (setup llm / guardrail style commands, which
+    /// otherwise treat flags as prompt pre-fills and still prompt — aborting
+    /// without a TTY).
+    var appendNonInteractive: Bool = false
     /// True for subcommands with no flags — they only run as interactive
     /// terminal wizards, so the sheet offers Copy Command instead of Apply.
     var interactiveOnly: Bool = false
@@ -94,6 +98,7 @@ enum Wizards {
             id: "llm", title: "LLM", icon: "brain",
             blurb: "Configure the unified top-level llm: block (judge/analyzer model).",
             baseArgs: ["setup", "llm"],
+            appendNonInteractive: true,
             fields: [
                 WizardField(key: "provider", label: "Provider",
                             kind: .choice(options: llmProviders), defaultValue: "anthropic"),
@@ -118,6 +123,7 @@ enum Wizards {
             id: "guardrail", title: "Guardrail", icon: "shield.checkered",
             blurb: "Configure the LLM guardrail: mode, scanners, detection strategy, judge.",
             baseArgs: ["setup", "guardrail"],
+            appendNonInteractive: true,
             fields: [
                 WizardField(key: "connector", label: "Connector",
                             kind: .choice(options: connectors), defaultValue: "claudecode",
@@ -298,6 +304,7 @@ struct WizardSheet: View {
             }
         }
         if wizard.appendYes { args.append("--yes") }
+        if wizard.appendNonInteractive { args.append("--non-interactive") }
         return args
     }
 
