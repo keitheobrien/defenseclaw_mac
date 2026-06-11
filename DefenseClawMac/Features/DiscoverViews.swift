@@ -50,17 +50,36 @@ struct InventoryView: View {
             }
             if filtered.isEmpty {
                 DCEmptyState(
-                    title: "No \(category.rawValue.lowercased()) inventoried",
-                    message: "Run a scan to inventory local AI assets. Scans run on the gateway (POST /v1/skill/scan, /v1/mcp/scan) and respect privacy/redaction settings.",
+                    title: scanning ? "Scanning…" : "No \(category.rawValue.lowercased()) inventoried",
+                    message: scanning
+                        ? "Running `defenseclaw aibom scan` across every active connector."
+                        : "Inventory comes from `defenseclaw aibom scan --json` — the same per-connector bill of materials the TUI shows. Use Rescan to run it.",
                     systemImage: "shippingbox"
                 )
                 .frame(maxHeight: .infinity)
             } else {
                 Table(filtered) {
                     TableColumn("Name", value: \.name)
-                    TableColumn("Version", value: \.version).width(90)
-                    TableColumn("Path") { item in
-                        Text(item.path).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                    TableColumn("Version", value: \.version).width(70)
+                    TableColumn("Connector") { item in
+                        Text(item.connector.isEmpty ? "—" : item.connector)
+                            .font(.caption)
+                            .foregroundStyle(Cisco.blue)
+                    }
+                    .width(90)
+                    TableColumn("Verdict") { item in
+                        if item.verdict.isEmpty || item.verdict == "unscanned" {
+                            Text(item.verdict.isEmpty ? "—" : item.verdict)
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        } else {
+                            StatePill(raw: item.verdict)
+                        }
+                    }
+                    .width(100)
+                    TableColumn("Path / Source") { item in
+                        Text(item.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                            .font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
                     }
                     TableColumn("Detail") { item in
                         Text(item.detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -76,61 +95,115 @@ struct InventoryView: View {
                 } label: {
                     Label("Rescan All", systemImage: "arrow.triangle.2.circlepath")
                 }
-                .disabled(scanning || !appState.gatewayReachable)
+                .disabled(scanning)
             }
         }
-        .task { await loadFromGateway() }
-        .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in Task { await loadFromGateway() } }
+        .task { if items.isEmpty { scan() } }
+        .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in scan() }
     }
 
-    /// Inventory view-model: catalog endpoints provide the inventory rows;
-    /// scan endpoints refresh what the gateway knows about local assets.
-    private func loadFromGateway() async {
-        guard appState.gatewayReachable else { return }
-        var collected: [InventoryItem] = []
-        if let skills = try? await appState.gateway.skills() {
-            collected += skills.map {
-                InventoryItem(category: .skills, name: $0.name, version: $0.version, path: $0.source, detail: $0.enabled ? "enabled" : "disabled")
-            }
-        }
-        if let mcps = try? await appState.gateway.mcps() {
-            collected += mcps.map {
-                InventoryItem(category: .mcps, name: $0.name, version: $0.version, path: $0.endpoint, detail: $0.transport)
-            }
-        }
-        if let plugins = try? await appState.gateway.plugins() {
-            collected += plugins.map {
-                InventoryItem(category: .plugins, name: $0.name, version: $0.version, path: "", detail: $0.category)
-            }
-        }
-        if let components = try? await appState.gateway.aiComponents() {
-            collected += components.map {
-                InventoryItem(category: .agents, name: "\($0.ecosystem)/\($0.name)", version: $0.version,
-                              path: $0.locations.first ?? "", detail: "\(Int($0.confidence * 100))% · \($0.state)")
-            }
-            collected += components.filter { $0.ecosystem.lowercased().contains("provider") }.map {
-                InventoryItem(category: .providers, name: $0.name, version: $0.version, path: "", detail: $0.state)
-            }
-        }
-        items = collected
-    }
-
+    /// The TUI's Inventory data source: `defenseclaw aibom scan --json` emits
+    /// one document per active connector with skills / plugins / mcp / agents /
+    /// model_providers / memory arrays (each row carrying scan verdicts).
     private func scan() {
+        guard !scanning else { return }
         scanning = true
         appState.scanInFlight = true
         error = nil
         Task {
-            do {
-                try await appState.gateway.scanSkills()
-                try await appState.gateway.scanMCPs()
-                try await appState.gateway.aiScan()
-                lastScan = Date()
-                await loadFromGateway()
-            } catch {
-                self.error = "Scan failed: \(error.localizedDescription)"
+            let result = await appState.cli.run(arguments: ["aibom", "scan", "--json"])
+            defer {
+                scanning = false
+                appState.scanInFlight = false
             }
-            scanning = false
-            appState.scanInFlight = false
+            guard result.succeeded,
+                  let jsonStart = result.output.firstIndex(of: "["),
+                  let data = String(result.output[jsonStart...]).data(using: .utf8),
+                  let docs = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+            else {
+                error = result.succeeded
+                    ? "Could not parse `aibom scan --json` output."
+                    : "aibom scan failed (exit \(result.exitCode)). \(String(result.output.suffix(200)))"
+                return
+            }
+            items = docs.flatMap(Self.rows(from:))
+            lastScan = Date()
+        }
+    }
+
+    /// Map one per-connector aibom document into inventory rows.
+    private static func rows(from doc: [String: Any]) -> [InventoryItem] {
+        let connector = (doc["connector"] as? String) ?? ""
+
+        func str(_ r: [String: Any], _ keys: String...) -> String {
+            for key in keys {
+                if let v = r[key] as? String, !v.isEmpty { return v }
+            }
+            return ""
+        }
+        func verdict(_ r: [String: Any]) -> (verdict: String, detail: String) {
+            (str(r, "policy_verdict"), str(r, "policy_detail"))
+        }
+        func rows(_ key: String, _ category: InventoryCategory,
+                  _ map: ([String: Any]) -> InventoryItem) -> [InventoryItem] {
+            ((doc[key] as? [[String: Any]]) ?? []).map(map)
+        }
+
+        return rows("skills", .skills) { r in
+            let v = verdict(r)
+            let flags = [(r["eligible"] as? Bool) == true ? "eligible" : "not ready",
+                         (r["bundled"] as? Bool) == true ? "bundled" : ""]
+            return InventoryItem(
+                category: .skills, name: str(r, "id", "name"), version: str(r, "version"),
+                path: str(r, "path", "source"),
+                detail: (flags.filter { !$0.isEmpty } + [v.detail]).filter { !$0.isEmpty }.joined(separator: " · "),
+                connector: connector, verdict: v.verdict
+            )
+        }
+        + rows("plugins", .plugins) { r in
+            let v = verdict(r)
+            return InventoryItem(
+                category: .plugins, name: str(r, "name", "id"), version: str(r, "version"),
+                path: str(r, "path", "origin"),
+                detail: [str(r, "status"), v.detail].filter { !$0.isEmpty }.joined(separator: " · "),
+                connector: connector, verdict: v.verdict
+            )
+        }
+        + rows("mcp", .mcps) { r in
+            let v = verdict(r)
+            return InventoryItem(
+                category: .mcps, name: str(r, "id", "name"), version: "",
+                path: str(r, "command", "url"),
+                detail: [str(r, "source"), v.detail].filter { !$0.isEmpty }.joined(separator: " · "),
+                connector: connector, verdict: v.verdict
+            )
+        }
+        + rows("agents", .agents) { r in
+            let v = verdict(r)
+            return InventoryItem(
+                category: .agents, name: str(r, "id", "name"), version: str(r, "version"),
+                path: str(r, "path", "source"),
+                detail: [str(r, "description"), v.detail].filter { !$0.isEmpty }.joined(separator: " · "),
+                connector: connector, verdict: v.verdict
+            )
+        }
+        + rows("model_providers", .providers) { r in
+            InventoryItem(
+                category: .providers, name: str(r, "name", "id"), version: "",
+                path: str(r, "base_url"),
+                detail: [str(r, "source"),
+                         (r["api_key_present"] as? Bool) == true ? "key present" : "no key"]
+                    .filter { !$0.isEmpty }.joined(separator: " · "),
+                connector: connector
+            )
+        }
+        + rows("memory", .memories) { r in
+            InventoryItem(
+                category: .memories, name: str(r, "id", "name"), version: "",
+                path: str(r, "path", "source"),
+                detail: str(r, "description", "detail", "kind"),
+                connector: connector
+            )
         }
     }
 }
