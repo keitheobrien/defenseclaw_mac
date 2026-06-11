@@ -85,11 +85,31 @@ private struct MenuBarIcon: View {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var miniaturizeObserver: NSObjectProtocol?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Window state restoration replays a stale sidebar selection through the
         // List binding, desyncing highlight from content — start fresh instead.
         UserDefaults.standard.register(defaults: ["NSQuitAlwaysKeepsWindows": false])
         applyActivationPolicy()
+
+        // Hide-on-minimize: clicking the yellow button hides the app entirely —
+        // no Dock icon, no minimized-window tile — leaving only the menu bar
+        // shield running. Reopen via the menu bar's "Open DefenseClaw".
+        miniaturizeObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didMiniaturizeNotification, object: nil, queue: .main
+        ) { notification in
+            guard UserDefaults.standard.object(forKey: "hideOnMinimize") as? Bool ?? true,
+                  let window = notification.object as? NSWindow,
+                  !(window is NSPanel)
+            else { return }
+            // Order the miniaturized window out (removes its Dock tile) and
+            // drop to a menu-bar-only accessory app. The window stays in its
+            // miniaturized state; openMainWindow() deminiaturizes on reopen.
+            // (Deminiaturizing here instead races orderOut and re-shows it.)
+            window.orderOut(nil)
+            NSApp.setActivationPolicy(.accessory)
+        }
     }
 
     /// Keep running in the menu bar when the last window closes (spec §5.3).
@@ -119,11 +139,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         NSApp.activate(ignoringOtherApps: true)
         for window in NSApp.windows where window.identifier?.rawValue.contains("main") == true {
+            if window.isMiniaturized { window.deminiaturize(nil) }
             window.makeKeyAndOrderFront(nil)
             return
         }
         // Window was released — ask SwiftUI to recreate it via the openWindow URL scheme fallback.
         if let window = NSApp.windows.first(where: { $0.canBecomeKey && !($0 is NSPanel) }) {
+            if window.isMiniaturized { window.deminiaturize(nil) }
             window.makeKeyAndOrderFront(nil)
         }
     }
