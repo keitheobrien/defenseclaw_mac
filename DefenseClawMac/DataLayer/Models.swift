@@ -94,7 +94,10 @@ struct SkillItem: Identifiable, Sendable {
     var name: String
     var version: String
     var source: String
-    var enabled: Bool
+    var enabled: Bool                 // gateway rows: enabled; filesystem rows: eligible/ready
+    var skillDescription: String = ""
+    var connector: String = ""
+    var fromFilesystem: Bool = false  // listed by SkillScanner, read-only
     var id: String { key }
 }
 
@@ -104,7 +107,10 @@ struct MCPItem: Identifiable, Sendable {
     var endpoint: String
     var version: String
     var enabled: Bool
-    var id: String { name }
+    var source: String = ""           // registry file the entry came from (filesystem rows)
+    var connector: String = ""
+    var fromFilesystem: Bool = false  // discovered by MCPScanner, read-only
+    var id: String { fromFilesystem ? "\(connector)/\(name)" : name }
 }
 
 struct PluginItem: Identifiable, Sendable {

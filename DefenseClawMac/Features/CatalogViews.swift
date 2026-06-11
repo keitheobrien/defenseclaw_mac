@@ -11,33 +11,73 @@ struct SkillsView: View {
     @State private var search = ""
     @State private var error: String?
     @State private var loaded = false
+    @State private var filesystemMode = false
+    @State private var checkedDirs: [String] = []
 
     private var filtered: [SkillItem] {
-        search.isEmpty ? items : items.filter { $0.name.lowercased().contains(search.lowercased()) }
+        search.isEmpty ? items : items.filter {
+            "\($0.name) \($0.skillDescription) \($0.connector)".lowercased().contains(search.lowercased())
+        }
+    }
+
+    private var emptyMessage: String {
+        if filesystemMode {
+            let dirs = checkedDirs.map { $0.replacingOccurrences(of: NSHomeDirectory(), with: "~") }
+            return "No skills found in the connector skill directories:\n\(dirs.joined(separator: "\n"))\n\nNote: plugin/marketplace-provided Claude Code skills live outside these directories and are not scanned by DefenseClaw."
+        }
+        return "No skills reported by the gateway (GET /skills)."
     }
 
     var body: some View {
-        CatalogContainer(error: $error, isEmpty: loaded && filtered.isEmpty, emptyMessage: "No skills reported by the gateway (GET /skills).", gatewayDown: !appState.gatewayReachable) {
-            Table(filtered) {
-                TableColumn("Enabled") { item in
-                    Toggle("", isOn: Binding(
-                        get: { item.enabled },
-                        set: { newValue in toggle(item, to: newValue) }
-                    ))
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .disabled(!appState.gatewayReachable)
+        VStack(spacing: 0) {
+            if filesystemMode {
+                Label("Hook-mode install: listing skills from the connector skill directories (the gateway /skills catalog needs an OpenClaw agent). Rows are read-only — ✓ marks a ready skill (has SKILL.md / skill.json / README.md).",
+                      systemImage: "folder.badge.questionmark")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(.bar)
+            }
+            CatalogContainer(error: $error, isEmpty: loaded && filtered.isEmpty, emptyMessage: emptyMessage, gatewayDown: !appState.gatewayReachable) {
+                Table(filtered) {
+                    TableColumn(filesystemMode ? "Ready" : "Enabled") { item in
+                        if item.fromFilesystem {
+                            Image(systemName: item.enabled ? "checkmark.circle.fill" : "xmark.circle")
+                                .foregroundStyle(item.enabled ? Cisco.green : Color.secondary)
+                        } else {
+                            Toggle("", isOn: Binding(
+                                get: { item.enabled },
+                                set: { newValue in toggle(item, to: newValue) }
+                            ))
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.mini)
+                            .disabled(!appState.gatewayReachable)
+                        }
+                    }
+                    .width(60)
+                    TableColumn("Name", value: \.name)
+                    TableColumn("Description") { item in
+                        Text(item.skillDescription)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    TableColumn("Connector") { item in
+                        Text(item.connector.isEmpty ? "—" : item.connector)
+                            .font(.caption)
+                            .foregroundStyle(Cisco.blue)
+                    }
+                    .width(90)
+                    TableColumn("Source") { item in
+                        Text(item.source.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .width(min: 100, ideal: 180)
                 }
-                .width(60)
-                TableColumn("Name", value: \.name)
-                TableColumn("Version", value: \.version).width(90)
-                TableColumn("Source") { item in
-                    Text(item.source)
-                        .font(.caption)
-                        .foregroundStyle(item.source == "bundled" ? Cisco.blue : Color.secondary)
-                }
-                .width(90)
             }
         }
         .searchable(text: $search, placement: .toolbar, prompt: "Search skills")
@@ -46,11 +86,29 @@ struct SkillsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in Task { await load() } }
     }
 
+    /// Gateway catalog first; on failure or an empty answer, fall back to the
+    /// filesystem walk the CLI's `skill list` uses (skill_list.py).
     private func load() async {
+        var gatewayItems: [SkillItem] = []
+        var gatewayError: String?
         do {
-            items = try await appState.gateway.skills()
+            gatewayItems = try await appState.gateway.skills()
+        } catch {
+            gatewayError = error.localizedDescription
+        }
+
+        if !gatewayItems.isEmpty {
+            items = gatewayItems
+            filesystemMode = false
             error = nil
-        } catch { self.error = error.localizedDescription }
+        } else {
+            let result = SkillScanner.scan(connectors: appState.configuredConnectors())
+            items = result.items
+            checkedDirs = result.checkedDirs
+            filesystemMode = true
+            // The 502 is expected in hook mode once the fallback kicks in.
+            error = result.items.isEmpty ? gatewayError : nil
+        }
         loaded = true
     }
 
@@ -78,35 +136,78 @@ struct MCPsView: View {
     @State private var error: String?
     @State private var loaded = false
     @State private var editing: MCPItem?
+    @State private var filesystemMode = false
+    @State private var checkedFiles: [String] = []
 
     private var filtered: [MCPItem] {
-        search.isEmpty ? items : items.filter { $0.name.lowercased().contains(search.lowercased()) }
+        search.isEmpty ? items : items.filter {
+            "\($0.name) \($0.endpoint) \($0.connector)".lowercased().contains(search.lowercased())
+        }
+    }
+
+    private var emptyMessage: String {
+        if filesystemMode {
+            let files = checkedFiles.map { $0.replacingOccurrences(of: NSHomeDirectory(), with: "~") }
+            return "No MCP servers registered in the connector config files:\n\(files.joined(separator: "\n"))"
+        }
+        return "No MCP servers reported by the gateway (GET /mcps)."
     }
 
     var body: some View {
-        CatalogContainer(error: $error, isEmpty: loaded && filtered.isEmpty, emptyMessage: "No MCP servers reported by the gateway (GET /mcps).", gatewayDown: !appState.gatewayReachable) {
-            Table(filtered) {
-                TableColumn("Enabled") { item in
-                    Toggle("", isOn: Binding(
-                        get: { item.enabled },
-                        set: { newValue in toggle(item, to: newValue) }
-                    ))
-                    .labelsHidden().toggleStyle(.switch).controlSize(.mini)
-                    .disabled(!appState.gatewayReachable)
+        VStack(spacing: 0) {
+            if filesystemMode {
+                Label("Listing MCP registrations from each connector's own config files (Claude Code settings.json, Codex config.toml, …) — the same sources `defenseclaw mcp list` reads. Rows are read-only.",
+                      systemImage: "folder.badge.questionmark")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(.bar)
+            }
+            CatalogContainer(error: $error, isEmpty: loaded && filtered.isEmpty, emptyMessage: emptyMessage, gatewayDown: !appState.gatewayReachable) {
+                Table(filtered) {
+                    TableColumn("Enabled") { item in
+                        if item.fromFilesystem {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(Cisco.green)
+                                .help("Registered in the connector's config")
+                        } else {
+                            Toggle("", isOn: Binding(
+                                get: { item.enabled },
+                                set: { newValue in toggle(item, to: newValue) }
+                            ))
+                            .labelsHidden().toggleStyle(.switch).controlSize(.mini)
+                            .disabled(!appState.gatewayReachable)
+                        }
+                    }
+                    .width(60)
+                    TableColumn("Name", value: \.name)
+                    TableColumn("Transport", value: \.transport).width(80)
+                    TableColumn("Command / URL") { item in
+                        Text(item.endpoint).font(.caption.monospaced()).lineLimit(1)
+                    }
+                    TableColumn("Connector") { item in
+                        Text(item.connector.isEmpty ? "—" : item.connector)
+                            .font(.caption)
+                            .foregroundStyle(Cisco.blue)
+                    }
+                    .width(90)
+                    TableColumn("Source") { item in
+                        Text(item.source.isEmpty ? "—" : item.source.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .width(min: 100, ideal: 180)
+                    TableColumn("") { item in
+                        if !item.fromFilesystem {
+                            Button("Edit…") { editing = item }
+                                .controlSize(.small)
+                                .disabled(!appState.gatewayReachable)
+                        }
+                    }
+                    .width(60)
                 }
-                .width(60)
-                TableColumn("Name", value: \.name)
-                TableColumn("Transport", value: \.transport).width(80)
-                TableColumn("Endpoint") { item in
-                    Text(item.endpoint).font(.caption.monospaced()).lineLimit(1)
-                }
-                TableColumn("Version", value: \.version).width(80)
-                TableColumn("") { item in
-                    Button("Edit…") { editing = item }
-                        .controlSize(.small)
-                        .disabled(!appState.gatewayReachable)
-                }
-                .width(60)
             }
         }
         .searchable(text: $search, placement: .toolbar, prompt: "Search MCPs")
@@ -125,11 +226,28 @@ struct MCPsView: View {
         }
     }
 
+    /// Gateway catalog first; on failure or an empty answer, read each
+    /// connector's own MCP registry files (connector_paths.mcp_servers).
     private func load() async {
+        var gatewayItems: [MCPItem] = []
+        var gatewayError: String?
         do {
-            items = try await appState.gateway.mcps()
+            gatewayItems = try await appState.gateway.mcps()
+        } catch {
+            gatewayError = error.localizedDescription
+        }
+
+        if !gatewayItems.isEmpty {
+            items = gatewayItems
+            filesystemMode = false
             error = nil
-        } catch { self.error = error.localizedDescription }
+        } else {
+            let result = MCPScanner.scan(connectors: appState.configuredConnectors())
+            items = result.items
+            checkedFiles = result.checkedFiles
+            filesystemMode = true
+            error = result.items.isEmpty ? gatewayError : nil
+        }
         loaded = true
     }
 
