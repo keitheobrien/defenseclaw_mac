@@ -22,6 +22,7 @@ struct AppSettingsView: View {
 private struct GeneralSettings: View {
     @AppStorage("showDockIcon") private var showDockIcon = true
     @AppStorage("hideOnClose") private var hideOnClose = true
+    @AppStorage("hideOnMinimize") private var hideOnMinimize = true
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     var body: some View {
@@ -33,6 +34,7 @@ private struct GeneralSettings: View {
                     if newValue { NSApp.activate(ignoringOtherApps: true) }
                 }
             Toggle("Hide app when window closes (keep running in menu bar)", isOn: $hideOnClose)
+            Toggle("Hide to menu bar when minimized (removes Dock icon until reopened)", isOn: $hideOnMinimize)
             Toggle("Launch at login", isOn: $launchAtLogin)
                 .onChange(of: launchAtLogin) { _, newValue in
                     do {
