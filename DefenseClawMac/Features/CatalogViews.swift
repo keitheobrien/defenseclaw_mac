@@ -318,30 +318,70 @@ struct PluginsView: View {
     @State private var loaded = false
     @State private var pendingToggle: (item: PluginItem, to: Bool)?
     @State private var busy: Set<String> = []
+    @State private var filesystemMode = false
+    @State private var checkedDirs: [String] = []
 
     private var filtered: [PluginItem] {
-        search.isEmpty ? items : items.filter { $0.name.lowercased().contains(search.lowercased()) }
+        search.isEmpty ? items : items.filter {
+            "\($0.name) \($0.connector)".lowercased().contains(search.lowercased())
+        }
+    }
+
+    private var emptyMessage: String {
+        if filesystemMode {
+            let dirs = checkedDirs.map { $0.replacingOccurrences(of: NSHomeDirectory(), with: "~") }
+            return "No plugins found in the connector plugin directories:\n\(dirs.joined(separator: "\n"))"
+        }
+        return "No plugins reported by the gateway (GET /status)."
     }
 
     var body: some View {
-        CatalogContainer(error: $error, isEmpty: loaded && filtered.isEmpty, emptyMessage: "No plugins reported by the gateway (GET /status).", gatewayDown: !appState.gatewayReachable) {
-            Table(filtered) {
-                TableColumn("Enabled") { item in
-                    if busy.contains(item.name) {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Toggle("", isOn: Binding(
-                            get: { item.enabled },
-                            set: { newValue in pendingToggle = (item, newValue) } // confirm first (parity)
-                        ))
-                        .labelsHidden().toggleStyle(.switch).controlSize(.mini)
-                        .disabled(!appState.gatewayReachable)
+        VStack(spacing: 0) {
+            if filesystemMode {
+                Label("Listing plugins from each connector's plugin directories (~/.claude/plugins, ~/.codex/plugins, …) — the same walk `defenseclaw plugin list` uses. Rows are read-only — ✓ marks a recognized manifest.",
+                      systemImage: "folder.badge.questionmark")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(.bar)
+            }
+            CatalogContainer(error: $error, isEmpty: loaded && filtered.isEmpty, emptyMessage: emptyMessage, gatewayDown: !appState.gatewayReachable) {
+                Table(filtered) {
+                    TableColumn(filesystemMode ? "Manifest" : "Enabled") { item in
+                        if item.fromFilesystem {
+                            Image(systemName: item.hasManifest ? "checkmark.circle.fill" : "xmark.circle")
+                                .foregroundStyle(item.hasManifest ? Cisco.green : Color.secondary)
+                                .help(item.hasManifest ? "Recognized plugin manifest" : "No recognized manifest")
+                        } else if busy.contains(item.name) {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Toggle("", isOn: Binding(
+                                get: { item.enabled },
+                                set: { newValue in pendingToggle = (item, newValue) } // confirm first (parity)
+                            ))
+                            .labelsHidden().toggleStyle(.switch).controlSize(.mini)
+                            .disabled(!appState.gatewayReachable)
+                        }
                     }
+                    .width(60)
+                    TableColumn("Name", value: \.name)
+                    TableColumn("Version", value: \.version).width(90)
+                    TableColumn(filesystemMode ? "Manifest file" : "Category", value: \.category).width(150)
+                    TableColumn("Connector") { item in
+                        Text(item.connector.isEmpty ? "—" : item.connector)
+                            .font(.caption)
+                            .foregroundStyle(Cisco.blue)
+                    }
+                    .width(90)
+                    TableColumn("Source") { item in
+                        Text(item.source.isEmpty ? "—" : item.source.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .width(min: 100, ideal: 180)
                 }
-                .width(60)
-                TableColumn("Name", value: \.name)
-                TableColumn("Version", value: \.version).width(90)
-                TableColumn("Category", value: \.category).width(110)
             }
         }
         .searchable(text: $search, placement: .toolbar, prompt: "Search plugins")
@@ -362,11 +402,28 @@ struct PluginsView: View {
         }
     }
 
+    /// Gateway plugin roster first; on failure or an empty answer, walk each
+    /// connector's plugin directories (claw_inventory._enumerate_plugins_filesystem).
     private func load() async {
+        var gatewayItems: [PluginItem] = []
+        var gatewayError: String?
         do {
-            items = try await appState.gateway.plugins()
+            gatewayItems = try await appState.gateway.plugins()
+        } catch {
+            gatewayError = error.localizedDescription
+        }
+
+        if !gatewayItems.isEmpty {
+            items = gatewayItems
+            filesystemMode = false
             error = nil
-        } catch { self.error = error.localizedDescription }
+        } else {
+            let result = PluginScanner.scan(connectors: appState.configuredConnectors())
+            items = result.items
+            checkedDirs = result.checkedDirs
+            filesystemMode = true
+            error = result.items.isEmpty ? gatewayError : nil
+        }
         loaded = true
     }
 
@@ -396,6 +453,7 @@ struct ToolsView: View {
     @State private var error: String?
     @State private var loaded = false
     @State private var selected: ToolItem?
+    @State private var overridesOnly = false
 
     private var filtered: [ToolItem] {
         search.isEmpty ? items : items.filter {
@@ -403,8 +461,29 @@ struct ToolsView: View {
         }
     }
 
+    private var emptyMessage: String {
+        overridesOnly
+            ? "No tool overrides yet. The full tool catalog needs an OpenClaw agent behind the gateway; on hook-based installs this panel shows the block/allow overrides recorded in the audit DB's actions table — and there are none so far. Block a tool from the Alerts or Audit context, or via `defenseclaw enforce`, and it will appear here."
+            : "No tools in the catalog (GET /tools/catalog)."
+    }
+
     var body: some View {
-        CatalogContainer(error: $error, isEmpty: loaded && filtered.isEmpty, emptyMessage: "No tools in the catalog (GET /tools/catalog).", gatewayDown: !appState.gatewayReachable) {
+        VStack(spacing: 0) {
+            if overridesOnly, !filtered.isEmpty {
+                Label("Hook-mode install: showing the tool block/allow overrides from the audit DB (the full catalog needs an OpenClaw agent). State changes still apply — overrides enforce on the next hook evaluation.",
+                      systemImage: "folder.badge.questionmark")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(.bar)
+            }
+            toolsContainer
+        }
+    }
+
+    private var toolsContainer: some View {
+        CatalogContainer(error: $error, isEmpty: loaded && filtered.isEmpty, emptyMessage: emptyMessage, gatewayDown: !appState.gatewayReachable) {
             Table(filtered, selection: Binding(
                 get: { selected?.id },
                 set: { id in selected = filtered.first { $0.id == id } }
@@ -464,16 +543,33 @@ struct ToolsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in Task { await load() } }
     }
 
+    /// Tool catalog from the gateway when an OpenClaw agent serves it; in
+    /// hook mode fall back to the actions-table overrides — the catalog
+    /// endpoint 502s there, but block/allow overrides still exist and
+    /// enforce, so show (and let the user edit) exactly those.
     private func load() async {
+        var catalog: [ToolItem] = []
+        var gatewayError: String?
         do {
-            var catalog = try await appState.gateway.toolsCatalog()
-            let overrides = await appState.audit.toolOverrides()
+            catalog = try await appState.gateway.toolsCatalog()
+        } catch {
+            gatewayError = error.localizedDescription
+        }
+
+        let overrides = await appState.audit.toolOverrides()
+        if !catalog.isEmpty {
             for i in catalog.indices {
                 if let state = overrides[catalog[i].name] { catalog[i].state = state }
             }
             items = catalog
+            overridesOnly = false
             error = nil
-        } catch { self.error = error.localizedDescription }
+        } else {
+            items = await appState.audit.toolOverrideRows()
+            overridesOnly = true
+            // Overrides displayed (or none exist) — the 502 is expected in hook mode.
+            error = items.isEmpty && gatewayError != nil && !appState.gatewayReachable ? gatewayError : nil
+        }
         loaded = true
     }
 

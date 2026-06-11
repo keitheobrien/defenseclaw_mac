@@ -246,6 +246,32 @@ actor AuditStore {
         return out
     }
 
+    /// Full tool override rows (actions table) — the data the Tools panel
+    /// governs. In hook mode this is the only tool surface: the catalog
+    /// endpoint needs an OpenClaw agent, but overrides still enforce.
+    func toolOverrideRows() -> [ToolItem] {
+        guard tableExists("actions") else { return [] }
+        let rows = query("""
+            SELECT target_name, actions_json, reason, updated_at
+            FROM actions WHERE target_type = 'tool' ORDER BY target_name
+            """)
+        return rows.compactMap { r in
+            guard let name = r["target_name"] as? String else { return nil }
+            let json = (r["actions_json"] as? String ?? "").lowercased()
+            let state: ToolState = json.contains("block") ? .block
+                : json.contains("observe") ? .observe : .allow
+            let reason = (r["reason"] as? String) ?? ""
+            let updated = (r["updated_at"] as? String) ?? ""
+            return ToolItem(
+                name: name,
+                summary: reason.isEmpty ? "override" : reason,
+                signature: updated.isEmpty ? "" : "updated \(updated)",
+                state: state,
+                usageCount: 0
+            )
+        }
+    }
+
     /// Tool allow/block overrides from the actions table.
     func toolOverrides() -> [String: ToolState] {
         guard tableExists("actions") else { return [:] }

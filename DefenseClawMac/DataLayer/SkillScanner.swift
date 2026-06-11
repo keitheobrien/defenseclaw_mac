@@ -290,3 +290,74 @@ enum MCPScanner {
         return [:]
     }
 }
+
+// MARK: - Plugin discovery (connector_paths.plugin_dirs +
+// claw_inventory._enumerate_plugins_filesystem)
+
+enum PluginScanner {
+    /// Per-connector plugin/extension directories (home-based).
+    static func pluginDirs(connector: String) -> [String] {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        func p(_ parts: String...) -> String { ([home] + parts).joined(separator: "/") }
+        switch connector.lowercased().replacingOccurrences(of: "-", with: "") {
+        case "claudecode": return [p(".claude", "plugins")]
+        case "codex": return [p(".codex", "plugins"), p(".codex", "plugins", "cache")]
+        case "zeptoclaw": return [p(".zeptoclaw", "plugins"), p(".zeptoclaw", "plugins", "cache")]
+        case "hermes": return [p(".hermes", "plugins")]
+        case "geminicli": return [p(".gemini", "extensions")]
+        case "openclaw": return [p(".openclaw", "extensions")]
+        default: return [] // cursor, windsurf, copilot, openhands, antigravity: no plugin surface
+        }
+    }
+
+    /// Manifest names recognized upstream (plugin_scanner._MANIFEST_CANDIDATES).
+    private static let manifestFiles = [
+        "package.json", "manifest.json", "plugin.json", "openclaw.plugin.json",
+        ".codex-plugin/plugin.json", ".claude-plugin/plugin.json",
+    ]
+
+    static func scan(connectors: [String]) -> (items: [PluginItem], checkedDirs: [String]) {
+        let fm = FileManager.default
+        var items: [PluginItem] = []
+        var checked: [String] = []
+        for connector in connectors {
+            var seen = Set<String>()
+            for dir in pluginDirs(connector: connector) {
+                checked.append(dir)
+                var isDir: ObjCBool = false
+                guard fm.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue,
+                      let entries = try? fm.contentsOfDirectory(atPath: dir)
+                else { continue }
+                for entry in entries.sorted() {
+                    // "cache" siblings hold transient downloads, not plugins.
+                    guard entry != "cache" else { continue }
+                    let full = dir + "/" + entry
+                    guard fm.fileExists(atPath: full, isDirectory: &isDir), isDir.boolValue,
+                          seen.insert(entry).inserted
+                    else { continue }
+                    let manifest = manifestFiles.first { fm.fileExists(atPath: full + "/" + $0) }
+                    items.append(PluginItem(
+                        name: entry,
+                        version: manifestVersion(at: full, manifest: manifest) ?? "—",
+                        category: manifest ?? "no manifest",
+                        enabled: true,
+                        source: dir,
+                        connector: connector,
+                        fromFilesystem: true,
+                        hasManifest: manifest != nil
+                    ))
+                }
+            }
+        }
+        return (items, checked)
+    }
+
+    private static func manifestVersion(at path: String, manifest: String?) -> String? {
+        guard let manifest, manifest.hasSuffix(".json"),
+              let data = FileManager.default.contents(atPath: path + "/" + manifest),
+              data.count < 256 * 1024,
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return obj["version"] as? String
+    }
+}

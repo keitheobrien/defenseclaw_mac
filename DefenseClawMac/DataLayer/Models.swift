@@ -116,9 +116,13 @@ struct MCPItem: Identifiable, Sendable {
 struct PluginItem: Identifiable, Sendable {
     var name: String
     var version: String
-    var category: String
+    var category: String              // gateway rows: kind; filesystem rows: manifest file or "no manifest"
     var enabled: Bool
-    var id: String { name }
+    var source: String = ""           // plugin dir the entry came from (filesystem rows)
+    var connector: String = ""
+    var fromFilesystem: Bool = false  // discovered by PluginScanner, read-only
+    var hasManifest: Bool = true
+    var id: String { fromFilesystem ? "\(connector)/\(name)" : name }
 }
 
 enum ToolState: String, CaseIterable, Identifiable {
