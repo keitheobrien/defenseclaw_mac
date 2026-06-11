@@ -1,0 +1,437 @@
+// Govern panels (spec §9.3–§9.6): Skills, MCPs, Plugins, Tools.
+// Toggles are optimistic with rollback + error surfacing.
+
+import SwiftUI
+
+// MARK: - Skills
+
+struct SkillsView: View {
+    @Environment(AppState.self) private var appState
+    @State private var items: [SkillItem] = []
+    @State private var search = ""
+    @State private var error: String?
+    @State private var loaded = false
+
+    private var filtered: [SkillItem] {
+        search.isEmpty ? items : items.filter { $0.name.lowercased().contains(search.lowercased()) }
+    }
+
+    var body: some View {
+        CatalogContainer(error: $error, isEmpty: loaded && filtered.isEmpty, emptyMessage: "No skills reported by the gateway (GET /skills).", gatewayDown: !appState.gatewayReachable) {
+            Table(filtered) {
+                TableColumn("Enabled") { item in
+                    Toggle("", isOn: Binding(
+                        get: { item.enabled },
+                        set: { newValue in toggle(item, to: newValue) }
+                    ))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .disabled(!appState.gatewayReachable)
+                }
+                .width(60)
+                TableColumn("Name", value: \.name)
+                TableColumn("Version", value: \.version).width(90)
+                TableColumn("Source") { item in
+                    Text(item.source)
+                        .font(.caption)
+                        .foregroundStyle(item.source == "bundled" ? Cisco.blue : Color.secondary)
+                }
+                .width(90)
+            }
+        }
+        .searchable(text: $search, placement: .toolbar, prompt: "Search skills")
+        .toolbar { RefreshButton { await load() } }
+        .task { await load() }
+        .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in Task { await load() } }
+    }
+
+    private func load() async {
+        do {
+            items = try await appState.gateway.skills()
+            error = nil
+        } catch { self.error = error.localizedDescription }
+        loaded = true
+    }
+
+    private func toggle(_ item: SkillItem, to enabled: Bool) {
+        guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
+        items[idx].enabled = enabled
+        Task {
+            do {
+                try await appState.gateway.setSkill(key: item.key, enabled: enabled)
+                error = nil
+            } catch {
+                items[idx].enabled = !enabled // rollback
+                self.error = "Failed to \(enabled ? "enable" : "disable") \(item.name): \(error.localizedDescription)"
+            }
+        }
+    }
+}
+
+// MARK: - MCPs
+
+struct MCPsView: View {
+    @Environment(AppState.self) private var appState
+    @State private var items: [MCPItem] = []
+    @State private var search = ""
+    @State private var error: String?
+    @State private var loaded = false
+    @State private var editing: MCPItem?
+
+    private var filtered: [MCPItem] {
+        search.isEmpty ? items : items.filter { $0.name.lowercased().contains(search.lowercased()) }
+    }
+
+    var body: some View {
+        CatalogContainer(error: $error, isEmpty: loaded && filtered.isEmpty, emptyMessage: "No MCP servers reported by the gateway (GET /mcps).", gatewayDown: !appState.gatewayReachable) {
+            Table(filtered) {
+                TableColumn("Enabled") { item in
+                    Toggle("", isOn: Binding(
+                        get: { item.enabled },
+                        set: { newValue in toggle(item, to: newValue) }
+                    ))
+                    .labelsHidden().toggleStyle(.switch).controlSize(.mini)
+                    .disabled(!appState.gatewayReachable)
+                }
+                .width(60)
+                TableColumn("Name", value: \.name)
+                TableColumn("Transport", value: \.transport).width(80)
+                TableColumn("Endpoint") { item in
+                    Text(item.endpoint).font(.caption.monospaced()).lineLimit(1)
+                }
+                TableColumn("Version", value: \.version).width(80)
+                TableColumn("") { item in
+                    Button("Edit…") { editing = item }
+                        .controlSize(.small)
+                        .disabled(!appState.gatewayReachable)
+                }
+                .width(60)
+            }
+        }
+        .searchable(text: $search, placement: .toolbar, prompt: "Search MCPs")
+        .toolbar { RefreshButton { await load() } }
+        .task { await load() }
+        .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in Task { await load() } }
+        .sheet(item: $editing) { item in
+            MCPEditSheet(item: item) { field, value in
+                Task {
+                    do {
+                        try await appState.gateway.patchConfig(path: "mcps.\(item.name).\(field)", value: value)
+                        await load()
+                    } catch { self.error = error.localizedDescription }
+                }
+            }
+        }
+    }
+
+    private func load() async {
+        do {
+            items = try await appState.gateway.mcps()
+            error = nil
+        } catch { self.error = error.localizedDescription }
+        loaded = true
+    }
+
+    private func toggle(_ item: MCPItem, to enabled: Bool) {
+        guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
+        items[idx].enabled = enabled
+        Task {
+            do {
+                try await appState.gateway.setMCP(name: item.name, enabled: enabled)
+                error = nil
+            } catch {
+                items[idx].enabled = !enabled
+                self.error = "Failed to toggle \(item.name): \(error.localizedDescription)"
+            }
+        }
+    }
+}
+
+/// Port of MCPSetFormScreen: PATCH /config/patch per edited field.
+private struct MCPEditSheet: View {
+    let item: MCPItem
+    let onSave: (String, String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var endpoint: String
+    @State private var transport: String
+
+    init(item: MCPItem, onSave: @escaping (String, String) -> Void) {
+        self.item = item
+        self.onSave = onSave
+        _endpoint = State(initialValue: item.endpoint)
+        _transport = State(initialValue: item.transport)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Edit MCP: \(item.name)").font(.headline)
+            Form {
+                Picker("Transport", selection: $transport) {
+                    Text("stdio").tag("stdio")
+                    Text("http").tag("http")
+                }
+                TextField("Endpoint / command", text: $endpoint)
+                    .font(.body.monospaced())
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                Button("Save") {
+                    if transport != item.transport { onSave("transport", transport) }
+                    if endpoint != item.endpoint { onSave("endpoint", endpoint) }
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(16)
+        .frame(width: 440)
+    }
+}
+
+// MARK: - Plugins
+
+struct PluginsView: View {
+    @Environment(AppState.self) private var appState
+    @State private var items: [PluginItem] = []
+    @State private var search = ""
+    @State private var error: String?
+    @State private var loaded = false
+    @State private var pendingToggle: (item: PluginItem, to: Bool)?
+    @State private var busy: Set<String> = []
+
+    private var filtered: [PluginItem] {
+        search.isEmpty ? items : items.filter { $0.name.lowercased().contains(search.lowercased()) }
+    }
+
+    var body: some View {
+        CatalogContainer(error: $error, isEmpty: loaded && filtered.isEmpty, emptyMessage: "No plugins reported by the gateway (GET /status).", gatewayDown: !appState.gatewayReachable) {
+            Table(filtered) {
+                TableColumn("Enabled") { item in
+                    if busy.contains(item.name) {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Toggle("", isOn: Binding(
+                            get: { item.enabled },
+                            set: { newValue in pendingToggle = (item, newValue) } // confirm first (parity)
+                        ))
+                        .labelsHidden().toggleStyle(.switch).controlSize(.mini)
+                        .disabled(!appState.gatewayReachable)
+                    }
+                }
+                .width(60)
+                TableColumn("Name", value: \.name)
+                TableColumn("Version", value: \.version).width(90)
+                TableColumn("Category", value: \.category).width(110)
+            }
+        }
+        .searchable(text: $search, placement: .toolbar, prompt: "Search plugins")
+        .toolbar { RefreshButton { await load() } }
+        .task { await load() }
+        .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in Task { await load() } }
+        .confirmationDialog(
+            "\(pendingToggle?.to == true ? "Enable" : "Disable") plugin “\(pendingToggle?.item.name ?? "")”?",
+            isPresented: .constant(pendingToggle != nil), titleVisibility: .visible
+        ) {
+            Button(pendingToggle?.to == true ? "Enable" : "Disable") {
+                if let pending = pendingToggle { apply(pending.item, to: pending.to) }
+                pendingToggle = nil
+            }
+            Button("Cancel", role: .cancel) { pendingToggle = nil }
+        } message: {
+            Text("Plugin changes restart hooks in the connector and can take up to 90 seconds.")
+        }
+    }
+
+    private func load() async {
+        do {
+            items = try await appState.gateway.plugins()
+            error = nil
+        } catch { self.error = error.localizedDescription }
+        loaded = true
+    }
+
+    private func apply(_ item: PluginItem, to enabled: Bool) {
+        busy.insert(item.name)
+        Task {
+            do {
+                try await appState.gateway.setPlugin(name: item.name, enabled: enabled)
+                if let idx = items.firstIndex(where: { $0.id == item.id }) {
+                    items[idx].enabled = enabled
+                }
+                error = nil
+            } catch {
+                self.error = "Plugin \(item.name): \(error.localizedDescription)"
+            }
+            busy.remove(item.name)
+        }
+    }
+}
+
+// MARK: - Tools
+
+struct ToolsView: View {
+    @Environment(AppState.self) private var appState
+    @State private var items: [ToolItem] = []
+    @State private var search = ""
+    @State private var error: String?
+    @State private var loaded = false
+    @State private var selected: ToolItem?
+
+    private var filtered: [ToolItem] {
+        search.isEmpty ? items : items.filter {
+            $0.name.lowercased().contains(search.lowercased()) || $0.summary.lowercased().contains(search.lowercased())
+        }
+    }
+
+    var body: some View {
+        CatalogContainer(error: $error, isEmpty: loaded && filtered.isEmpty, emptyMessage: "No tools in the catalog (GET /tools/catalog).", gatewayDown: !appState.gatewayReachable) {
+            Table(filtered, selection: Binding(
+                get: { selected?.id },
+                set: { id in selected = filtered.first { $0.id == id } }
+            )) {
+                TableColumn("Tool", value: \.name)
+                TableColumn("Description") { t in
+                    Text(t.summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                TableColumn("State") { t in
+                    Picker("", selection: Binding(
+                        get: { t.state },
+                        set: { newState in setState(t, to: newState) }
+                    )) {
+                        ForEach(ToolState.allCases) { s in Text(s.rawValue).tag(s) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .frame(width: 190)
+                    .disabled(!appState.gatewayReachable)
+                }
+                .width(200)
+                TableColumn("Usage") { t in
+                    Text("\(t.usageCount)").font(.caption.monospacedDigit())
+                }
+                .width(50)
+            }
+        }
+        .inspector(isPresented: .constant(selected != nil)) {
+            if let t = selected {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text(t.name).font(.headline)
+                        Spacer()
+                        Button { selected = nil } label: { Image(systemName: "xmark.circle.fill") }
+                            .buttonStyle(.borderless)
+                    }
+                    Text(t.summary).font(.callout)
+                    if !t.signature.isEmpty {
+                        Text("Signature").font(.caption).foregroundStyle(.secondary)
+                        ScrollView {
+                            Text(t.signature)
+                                .font(.system(.caption, design: .monospaced))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(maxHeight: 240)
+                    }
+                    Spacer()
+                }
+                .padding(12)
+            }
+        }
+        .searchable(text: $search, placement: .toolbar, prompt: "Search tools")
+        .toolbar { RefreshButton { await load() } }
+        .task { await load() }
+        .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in Task { await load() } }
+    }
+
+    private func load() async {
+        do {
+            var catalog = try await appState.gateway.toolsCatalog()
+            let overrides = await appState.audit.toolOverrides()
+            for i in catalog.indices {
+                if let state = overrides[catalog[i].name] { catalog[i].state = state }
+            }
+            items = catalog
+            error = nil
+        } catch { self.error = error.localizedDescription }
+        loaded = true
+    }
+
+    private func setState(_ tool: ToolItem, to state: ToolState) {
+        guard let idx = items.firstIndex(where: { $0.id == tool.id }) else { return }
+        let previous = items[idx].state
+        items[idx].state = state
+        Task {
+            do {
+                switch state {
+                case .block:
+                    try await appState.gateway.enforceBlock(targetType: "tool", targetName: tool.name,
+                                                            reason: "Blocked from DefenseClaw for macOS")
+                case .allow, .observe:
+                    try await appState.gateway.enforceAllow(targetType: "tool", targetName: tool.name,
+                                                            reason: "Allowed from DefenseClaw for macOS")
+                }
+                error = nil
+            } catch {
+                items[idx].state = previous
+                self.error = "Tool \(tool.name): \(error.localizedDescription)"
+            }
+        }
+    }
+}
+
+// MARK: - Shared chrome
+
+struct CatalogContainer<Content: View>: View {
+    @Binding var error: String?
+    let isEmpty: Bool
+    let emptyMessage: String
+    let gatewayDown: Bool
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if let error {
+                HStack {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(Cisco.red)
+                    Spacer()
+                    Button { self.error = nil } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.borderless)
+                }
+                .padding(8)
+                .background(Cisco.red.opacity(0.08))
+            }
+            if gatewayDown {
+                Label("Gateway offline — toggles disabled until it returns.", systemImage: "bolt.slash")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(6)
+                    .background(.bar)
+            }
+            if isEmpty {
+                DCEmptyState(title: "Nothing here", message: emptyMessage, systemImage: "tray")
+                    .frame(maxHeight: .infinity)
+            } else {
+                content
+            }
+        }
+    }
+}
+
+struct RefreshButton: ToolbarContent {
+    let action: () async -> Void
+    var body: some ToolbarContent {
+        ToolbarItem {
+            Button {
+                Task { await action() }
+            } label: {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+        }
+    }
+}
