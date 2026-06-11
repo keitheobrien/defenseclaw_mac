@@ -12,7 +12,8 @@ struct WizardField: Identifiable {
         case text(placeholder: String)
         case secure(placeholder: String)
         case choice(options: [String])
-        case bool   // click-style paired flag: --key / --no-key
+        case bool       // click-style paired flag: --key / --no-key
+        case flagOnly   // bare flag: emit --key when on, nothing when off
     }
 
     let key: String          // CLI flag name, e.g. "provider" → --provider=
@@ -176,10 +177,38 @@ enum Wizards {
         ),
         WizardDefinition(
             id: "provider", title: "Custom Providers", icon: "point.3.connected.trianglepath.dotted",
-            blurb: "Manage the custom LLM provider overlay. Interactive wizard — runs in your terminal.",
-            baseArgs: ["setup", "provider"],
-            interactiveOnly: true,
-            fields: []
+            blurb: "Add a custom/self-hosted LLM endpoint to the provider overlay (~/.defenseclaw/custom-providers.json) so the guardrail treats it as a known LLM.",
+            // No --non-interactive flag here: with --name supplied and no TTY
+            // attached (our case), `provider add` never prompts.
+            baseArgs: ["setup", "provider", "add"],
+            fields: [
+                WizardField(key: "name", label: "Provider name", kind: .text(placeholder: "e.g. internal-llm"),
+                            help: "Required. Repeated adds with the same name union domains/env keys (idempotent)."),
+                WizardField(key: "base-provider-type", label: "Provider family",
+                            kind: .choice(options: ["openai", "anthropic", "bedrock", "azure", "vertex_ai",
+                                                    "gemini", "gemini-openai", "groq", "mistral", "cohere",
+                                                    "deepseek", "xai", "fireworks_ai", "perplexity",
+                                                    "huggingface", "replicate", "openrouter", "together_ai",
+                                                    "cerebras", "ollama", "vllm", "lm_studio"]),
+                            defaultValue: "openai",
+                            help: "Upstream API family this endpoint speaks — routes the gateway to the matching adapter."),
+                WizardField(key: "base-url", label: "Base URL", kind: .text(placeholder: "https://llm.internal:8443")),
+                WizardField(key: "domain", label: "Domain", kind: .text(placeholder: "optional when Base URL is set"),
+                            help: "Domain to recognise as LLM traffic; scheme/path are stripped."),
+                WizardField(key: "env-key", label: "API key env var", kind: .text(placeholder: "e.g. INTERNAL_LLM_API_KEY"),
+                            help: "Name of the env var holding this provider's key (optional)."),
+                WizardField(key: "available-model", label: "Model id", kind: .text(placeholder: "model served by this endpoint (optional)")),
+                WizardField(key: "ollama-port", label: "Ollama port", kind: .text(placeholder: "additional loopback port"),
+                            visibleWhen: (key: "base-provider-type", equals: ["ollama"])),
+                WizardField(key: "bedrock-region", label: "AWS region", kind: .text(placeholder: "us-east-1"),
+                            visibleWhen: (key: "base-provider-type", equals: ["bedrock"])),
+                WizardField(key: "bedrock-auth-mode", label: "Bedrock auth",
+                            kind: .choice(options: ["api_key", "iam_credentials", "profile", "instance_role"]),
+                            defaultValue: "profile",
+                            visibleWhen: (key: "base-provider-type", equals: ["bedrock"])),
+                WizardField(key: "insecure-skip-verify", label: "Skip TLS verification (trusted labs only)",
+                            kind: .flagOnly, defaultValue: "no"),
+            ]
         ),
         WizardDefinition(
             id: "ai-discovery", title: "AI Discovery", icon: "sparkle.magnifyingglass",
@@ -337,6 +366,8 @@ struct WizardSheet: View {
             switch field.kind {
             case .bool:
                 args.append(value == "yes" ? "--\(field.key)" : "--no-\(field.key)")
+            case .flagOnly:
+                if value == "yes" { args.append("--\(field.key)") }
             case .secure:
                 guard !value.isEmpty else { continue }
                 args.append("--\(field.key)=\(maskSecrets ? "••••••" : value)")
@@ -454,7 +485,7 @@ struct WizardSheet: View {
             Picker(field.label, selection: binding) {
                 ForEach(options, id: \.self) { Text($0).tag($0) }
             }
-        case .bool:
+        case .bool, .flagOnly:
             Toggle(field.label, isOn: Binding(
                 get: { (values[field.key] ?? "") == "yes" },
                 set: { values[field.key] = $0 ? "yes" : "no" }
