@@ -2,6 +2,12 @@
 
 Native menu-bar companion app for [cisco-ai-defense/defenseclaw](https://github.com/cisco-ai-defense/defenseclaw), replicating the `defenseclaw tui` terminal dashboard with SwiftUI, Swift Charts, and a Cisco-branded design system. See [SPECIFICATION.md](SPECIFICATION.md) for the full application spec.
 
+![Overview dashboard](images/overview.png)
+
+The app lives in the menu bar: the shield icon shows live gateway/alert state, and the popover gives an at-a-glance summary with recent findings — even while the main window is closed or minimized.
+
+<p align="center"><img src="images/menubar-popover.png" width="420" alt="Menu bar popover"></p>
+
 ## Install
 
 Grab the latest prebuilt app from [Releases](https://github.com/keitheobrien/defenseclaw_mac/releases) (arm64, macOS 14+). The app is ad-hoc signed, not notarized — on first launch use right-click → Open, or clear quarantine with `xattr -d com.apple.quarantine /Applications/DefenseClawMac.app`.
