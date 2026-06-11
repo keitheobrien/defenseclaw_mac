@@ -1,9 +1,9 @@
 // Self-update against GitHub Releases (keitheobrien/defenseclaw_mac).
 //
-// Check: unauthenticated GitHub API first (works if the repo is public),
-// falling back to the user's authenticated `gh` CLI (required while the
-// repo is private). Install: download the release zip, unpack with ditto,
-// swap the running .app bundle in place, strip quarantine, and relaunch.
+// The repo is public: both the release check and the asset download go
+// through unauthenticated HTTPS to github.com — no gh CLI, no credentials.
+// Install: download the release zip, unpack with ditto, swap the running
+// .app bundle in place, strip quarantine, and relaunch.
 
 import AppKit
 import Foundation
@@ -12,7 +12,7 @@ struct ReleaseInfo: Sendable, Equatable {
     var tag: String          // e.g. "v0.3.1"
     var version: String      // e.g. "0.3.1"
     var assetName: String
-    var assetURL: String     // browser_download_url (usable only when repo is public)
+    var assetURL: String     // browser_download_url
     var htmlURL: String
     var notes: String
 }
@@ -48,12 +48,14 @@ actor UpdateChecker {
 
     /// Returns the latest release, or nil when it can't be determined.
     func latestRelease() async -> ReleaseInfo? {
-        if let release = await latestViaAPI() { return release }
-        return await latestViaGH()
-    }
-
-    private func parseRelease(_ dict: [String: Any]) -> ReleaseInfo? {
-        guard let tag = dict["tag_name"] as? String else { return nil }
+        guard let url = URL(string: "https://api.github.com/repos/\(Self.repo)/releases/latest") else { return nil }
+        var request = URLRequest(url: url, timeoutInterval: 10)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let tag = dict["tag_name"] as? String
+        else { return nil }
         let assets = (dict["assets"] as? [[String: Any]]) ?? []
         let zip = assets.first { (($0["name"] as? String) ?? "").hasSuffix(".zip") }
         return ReleaseInfo(
@@ -66,32 +68,15 @@ actor UpdateChecker {
         )
     }
 
-    private func latestViaAPI() async -> ReleaseInfo? {
-        guard let url = URL(string: "https://api.github.com/repos/\(Self.repo)/releases/latest") else { return nil }
-        var request = URLRequest(url: url, timeoutInterval: 10)
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
-              (response as? HTTPURLResponse)?.statusCode == 200,
-              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return nil }
-        return parseRelease(dict)
-    }
-
-    private func latestViaGH() async -> ReleaseInfo? {
-        guard let gh = Self.locateGH() else { return nil }
-        let result = Self.runProcess(gh, ["api", "repos/\(Self.repo)/releases/latest"])
-        guard result.exitCode == 0,
-              let data = result.output.data(using: .utf8),
-              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return nil }
-        return parseRelease(dict)
-    }
-
     // MARK: - Download + install + restart
 
     /// Downloads the release zip, swaps the current bundle, and relaunches.
-    /// Returns an error message, or never (the app restarts) on success.
+    /// Returns an error message, or never returns (the app restarts) on success.
     func downloadAndInstall(_ release: ReleaseInfo, progress: @Sendable @escaping (UpgradeState) -> Void) async -> String? {
+        guard let assetURL = URL(string: release.assetURL), !release.assetURL.isEmpty else {
+            return "The latest release has no downloadable zip asset."
+        }
+
         progress(.downloading)
         let stage = FileManager.default.temporaryDirectory
             .appendingPathComponent("dc-update-\(release.version)")
@@ -99,32 +84,15 @@ actor UpdateChecker {
         try? FileManager.default.createDirectory(at: stage, withIntermediateDirectories: true)
         let zipPath = stage.appendingPathComponent(release.assetName.isEmpty ? "update.zip" : release.assetName)
 
-        // Public path: direct asset download. Private repo: gh release download.
-        var downloaded = false
-        if !release.assetURL.isEmpty, let url = URL(string: release.assetURL) {
-            if let (tmp, response) = try? await URLSession.shared.download(from: url),
-               (response as? HTTPURLResponse)?.statusCode == 200 {
-                try? FileManager.default.removeItem(at: zipPath)
-                downloaded = (try? FileManager.default.moveItem(at: tmp, to: zipPath)) != nil
+        do {
+            let (tmp, response) = try await URLSession.shared.download(from: assetURL)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                return "Download failed (HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1))."
             }
-        }
-        if !downloaded {
-            guard let gh = Self.locateGH() else {
-                return "Could not download the release: direct download failed and the gh CLI was not found."
-            }
-            let result = Self.runProcess(gh, ["release", "download", release.tag,
-                                              "--repo", Self.repo, "--pattern", "*.zip",
-                                              "--dir", stage.path, "--clobber"])
-            guard result.exitCode == 0 else {
-                return "gh release download failed (exit \(result.exitCode)): \(String(result.output.suffix(200)))"
-            }
-            // gh names the file after the asset; find it.
-            guard let zip = (try? FileManager.default.contentsOfDirectory(atPath: stage.path))?
-                .first(where: { $0.hasSuffix(".zip") })
-            else { return "Downloaded release contained no zip asset." }
-            if zip != zipPath.lastPathComponent {
-                try? FileManager.default.moveItem(at: stage.appendingPathComponent(zip), to: zipPath)
-            }
+            try? FileManager.default.removeItem(at: zipPath)
+            try FileManager.default.moveItem(at: tmp, to: zipPath)
+        } catch {
+            return "Download failed: \(error.localizedDescription)"
         }
 
         progress(.installing)
@@ -165,17 +133,7 @@ actor UpdateChecker {
         return nil // unreachable in practice
     }
 
-    // MARK: - Process helpers
-
-    nonisolated static func locateGH() -> String? {
-        for candidate in ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"]
-        where FileManager.default.isExecutableFile(atPath: candidate) {
-            return candidate
-        }
-        let probe = runProcess("/usr/bin/env", ["zsh", "-lc", "command -v gh"])
-        let path = probe.output.trimmingCharacters(in: .whitespacesAndNewlines)
-        return probe.exitCode == 0 && !path.isEmpty ? path : nil
-    }
+    // MARK: - Process helper
 
     nonisolated static func runProcess(_ launchPath: String, _ arguments: [String]) -> (exitCode: Int32, output: String) {
         let process = Process()
