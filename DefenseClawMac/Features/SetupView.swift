@@ -170,10 +170,28 @@ enum Wizards {
         ),
         WizardDefinition(
             id: "webhook", title: "Webhooks", icon: "link.badge.plus",
-            blurb: "Slack / PagerDuty / Webex / generic chat alert destinations. Interactive wizard — runs in your terminal.",
-            baseArgs: ["setup", "webhook"],
-            interactiveOnly: true,
-            fields: []
+            blurb: "Create a webhook notifier — Slack, PagerDuty, Webex, or generic HMAC-signed — for the runtime alert dispatcher (top-level webhooks: list).",
+            baseArgs: ["setup", "webhook", "add"],
+            commandField: "type",
+            appendNonInteractive: true,
+            fields: [
+                WizardField(key: "type", label: "Type",
+                            kind: .choice(options: ["slack", "pagerduty", "webex", "generic"]),
+                            defaultValue: "slack"),
+                WizardField(key: "url", label: "Webhook URL", kind: .text(placeholder: "https://hooks.slack.com/… / events.pagerduty.com/… / webexapis.com/v1/messages")),
+                WizardField(key: "secret-env", label: "Secret env var", kind: .text(placeholder: "e.g. DEFENSECLAW_PD_KEY"),
+                            visibleWhen: (key: "type", equals: ["pagerduty", "webex", "generic"]),
+                            help: "NAME of the env var holding the routing key / bot token / HMAC secret. Slack URLs carry their own secret."),
+                WizardField(key: "room-id", label: "Webex room ID", kind: .text(placeholder: "Y2lzY29z…"),
+                            visibleWhen: (key: "type", equals: ["webex"])),
+                WizardField(key: "min-severity", label: "Minimum severity",
+                            kind: .choice(options: ["critical", "high", "medium", "low", "info"]),
+                            defaultValue: "high"),
+                WizardField(key: "events", label: "Event categories", kind: .text(placeholder: "block,scan,guardrail,drift,health — empty = all"),
+                            help: "Comma-separated; allowed: block, scan, guardrail, drift, health."),
+                WizardField(key: "timeout-seconds", label: "Delivery timeout (s)", kind: .text(placeholder: "10")),
+                WizardField(key: "name", label: "Destination name", kind: .text(placeholder: "optional — derived from type+host")),
+            ]
         ),
         WizardDefinition(
             id: "provider", title: "Custom Providers", icon: "point.3.connected.trianglepath.dotted",
