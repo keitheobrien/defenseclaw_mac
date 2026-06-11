@@ -2,9 +2,13 @@
 
 Native menu-bar companion app for [cisco-ai-defense/defenseclaw](https://github.com/cisco-ai-defense/defenseclaw), replicating the `defenseclaw tui` terminal dashboard with SwiftUI, Swift Charts, and a Cisco-branded design system. See [SPECIFICATION.md](SPECIFICATION.md) for the full application spec.
 
+## Install
+
+Grab the latest prebuilt app from [Releases](https://github.com/keitheobrien/defenseclaw_mac/releases) (arm64, macOS 14+). The app is ad-hoc signed, not notarized — on first launch use right-click → Open, or clear quarantine with `xattr -d com.apple.quarantine /Applications/DefenseClawMac.app`.
+
 ## Build & run
 
-Build from source — no prebuilt binary ships in this repo (`build/` is gitignored):
+Build from source — no prebuilt binary ships in the git tree itself (`build/` is gitignored):
 
 - Open `DefenseClawMac.xcodeproj` in Xcode (16+) and Run, **or** from the command line:
   ```
