@@ -222,6 +222,17 @@ final class AppState {
         unackedAlerts.removeAll { row in rows.contains { $0.id == row.id } }
     }
 
+    /// Connector roster for filesystem catalog scans: live health first,
+    /// then config's guardrail.connectors, then every known connector so
+    /// the panels work regardless of agent type.
+    func configuredConnectors() -> [String] {
+        let fromHealth = health.connectors.map(\.name)
+        if !fromHealth.isEmpty { return fromHealth }
+        if !config.connectors.isEmpty { return config.connectors }
+        return ["openclaw", "zeptoclaw", "codex", "claudecode", "hermes",
+                "cursor", "windsurf", "geminicli", "copilot", "openhands", "antigravity"]
+    }
+
     func reloadConfig() {
         Task {
             let cfg = await configStore.reload()
