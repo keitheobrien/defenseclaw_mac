@@ -84,6 +84,12 @@ private struct GeneralSettings: View {
                         default: EmptyView()
                         }
                     }
+                    if case .failed = appState.runtimeUpgradeState, !appState.runtimeUpgradeLog.isEmpty {
+                        Button("Copy Full Upgrade Log") {
+                            copyToPasteboard(appState.runtimeUpgradeLog)
+                        }
+                        .controlSize(.small)
+                    }
                     Text("Runs `defenseclaw upgrade --yes`: downloads release artifacts, migrates, and restarts the gateway. Configuration is preserved.")
                         .font(.caption)
                         .foregroundStyle(.secondary)

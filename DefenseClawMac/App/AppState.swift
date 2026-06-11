@@ -78,6 +78,8 @@ final class AppState {
     var runtimeUpgradeState: UpgradeState = .idle
     var runtimeBannerDismissed = false
     var runtimeUpgradeLogTail = ""
+    /// Full `defenseclaw upgrade` output from the last failed run (for Copy).
+    var runtimeUpgradeLog = ""
     /// True when the last release lookup failed (offline / GitHub rate limit) —
     /// "Up to date" must not be claimed on a failed check.
     var lastCheckFailed = false
@@ -300,8 +302,14 @@ final class AppState {
                 await checkForUpdates(force: true) // re-read installed version
                 reloadConfig()                     // gateway restarted; reconnect
             } else {
+                runtimeUpgradeLog = result.output // full log, for Copy in Settings
+                // Surface the most meaningful line: prefer the resolver/installer
+                // error over the Python traceback tail.
+                let errorLine = result.output.split(separator: "\n")
+                    .first { $0.contains("×") || $0.localizedCaseInsensitiveContains("error:") }
+                    .map(String.init)
                 runtimeUpgradeState = .failed(
-                    "defenseclaw upgrade exited \(result.exitCode): \(String(result.output.suffix(200)))"
+                    errorLine ?? "defenseclaw upgrade exited \(result.exitCode): \(String(result.output.suffix(200)))"
                 )
             }
         }
