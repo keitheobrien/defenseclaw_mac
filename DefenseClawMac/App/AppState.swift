@@ -64,6 +64,13 @@ final class AppState {
     let audit = AuditStore()
     let stream = EventStreamReader()
     let cli = CLIRunner()
+    let updater = UpdateChecker()
+
+    // Self-update state
+    var availableUpdate: ReleaseInfo?
+    var upgradeState: UpgradeState = .idle
+    var updateBannerDismissed = false
+    private var lastUpdateCheck: Date = .distantPast
 
     // Pulse state
     var health: HealthSnapshot = HealthSnapshot()
@@ -113,6 +120,7 @@ final class AppState {
             installDetected = await configStore.installPresent
             await gateway.update(config: cfg)
             startPulse()
+            await checkForUpdates(force: true)
         }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { _, _ in }
     }
@@ -155,6 +163,7 @@ final class AppState {
         // Tail the JSONL stream and refresh the alert set.
         _ = await stream.poll()
         await refreshAlerts()
+        await checkForUpdates() // no-op unless 6h have passed
     }
 
     func refreshAlerts() async {
@@ -220,6 +229,38 @@ final class AppState {
     func dismiss(_ rows: [AlertRow]) {
         for row in rows { dismissedIDs.insert(row.id) }
         unackedAlerts.removeAll { row in rows.contains { $0.id == row.id } }
+    }
+
+    // MARK: - Self-update
+
+    /// Check GitHub for a newer release; re-checked every 6h by the pulse.
+    func checkForUpdates(force: Bool = false) async {
+        guard force || Date().timeIntervalSince(lastUpdateCheck) > 6 * 3600 else { return }
+        lastUpdateCheck = Date()
+        upgradeState = .checking
+        let release = await updater.latestRelease()
+        upgradeState = .idle
+        if let release, UpdateChecker.isNewer(release.version, than: UpdateChecker.currentVersion) {
+            if release != availableUpdate { updateBannerDismissed = false }
+            availableUpdate = release
+        } else if force {
+            availableUpdate = nil
+        }
+    }
+
+    /// Download, install over the current bundle, and restart the app.
+    func performUpgrade() {
+        guard let release = availableUpdate, upgradeState == .idle || upgradeState == .checking else { return }
+        upgradeState = .downloading
+        Task {
+            let failure = await updater.downloadAndInstall(release) { state in
+                Task { @MainActor in self.upgradeState = state }
+            }
+            if let failure {
+                upgradeState = .failed(failure)
+            }
+            // On success the app terminates and relaunches — nothing to do here.
+        }
     }
 
     /// Connector roster for filesystem catalog scans: live health first,
