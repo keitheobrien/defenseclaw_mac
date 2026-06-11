@@ -66,11 +66,21 @@ final class AppState {
     let cli = CLIRunner()
     let updater = UpdateChecker()
 
-    // Self-update state
+    // Self-update state (this Mac app)
     var availableUpdate: ReleaseInfo?
     var upgradeState: UpgradeState = .idle
     var updateBannerDismissed = false
     private var lastUpdateCheck: Date = .distantPast
+
+    // DefenseClaw runtime (CLI + gateway) update state
+    var installedRuntimeVersion: String?
+    var availableRuntimeUpdate: ReleaseInfo?
+    var runtimeUpgradeState: UpgradeState = .idle
+    var runtimeBannerDismissed = false
+    var runtimeUpgradeLogTail = ""
+    /// True when the last release lookup failed (offline / GitHub rate limit) —
+    /// "Up to date" must not be claimed on a failed check.
+    var lastCheckFailed = false
 
     // Pulse state
     var health: HealthSnapshot = HealthSnapshot()
@@ -233,18 +243,67 @@ final class AppState {
 
     // MARK: - Self-update
 
-    /// Check GitHub for a newer release; re-checked every 6h by the pulse.
+    /// Check GitHub for newer releases of BOTH the Mac app and the
+    /// DefenseClaw runtime; re-checked every 6h by the pulse.
     func checkForUpdates(force: Bool = false) async {
         guard force || Date().timeIntervalSince(lastUpdateCheck) > 6 * 3600 else { return }
         lastUpdateCheck = Date()
         upgradeState = .checking
-        let release = await updater.latestRelease()
+
+        // Mac app. A nil release means the check FAILED (offline, API rate
+        // limit) — keep any previously known update rather than clearing it.
+        let appRelease = await updater.latestRelease()
+        if let release = appRelease {
+            if UpdateChecker.isNewer(release.version, than: UpdateChecker.currentVersion) {
+                if release != availableUpdate { updateBannerDismissed = false }
+                availableUpdate = release
+            } else {
+                availableUpdate = nil
+            }
+        }
         upgradeState = .idle
-        if let release, UpdateChecker.isNewer(release.version, than: UpdateChecker.currentVersion) {
-            if release != availableUpdate { updateBannerDismissed = false }
-            availableUpdate = release
-        } else if force {
-            availableUpdate = nil
+
+        // DefenseClaw runtime: installed via `defenseclaw --version`,
+        // latest from the upstream repo's releases.
+        let versionResult = await cli.run(arguments: ["--version"])
+        installedRuntimeVersion = UpdateChecker.parseVersion(versionResult.output)
+        let runtimeRelease = await updater.latestRuntimeRelease()
+        if let installed = installedRuntimeVersion, let latest = runtimeRelease {
+            if UpdateChecker.isNewer(latest.version, than: installed) {
+                if latest != availableRuntimeUpdate { runtimeBannerDismissed = false }
+                availableRuntimeUpdate = latest
+            } else {
+                availableRuntimeUpdate = nil
+            }
+        }
+        lastCheckFailed = (appRelease == nil || runtimeRelease == nil)
+    }
+
+    /// Runs `defenseclaw upgrade --yes` — downloads release artifacts,
+    /// migrates, and restarts the gateway. Non-destructive per upstream docs.
+    func performRuntimeUpgrade() {
+        guard runtimeUpgradeState == .idle || runtimeUpgradeState == .checking,
+              availableRuntimeUpdate != nil else { return }
+        runtimeUpgradeState = .installing
+        runtimeUpgradeLogTail = ""
+        Task {
+            let result = await cli.run(arguments: ["upgrade", "--yes"]) { line in
+                Task { @MainActor in
+                    let trimmed = line.trimmingCharacters(in: .whitespaces)
+                    if !trimmed.isEmpty { self.runtimeUpgradeLogTail = trimmed }
+                }
+            }
+            if result.succeeded {
+                runtimeUpgradeState = .idle
+                runtimeUpgradeLogTail = ""
+                availableRuntimeUpdate = nil
+                await checkForUpdates(force: true) // re-read installed version
+                reloadConfig()                     // gateway restarted; reconnect
+            } else {
+                runtimeUpgradeState = .failed(
+                    "defenseclaw upgrade exited \(result.exitCode): \(String(result.output.suffix(200)))"
+                )
+            }
         }
     }
 

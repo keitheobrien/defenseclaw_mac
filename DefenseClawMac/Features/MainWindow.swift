@@ -40,10 +40,16 @@ struct MainWindow: View {
                 .navigationTitle(appState.selectedPanel.title)
         }
         .overlay(alignment: .top) {
-            if let err = appState.lastGatewayError, case .unauthorized = err {
-                tokenBanner
-            } else if appState.availableUpdate != nil, !appState.updateBannerDismissed {
-                updateBanner
+            VStack(spacing: 6) {
+                if let err = appState.lastGatewayError, case .unauthorized = err {
+                    tokenBanner
+                }
+                if appState.availableUpdate != nil, !appState.updateBannerDismissed {
+                    updateBanner
+                }
+                if appState.availableRuntimeUpdate != nil, !appState.runtimeBannerDismissed {
+                    runtimeUpdateBanner
+                }
             }
         }
         .sheet(isPresented: .constant(!appState.installDetected)) {
@@ -128,10 +134,61 @@ struct MainWindow: View {
 
     private var upgradeStatusText: String {
         switch appState.upgradeState {
-        case .idle, .checking: "Current version: \(UpdateChecker.currentVersion) — ⌘⇧U to upgrade and restart"
+        case .idle, .checking: "Mac app update — installed: \(UpdateChecker.currentVersion). ⌘⇧U upgrades this app and restarts it."
         case .downloading: "Downloading release…"
         case .installing: "Installing and restarting…"
         case .failed(let why): "Upgrade failed: \(why)"
+        }
+    }
+
+    /// Distinct from the Mac-app banner: this upgrades the underlying
+    /// DefenseClaw runtime (CLI + gateway) via `defenseclaw upgrade`.
+    private var runtimeUpdateBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "server.rack")
+                .foregroundStyle(Cisco.green)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("DefenseClaw runtime \(appState.availableRuntimeUpdate?.tag ?? "") is available")
+                    .font(.callout.weight(.semibold))
+                Text(runtimeStatusText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            switch appState.runtimeUpgradeState {
+            case .installing, .downloading:
+                ProgressView().controlSize(.small).padding(.leading, 4)
+            default:
+                Button("Upgrade Runtime") { appState.performRuntimeUpgrade() }
+                    .controlSize(.small)
+                    .buttonStyle(.borderedProminent)
+                    .tint(Cisco.green)
+                if let url = appState.availableRuntimeUpdate.flatMap({ URL(string: $0.htmlURL) }) {
+                    Link("Release notes", destination: url)
+                        .font(.caption)
+                }
+                Button { appState.runtimeBannerDismissed = true } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+        .padding(10)
+        .background(Cisco.surfaceRaised, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Cisco.green.opacity(0.6)))
+        .padding(.top, 6)
+    }
+
+    private var runtimeStatusText: String {
+        switch appState.runtimeUpgradeState {
+        case .installing, .downloading:
+            return appState.runtimeUpgradeLogTail.isEmpty
+                ? "Running `defenseclaw upgrade` — gateway restarts when done…"
+                : appState.runtimeUpgradeLogTail
+        case .failed(let why):
+            return why
+        default:
+            return "Runtime update (CLI + gateway) — installed: \(appState.installedRuntimeVersion ?? "unknown"). Runs `defenseclaw upgrade`; your config is preserved."
         }
     }
 

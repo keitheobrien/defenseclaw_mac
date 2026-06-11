@@ -20,6 +20,16 @@ struct DefenseClawApp: App {
         }
         .defaultSize(width: 1180, height: 760)
         .commands {
+            // Standard macOS placement: app menu, right under "About".
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    Task { await appState.checkForUpdates(force: true) }
+                    // Surface the result where the versions live: Settings ▸ General.
+                    if NSApp.responds(to: Selector(("showSettingsWindow:"))) {
+                        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                    }
+                }
+            }
             CommandGroup(after: .toolbar) {
                 Button("Refresh Panel") {
                     NotificationCenter.default.post(name: .dcRefreshPanel, object: nil)

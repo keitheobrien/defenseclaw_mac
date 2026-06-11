@@ -46,12 +46,12 @@ private struct GeneralSettings: View {
                     }
                 }
 
-            Section("Updates") {
-                LabeledContent("Installed version", value: UpdateChecker.currentVersion)
+            Section("Updates — Mac app (this application)") {
+                LabeledContent("Installed", value: UpdateChecker.currentVersion)
                 if let update = appState.availableUpdate {
                     LabeledContent("Available", value: update.tag)
                     HStack {
-                        Button("Upgrade & Restart") { appState.performUpgrade() }
+                        Button("Upgrade App & Restart") { appState.performUpgrade() }
                         switch appState.upgradeState {
                         case .downloading: Text("Downloading…").font(.caption).foregroundStyle(.secondary)
                         case .installing: Text("Installing…").font(.caption).foregroundStyle(.secondary)
@@ -60,16 +60,43 @@ private struct GeneralSettings: View {
                         }
                     }
                 } else {
-                    HStack {
-                        Button(appState.upgradeState == .checking ? "Checking…" : "Check for Updates") {
-                            Task { await appState.checkForUpdates(force: true) }
-                        }
-                        .disabled(appState.upgradeState == .checking)
-                        Text("Up to date — checks GitHub Releases every 6 hours.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                    LabeledContent("Status",
+                                   value: appState.lastCheckFailed
+                                       ? "Could not check (offline or GitHub rate-limited)"
+                                       : "Up to date")
                 }
+            }
+
+            Section("Updates — DefenseClaw runtime (CLI + gateway)") {
+                LabeledContent("Installed", value: appState.installedRuntimeVersion ?? "unknown")
+                if let update = appState.availableRuntimeUpdate {
+                    LabeledContent("Available", value: update.tag)
+                    HStack {
+                        Button("Upgrade Runtime") { appState.performRuntimeUpgrade() }
+                        switch appState.runtimeUpgradeState {
+                        case .installing, .downloading:
+                            Text(appState.runtimeUpgradeLogTail.isEmpty ? "Running `defenseclaw upgrade`…" : appState.runtimeUpgradeLogTail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        case .failed(let why):
+                            Text(why).font(.caption).foregroundStyle(Cisco.red).lineLimit(2)
+                        default: EmptyView()
+                        }
+                    }
+                    Text("Runs `defenseclaw upgrade --yes`: downloads release artifacts, migrates, and restarts the gateway. Configuration is preserved.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    LabeledContent("Status",
+                                   value: appState.lastCheckFailed
+                                       ? "Could not check (offline or GitHub rate-limited)"
+                                       : "Up to date")
+                }
+                Button(appState.upgradeState == .checking ? "Checking…" : "Check Both for Updates") {
+                    Task { await appState.checkForUpdates(force: true) }
+                }
+                .disabled(appState.upgradeState == .checking)
             }
             Text("The menu bar shield is always available while DefenseClaw is running.")
                 .font(.caption)

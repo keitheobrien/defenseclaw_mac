@@ -27,6 +27,9 @@ enum UpgradeState: Equatable {
 
 actor UpdateChecker {
     static let repo = "keitheobrien/defenseclaw_mac"
+    /// The underlying DefenseClaw runtime (CLI + gateway) — upgraded via
+    /// `defenseclaw upgrade`, but version-checked against its releases here.
+    static let runtimeRepo = "cisco-ai-defense/defenseclaw"
 
     static var currentVersion: String {
         (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0"
@@ -46,9 +49,25 @@ actor UpdateChecker {
 
     // MARK: - Check
 
-    /// Returns the latest release, or nil when it can't be determined.
+    /// Latest Mac-app release.
     func latestRelease() async -> ReleaseInfo? {
-        guard let url = URL(string: "https://api.github.com/repos/\(Self.repo)/releases/latest") else { return nil }
+        await fetchLatest(repo: Self.repo)
+    }
+
+    /// Latest DefenseClaw runtime release (upstream repo).
+    func latestRuntimeRelease() async -> ReleaseInfo? {
+        await fetchLatest(repo: Self.runtimeRepo)
+    }
+
+    /// Parse "defenseclaw, version 0.7.0"-style output into "0.7.0".
+    static func parseVersion(_ output: String) -> String? {
+        let pattern = #"[0-9]+(\.[0-9]+)+"#
+        guard let range = output.range(of: pattern, options: .regularExpression) else { return nil }
+        return String(output[range])
+    }
+
+    private func fetchLatest(repo: String) async -> ReleaseInfo? {
+        guard let url = URL(string: "https://api.github.com/repos/\(repo)/releases/latest") else { return nil }
         var request = URLRequest(url: url, timeoutInterval: 10)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         guard let (data, response) = try? await URLSession.shared.data(for: request),
@@ -63,7 +82,7 @@ actor UpdateChecker {
             version: tag.hasPrefix("v") ? String(tag.dropFirst()) : tag,
             assetName: (zip?["name"] as? String) ?? "",
             assetURL: (zip?["browser_download_url"] as? String) ?? "",
-            htmlURL: (dict["html_url"] as? String) ?? "https://github.com/\(Self.repo)/releases",
+            htmlURL: (dict["html_url"] as? String) ?? "https://github.com/\(repo)/releases",
             notes: (dict["body"] as? String) ?? ""
         )
     }
