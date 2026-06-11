@@ -34,6 +34,10 @@ struct DefenseClawApp: App {
                     } else if index == 9 {
                         Button(panel.title) { appState.selectedPanel = panel }
                             .keyboardShortcut("0", modifiers: .command)
+                    } else if panel == .setup {
+                        // ⌘⇧3 would collide with macOS's screenshot hotkey.
+                        Button(panel.title) { appState.selectedPanel = panel }
+                            .keyboardShortcut("s", modifiers: [.command, .shift])
                     } else {
                         Button(panel.title) { appState.selectedPanel = panel }
                             .keyboardShortcut(KeyEquivalent(Character("\(index - 9)")), modifiers: [.command, .shift])

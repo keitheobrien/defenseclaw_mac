@@ -42,6 +42,10 @@ struct WizardDefinition: Identifiable {
     /// True for subcommands with no flags — they only run as interactive
     /// terminal wizards, so the sheet offers Copy Command instead of Apply.
     var interactiveOnly: Bool = false
+    /// When set, this wizard applies via the gateway instead of the CLI:
+    /// each non-empty field becomes PATCH /config/patch on
+    /// "<prefix>.<field key>" — mirroring the TUI's config-editor sections.
+    var configPatchPrefix: String? = nil
     let fields: [WizardField]
 }
 
@@ -130,6 +134,22 @@ enum Wizards {
                 WizardField(key: "judge-model", label: "Judge model", kind: .text(placeholder: "e.g. anthropic/claude-sonnet-4-6"),
                             visibleWhen: (key: "detection-strategy", equals: ["regex_judge", "judge_first"])),
                 WizardField(key: "block-message", label: "Block message", kind: .text(placeholder: "optional custom message")),
+            ]
+        ),
+        WizardDefinition(
+            id: "ai-defense", title: "AI Defense", icon: "cloud.fill",
+            blurb: "Connect the guardrail to Cisco AI Defense cloud inspection: endpoint, API key, timeout, and rules (config block: cisco_ai_defense).",
+            baseArgs: [],
+            configPatchPrefix: "cisco_ai_defense",
+            fields: [
+                WizardField(key: "endpoint", label: "Endpoint",
+                            kind: .text(placeholder: "https://… (Cisco AI Defense API endpoint)")),
+                WizardField(key: "api_key", label: "API key", kind: .secure(placeholder: "inspection API key"),
+                            help: "Stored inline in config.yaml (the TUI's Cisco section does the same). Prefer the env-var option below where possible."),
+                WizardField(key: "api_key_env", label: "API key env var", kind: .text(placeholder: "e.g. CISCO_AI_DEFENSE_API_KEY"),
+                            help: "Alternative to an inline key: the NAME of an env var (e.g. set in ~/.defenseclaw/.env) holding the key."),
+                WizardField(key: "timeout_ms", label: "Timeout (ms)", kind: .text(placeholder: "e.g. 5000")),
+                WizardField(key: "enabled_rules", label: "Enabled rules", kind: .text(placeholder: "CSV of cloud rules (optional)")),
             ]
         ),
         WizardDefinition(
@@ -283,8 +303,27 @@ struct WizardSheet: View {
 
     private var cliArguments: [String] { buildArguments(maskSecrets: false) }
 
+    /// Gateway-applied wizards: one PATCH /config/patch per non-empty field.
+    private var patchOperations: [(path: String, value: String, secure: Bool)] {
+        guard let prefix = wizard.configPatchPrefix else { return [] }
+        return visibleFields.compactMap { field in
+            let value = values[field.key] ?? ""
+            guard !value.isEmpty else { return nil }
+            if case .secure = field.kind {
+                return ("\(prefix).\(field.key)", value, true)
+            }
+            return ("\(prefix).\(field.key)", value, false)
+        }
+    }
+
     private var displayCommand: String {
-        (["defenseclaw"] + buildArguments(maskSecrets: true)).joined(separator: " ")
+        if wizard.configPatchPrefix != nil {
+            guard !patchOperations.isEmpty else { return "(no fields set — nothing to apply)" }
+            return patchOperations
+                .map { "PATCH /config/patch  \($0.path) = \($0.secure ? "••••••" : $0.value)" }
+                .joined(separator: "\n")
+        }
+        return (["defenseclaw"] + buildArguments(maskSecrets: true)).joined(separator: " ")
     }
 
     var body: some View {
@@ -377,7 +416,9 @@ struct WizardSheet: View {
     private var reviewBody: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Review").font(.subheadline.weight(.semibold))
-            Text(wizard.interactiveOnly
+            Text(wizard.configPatchPrefix != nil
+                 ? "These values apply through the gateway (PATCH /config/patch), exactly like the TUI's config-editor section:"
+                 : wizard.interactiveOnly
                  ? "This subcommand is an interactive terminal wizard (it takes no flags). Copy it and run it in your terminal:"
                  : "This exact command will run (matching the terminal TUI’s behavior):")
                 .font(.caption)
@@ -414,6 +455,10 @@ struct WizardSheet: View {
                         .keyboardShortcut(.defaultAction)
                         .buttonStyle(.borderedProminent)
                         .tint(Cisco.blue)
+                        .disabled(wizard.configPatchPrefix != nil && !appState.gatewayReachable)
+                        .help(wizard.configPatchPrefix != nil && !appState.gatewayReachable
+                              ? "Gateway offline — config patches need the gateway running."
+                              : "")
                 }
             }
         }
@@ -455,6 +500,10 @@ struct WizardSheet: View {
     private func apply() {
         phase = .running
         output = ""
+        if wizard.configPatchPrefix != nil {
+            applyPatches()
+            return
+        }
         Task {
             let result = await appState.cli.run(arguments: cliArguments) { line in
                 Task { @MainActor in output += line + "\n" }
@@ -462,6 +511,33 @@ struct WizardSheet: View {
             exitCode = result.exitCode
             if output.isEmpty { output = result.output }
             phase = .done
+        }
+    }
+
+    private func applyPatches() {
+        let operations = patchOperations
+        guard !operations.isEmpty else {
+            output = "Nothing to apply — all fields are empty."
+            exitCode = 1
+            phase = .done
+            return
+        }
+        Task {
+            var failures = 0
+            for op in operations {
+                do {
+                    // Numeric config keys (timeout_ms) want an int, not a string.
+                    let value: Any = op.path.hasSuffix("_ms") ? (Int(op.value) ?? op.value) : op.value
+                    try await appState.gateway.patchConfig(path: op.path, value: value)
+                    output += "✓ \(op.path)\n"
+                } catch {
+                    failures += 1
+                    output += "✗ \(op.path): \(error.localizedDescription)\n"
+                }
+            }
+            exitCode = failures == 0 ? 0 : Int32(failures)
+            phase = .done
+            if failures == 0 { appState.reloadConfig() }
         }
     }
 }
