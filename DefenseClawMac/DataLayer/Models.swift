@@ -504,7 +504,9 @@ struct InventoryItem: Identifiable, Sendable {
     var version: String
     var path: String
     var detail: String
-    var id: String { "\(category.rawValue)/\(name)/\(path)" }
+    var connector: String = ""
+    var verdict: String = ""   // aibom policy_verdict (rejected/approved/unscanned/…)
+    var id: String { "\(category.rawValue)/\(connector)/\(name)/\(path)" }
 }
 
 // MARK: - Registries
