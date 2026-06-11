@@ -70,7 +70,9 @@ final class AppState {
     var availableUpdate: ReleaseInfo?
     var upgradeState: UpgradeState = .idle
     var updateBannerDismissed = false
-    private var lastUpdateCheck: Date = .distantPast
+    /// Persisted across launches: GitHub's unauthenticated API allows 60
+    /// requests/hour per IP, so app relaunches must not re-check each time.
+    @ObservationIgnored @AppStorage("lastUpdateCheckTime") private var lastUpdateCheckTime: Double = 0
 
     // DefenseClaw runtime (CLI + gateway) update state
     var installedRuntimeVersion: String?
@@ -132,7 +134,9 @@ final class AppState {
             installDetected = await configStore.installPresent
             await gateway.update(config: cfg)
             startPulse()
-            await checkForUpdates(force: true)
+            // Respect the persisted 6h check window — relaunches must not
+            // burn the unauthenticated GitHub API quota (60/hr per IP).
+            await checkForUpdates()
         }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { _, _ in }
     }
@@ -248,8 +252,8 @@ final class AppState {
     /// Check GitHub for newer releases of BOTH the Mac app and the
     /// DefenseClaw runtime; re-checked every 6h by the pulse.
     func checkForUpdates(force: Bool = false) async {
-        guard force || Date().timeIntervalSince(lastUpdateCheck) > 6 * 3600 else { return }
-        lastUpdateCheck = Date()
+        guard force || Date().timeIntervalSince1970 - lastUpdateCheckTime > 6 * 3600 else { return }
+        lastUpdateCheckTime = Date().timeIntervalSince1970
         upgradeState = .checking
 
         // Mac app. A nil release means the check FAILED (offline, API rate
