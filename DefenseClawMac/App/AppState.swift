@@ -117,7 +117,8 @@ final class AppState {
         if monitoringPaused { return .paused }
         if scanInFlight { return .scanning }
         if !gatewayReachable { return .offline }
-        let count = unackedAlerts.filter { $0.severity >= .high }.count
+        // Same definition as the Findings tile and Alerts badge (C/H/M/L).
+        let count = unackedAlerts.filter { $0.severity > .info }.count
         if count > 0 { return .alerting(count: count) }
         let degraded = health.subsystems.contains { EntityState.classify($0.state) == .warn || EntityState.classify($0.state) == .blocked }
         if degraded || EntityState.classify(health.state) == .warn { return .degraded }
@@ -155,7 +156,23 @@ final class AppState {
 
     func pulse() async {
         do {
-            let snap = try await gateway.health()
+            var snap = try await gateway.health()
+            // Enrich connector rows: mode/rule pack from config, and
+            // audit-derived activity (hook connectors deliver calls
+            // out-of-band, so /health counters can sit at zero).
+            let stats = await audit.connectorStats()
+            for i in snap.connectors.indices {
+                let name = snap.connectors[i].name
+                snap.connectors[i].mode = config.connectorModes[name]
+                    ?? config.guardrailMode ?? "observe"
+                snap.connectors[i].rulePack = config.connectorRulePacks[name] ?? "default"
+                if let s = stats[name] {
+                    if snap.connectors[i].calls == 0 { snap.connectors[i].calls = s.hookCalls }
+                    if snap.connectors[i].blocks == 0 { snap.connectors[i].blocks = s.blocks }
+                    snap.connectors[i].alerts = s.alerts
+                    snap.connectors[i].lastActivity = s.lastActivity
+                }
+            }
             health = snap
             if !gatewayReachable, wasReachable == false, notifyGatewayOffline {
                 notify(title: "DefenseClaw gateway recovered",

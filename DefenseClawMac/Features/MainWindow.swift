@@ -61,9 +61,10 @@ struct MainWindow: View {
     @ViewBuilder
     private func badge(for panel: PanelID) -> some View {
         switch panel {
-        // Badge = critical/high count, matching the TUI's "N critical/high alert(s)".
-        case .alerts where appState.unackedAlerts.contains(where: { $0.severity >= .high }):
-            Text("\(appState.unackedAlerts.filter { $0.severity >= .high }.count)")
+        // Badge = all severity-bearing alerts (C/H/M/L) — same definition as
+        // the Overview Findings tile so the two numbers always agree.
+        case .alerts where appState.unackedAlerts.contains(where: { $0.severity > .info }):
+            Text("\(appState.unackedAlerts.filter { $0.severity > .info }.count)")
                 .font(.caption2.weight(.bold))
                 .padding(.horizontal, 6)
                 .padding(.vertical, 1)
