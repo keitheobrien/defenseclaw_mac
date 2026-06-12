@@ -59,6 +59,7 @@ struct OverviewView: View {
             }
         }
         .task { refresh() }
+        .task(id: appState.health.fetchedAt) { await loadData() } // pulse-fed
         .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in refresh() }
         .sheet(isPresented: $showDoctorSheet) {
             VStack(alignment: .leading, spacing: 10) {
@@ -261,10 +262,12 @@ struct OverviewView: View {
 
     // MARK: Actions
 
-    /// Same source as the Alerts chips: CRITICAL+HIGH alert rows
-    /// (audit queue + scan blocks + egress) — the TUI's critical_count().
+    /// The TUI's Findings tile counts ALL severity-bearing alert rows
+    /// (CRITICAL/HIGH/MEDIUM/LOW across audit queue + scan blocks + egress) —
+    /// disambiguated against TUI 0.7.0 live: 290 = C+H+LOW when the app's
+    /// C+H-only count read 265. The menu bar badge stays C+H ("critical/high").
     private var findingsCount: Int {
-        appState.unackedAlerts.filter { $0.severity >= .high }.count
+        appState.unackedAlerts.filter { $0.severity > .info }.count
     }
 
     private func summaryItem(_ title: String, _ value: String) -> some View {
@@ -277,13 +280,20 @@ struct OverviewView: View {
     private func refresh() {
         Task {
             await appState.pulse()
-            tiles = await appState.audit.overviewTileCounts()
-            summary = await appState.audit.enforcementSummary()
-            hourly = await appState.audit.hourlyEnforcement24h()
-                .map { HourlyPoint(hour: $0.hour, klass: $0.action, count: $0.count) }
-            if appState.gatewayReachable {
-                aiSnapshot = (try? await appState.gateway.aiUsage()) ?? AIUsageSnapshot()
-            }
+            await loadData()
+        }
+    }
+
+    /// Tile/summary/chart reload WITHOUT triggering a pulse — also driven by
+    /// the pulse tick (task(id: fetchedAt)) so the tiles track live data the
+    /// way the TUI's refresh does, without a pulse→fetchedAt→pulse loop.
+    private func loadData() async {
+        tiles = await appState.audit.overviewTileCounts()
+        summary = await appState.audit.enforcementSummary()
+        hourly = await appState.audit.hourlyEnforcement24h()
+            .map { HourlyPoint(hour: $0.hour, klass: $0.action, count: $0.count) }
+        if appState.gatewayReachable {
+            aiSnapshot = (try? await appState.gateway.aiUsage()) ?? AIUsageSnapshot()
         }
     }
 

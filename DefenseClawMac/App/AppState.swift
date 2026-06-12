@@ -95,7 +95,6 @@ final class AppState {
 
     // Alerts state
     var unackedAlerts: [AlertRow] = []
-    var acknowledgedIDs: Set<String> = []
     var dismissedIDs: Set<String> = []
     var scanInFlight = false
 
@@ -196,7 +195,7 @@ final class AppState {
         rows += egress.suffix(100).filter { $0.decision.lowercased() != "allowed" || $0.looksLikeLLM }.map { .egress($0) }
         rows.sort { $0.timestamp > $1.timestamp }
 
-        let fresh = rows.filter { !acknowledgedIDs.contains($0.id) && !dismissedIDs.contains($0.id) }
+        let fresh = rows.filter { !dismissedIDs.contains($0.id) }
 
         // Notify on rows newer than the persisted high-water mark.
         let highWater = Date(timeIntervalSince1970: seenAlertHighWater)
@@ -223,12 +222,16 @@ final class AppState {
     // MARK: - Actions
 
     /// Mirrors the TUI exactly: `defenseclaw alerts acknowledge --severity <S>`
-    /// downgrades that whole severity class to ACK in the audit DB.
+    /// downgrades that whole severity class to ACK in the audit DB. Audit rows
+    /// then drop out of the queue on refresh by themselves. Scan blocks and
+    /// egress rows are NOT suppressed — they come from the immutable
+    /// gateway.jsonl and the TUI re-shows them on every reload; hiding them
+    /// locally made Findings drift to zero against the TUI. Use Dismiss for a
+    /// view-local hide (also TUI parity: cleared on next app launch).
     func acknowledge(_ rows: [AlertRow]) async {
         var severities = Set<Severity>()
         for row in rows {
             if case .audit = row { severities.insert(row.severity) }
-            acknowledgedIDs.insert(row.id) // hides findings/egress rows locally
         }
         for severity in severities {
             _ = await cli.run(arguments: ["alerts", "acknowledge", "--severity", severity.rawValue])
