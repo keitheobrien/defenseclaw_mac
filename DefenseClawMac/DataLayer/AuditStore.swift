@@ -323,6 +323,48 @@ actor AuditStore {
         }
     }
 
+    struct ConnectorStats {
+        var hookCalls = 0
+        var blocks = 0
+        var alerts = 0
+        var lastActivity: Date?
+    }
+
+    /// Per-connector activity derived from recent audit events — the TUI's
+    /// fallback for hook connectors, whose calls arrive out-of-band of the
+    /// gateway's request counters. Connector attribution comes from the
+    /// `connector=<name>` kv token in each event's details.
+    func connectorStats(window: Int = 1000) -> [String: ConnectorStats] {
+        guard tableExists("audit_events") else { return [:] }
+        let rows = query("""
+            SELECT action, severity, timestamp, details FROM audit_events
+            ORDER BY timestamp DESC LIMIT ?
+            """, binds: [window])
+        var stats: [String: ConnectorStats] = [:]
+        for r in rows {
+            let details = (r["details"] as? String) ?? ""
+            guard let range = details.range(of: "connector=") else { continue }
+            let connector = details[range.upperBound...]
+                .prefix { !$0.isWhitespace && $0 != "," }
+            guard !connector.isEmpty else { continue }
+            let name = String(connector)
+            var s = stats[name] ?? ConnectorStats()
+            let action = ((r["action"] as? String) ?? "").lowercased()
+            if action == "connector-hook" { s.hookCalls += 1 }
+            if ["block", "guardrail-block", "deny", "quarantine"].contains(action)
+                || details.contains("action=block") || details.contains("action=deny") {
+                s.blocks += 1
+            }
+            let severity = Severity.parse(r["severity"] as? String)
+            if severity > .info { s.alerts += 1 }
+            if let ts = DCDates.parse(r["timestamp"]), ts > (s.lastActivity ?? .distantPast) {
+                s.lastActivity = ts
+            }
+            stats[name] = s
+        }
+        return stats
+    }
+
     /// Newest block-class event timestamp — used for new-alert detection.
     func latestBlockTimestamp() -> Date? {
         guard tableExists("audit_events") else { return nil }

@@ -12,6 +12,8 @@ struct DefenseClawConfig: Sendable {
     var connectorName: String?
     var connectorMode: String?
     var connectors: [String] = []
+    var connectorModes: [String: String] = [:]
+    var connectorRulePacks: [String: String] = [:]
     var guardrailEnabled = false
     var guardrailMode: String?
     var registrySources: [RegistrySourceConfig] = []
@@ -240,9 +242,17 @@ actor ConfigStore {
         c.connectorMode = root["connector.mode"]?.string ?? root["claw.mode"]?.string ?? root["mode"]?.string
         c.guardrailEnabled = root["guardrail.enabled"]?.bool ?? false
         c.guardrailMode = root["guardrail.mode"]?.string
-        // Multi-connector roster (guardrail.connectors: {codex: {...}, ...}).
+        // Multi-connector roster (guardrail.connectors: {codex: {...}, ...}),
+        // plus each connector's mode and rule pack for the Overview table.
         if let roster = root["guardrail.connectors"]?.mapping {
             c.connectors = roster.keys.sorted()
+            for (name, node) in roster {
+                guard let fields = node.mapping else { continue }
+                c.connectorModes[name] = fields["mode"]?.string ?? ""
+                if let packDir = fields["rule_pack_dir"]?.string, !packDir.isEmpty {
+                    c.connectorRulePacks[name] = (packDir as NSString).lastPathComponent
+                }
+            }
         }
         if let sources = root["registries.sources"]?.sequence ?? root["registries"]?.sequence {
             c.registrySources = sources.compactMap { node in

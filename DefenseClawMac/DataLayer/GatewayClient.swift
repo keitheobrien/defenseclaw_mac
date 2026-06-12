@@ -109,18 +109,25 @@ actor GatewayClient {
             }
         }
 
+        // Real /health connector fields: requests, tool_inspections,
+        // tool_blocks, subprocess_blocks, errors, since, state. Mode and
+        // rule pack live in config (guardrail.connectors.<name>), and
+        // last activity / alerts are derived from the audit DB — both are
+        // filled in by AppState.pulse() after this returns.
         let connectorList = (dict["connectors"] as? [[String: Any]])
             ?? (dict["connector_health"] as? [[String: Any]])
             ?? []
         snap.connectors = connectorList.map { c in
             ConnectorHealth(
                 name: (c["name"] as? String) ?? (c["connector"] as? String) ?? "connector",
-                mode: (c["mode"] as? String) ?? "observe",
-                rulePack: (c["rule_pack"] as? String) ?? (c["rulePack"] as? String) ?? "default",
-                lastActivity: DCDates.parse(c["last_activity"] ?? c["lastActivity"]),
-                calls: (c["calls"] as? Int) ?? 0,
-                blocks: (c["blocks"] as? Int) ?? 0,
-                alerts: (c["alerts"] as? Int) ?? 0,
+                mode: "",
+                rulePack: "",
+                lastActivity: nil,
+                calls: (c["requests"] as? Int) ?? 0,
+                blocks: ((c["tool_blocks"] as? Int) ?? 0) + ((c["subprocess_blocks"] as? Int) ?? 0),
+                alerts: 0,
+                inspections: (c["tool_inspections"] as? Int) ?? 0,
+                errors: (c["errors"] as? Int) ?? 0,
                 state: (c["state"] as? String) ?? (c["status"] as? String) ?? "active"
             )
         }
