@@ -114,6 +114,17 @@ struct MenuBarPopover: View {
     }
 
     private var footer: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let error = appState.ackError {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .font(.caption2)
+                    .foregroundStyle(Cisco.red)
+            }
+            footerButtons
+        }
+    }
+
+    private var footerButtons: some View {
         HStack {
             Button("Open DefenseClaw") {
                 AppDelegate.openMainWindow()
