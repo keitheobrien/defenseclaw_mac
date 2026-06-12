@@ -96,6 +96,8 @@ final class AppState {
     // Alerts state
     var unackedAlerts: [AlertRow] = []
     var dismissedIDs: Set<String> = []
+    /// Last `alerts acknowledge` failure, surfaced in the popover/panel.
+    var ackError: String?
     var scanInFlight = false
 
     // UI state
@@ -246,12 +248,25 @@ final class AppState {
     /// locally made Findings drift to zero against the TUI. Use Dismiss for a
     /// view-local hide (also TUI parity: cleared on next app launch).
     func acknowledge(_ rows: [AlertRow]) async {
+        ackError = nil
         var severities = Set<Severity>()
         for row in rows {
-            if case .audit = row { severities.insert(row.severity) }
+            if case .audit = row {
+                severities.insert(row.severity)
+            } else {
+                // Scan blocks / egress rows have no DB-side ack (they live in
+                // gateway.jsonl). An explicit Ack is still a user request to
+                // clear them, so hide them view-locally — the TUI's
+                // "Dismiss all" does the same local clear. Passive refreshes
+                // never suppress them (Findings parity).
+                dismissedIDs.insert(row.id)
+            }
         }
         for severity in severities {
-            _ = await cli.run(arguments: ["alerts", "acknowledge", "--severity", severity.rawValue])
+            let result = await cli.run(arguments: ["alerts", "acknowledge", "--severity", severity.rawValue])
+            if !result.succeeded {
+                ackError = "alerts acknowledge \(severity.rawValue) failed (exit \(result.exitCode))"
+            }
         }
         await refreshAlerts()
     }
