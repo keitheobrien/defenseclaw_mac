@@ -624,12 +624,7 @@ struct WizardSheet: View {
             var failures = 0
             for op in operations {
                 do {
-                    // Numeric config keys (timeout_ms) want an int, not a string.
-                    let value: Any = if op.path.hasSuffix("_ms"), let intValue = Int(op.value) {
-                        intValue
-                    } else {
-                        op.value
-                    }
+                    let value = dcCoerceConfigValue(op.value, forPath: op.path)
                     try await appState.gateway.patchConfig(path: op.path, value: value)
                     output += "✓ \(op.path)\n"
                 } catch {
@@ -689,7 +684,7 @@ struct ConfigEditorView: View {
     private func applyPatch() {
         Task {
             do {
-                try await appState.gateway.patchConfig(path: path, value: value)
+                try await appState.gateway.patchConfig(path: path, value: dcCoerceConfigValue(value, forPath: path))
                 status = "Applied \(path) — gateway accepted the change."
                 statusOK = true
                 appState.reloadConfig()
@@ -724,3 +719,22 @@ struct ConfigEditorView: View {
         }
     }
 }
+// MARK: - Shared helpers
+
+/// Coerce a string value typed into a wizard or config-editor field to the
+/// YAML scalar the gateway expects — int for *_ms / *_seconds keys, bool for
+/// "true"/"false". Wizard apply and direct config editor share this so the
+/// two write paths never drift on type-handling.
+fileprivate func dcCoerceConfigValue(_ raw: String, forPath path: String) -> Any {
+    let pathLower = path.lowercased()
+    if (pathLower.hasSuffix("_ms") || pathLower.hasSuffix("_seconds")),
+       let intValue = Int(raw) {
+        return intValue
+    }
+    switch raw.lowercased() {
+    case "true": return true
+    case "false": return false
+    default: return raw
+    }
+}
+

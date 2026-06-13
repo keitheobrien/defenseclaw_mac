@@ -279,8 +279,13 @@ struct OverviewView: View {
 
     private func refresh() {
         Task {
+            let before = appState.health.fetchedAt
             await appState.pulse()
-            await loadData()
+            // Online: pulse advances fetchedAt → task(id:) re-runs loadData on its own.
+            // Offline: fetchedAt is unchanged, so reload tiles explicitly from the audit DB.
+            if appState.health.fetchedAt == before {
+                await loadData()
+            }
         }
     }
 
