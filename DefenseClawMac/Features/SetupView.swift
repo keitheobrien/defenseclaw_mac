@@ -625,7 +625,11 @@ struct WizardSheet: View {
             for op in operations {
                 do {
                     // Numeric config keys (timeout_ms) want an int, not a string.
-                    let value: Any = op.path.hasSuffix("_ms") ? (Int(op.value) ?? op.value) : op.value
+                    let value: Any = if op.path.hasSuffix("_ms"), let intValue = Int(op.value) {
+                        intValue
+                    } else {
+                        op.value
+                    }
                     try await appState.gateway.patchConfig(path: op.path, value: value)
                     output += "✓ \(op.path)\n"
                 } catch {
