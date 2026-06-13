@@ -103,7 +103,9 @@ struct AlertsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in
             Task { await appState.refreshAlerts() }
         }
-        // Acknowledge clears the whole severity class — stronger confirm than the TUI (spec §15.5).
+        // Audit rows clear the whole severity class via the CLI (stronger confirm
+        // than the TUI, spec §15.5); scan/egress rows live in gateway.jsonl and
+        // fall through to a local hide (same as Dismiss).
         .confirmationDialog(
             "Acknowledge \(selectedRows.count) alert(s)?",
             isPresented: $confirmAck, titleVisibility: .visible
@@ -115,7 +117,7 @@ struct AlertsView: View {
                 }
             }
         } message: {
-            Text("Acknowledging runs `defenseclaw alerts acknowledge` for each selected severity, downgrading ALL alerts of that severity to ACK in the audit DB — exactly what the TUI's Ack does.")
+            Text("Audit rows run `defenseclaw alerts acknowledge --severity <S>` (downgrades the whole severity class in the audit DB). Scan and egress rows are hidden locally — they live in gateway.jsonl and reappear on next launch.")
         }
     }
 
