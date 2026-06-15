@@ -126,14 +126,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Keep running in the menu bar when the last window closes (spec §5.3).
+    /// The menu bar is the app's persistent anchor: closing the main window
+    /// (red X) NEVER terminates the process — only "Quit" from the menu bar
+    /// popover (or ⌘Q, which routes through NSApp.terminate) ends it.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        let hideOnClose = UserDefaults.standard.object(forKey: "hideOnClose") as? Bool ?? true
-        if hideOnClose, !UserDefaults.standard.bool(forKey: "showDockIconResolved") {
-            // Pure menu bar agent once the window is gone.
+        // Tidy the Dock when the icon is hidden: drop to a pure menu-bar agent
+        // so no empty Dock tile lingers. With the Dock icon shown, keep the
+        // tile so the window can be reopened by clicking it.
+        let showDock = UserDefaults.standard.object(forKey: "showDockIcon") as? Bool ?? true
+        if !showDock {
             NSApp.setActivationPolicy(.accessory)
         }
-        return !hideOnClose
+        return false
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

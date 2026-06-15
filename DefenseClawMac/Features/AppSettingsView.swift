@@ -22,7 +22,6 @@ struct AppSettingsView: View {
 private struct GeneralSettings: View {
     @Environment(AppState.self) private var appState
     @AppStorage("showDockIcon") private var showDockIcon = true
-    @AppStorage("hideOnClose") private var hideOnClose = true
     @AppStorage("hideOnMinimize") private var hideOnMinimize = true
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
@@ -34,7 +33,10 @@ private struct GeneralSettings: View {
                     NSApp.setActivationPolicy(newValue ? .regular : .accessory)
                     if newValue { NSApp.activate(ignoringOtherApps: true) }
                 }
-            Toggle("Hide app when window closes (keep running in menu bar)", isOn: $hideOnClose)
+            Label("Closing the window keeps DefenseClaw running in the menu bar. Use Quit in the menu bar popover (or ⌘Q) to fully exit.",
+                  systemImage: "menubar.arrow.up.rectangle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Toggle("Hide to menu bar when minimized (removes Dock icon until reopened)", isOn: $hideOnMinimize)
             Toggle("Launch at login", isOn: $launchAtLogin)
                 .onChange(of: launchAtLogin) { _, newValue in
