@@ -322,6 +322,27 @@ final class AppState {
 
     /// Runs `defenseclaw upgrade --yes` — downloads release artifacts,
     /// migrates, and restarts the gateway. Non-destructive per upstream docs.
+    /// Turn raw `defenseclaw upgrade` output into a human message. The common
+    /// case today is an UPSTREAM packaging conflict (the 0.7.2 wheel pins
+    /// click==8.3.1 while its own cisco-ai-mcp-scanner→litellm dep pins
+    /// click==8.1.8) — unsatisfiable in any environment, so it is not an app
+    /// problem and no app-side flag fixes it. Name that explicitly.
+    nonisolated static func summarizeUpgradeFailure(_ output: String, exitCode: Int32) -> String {
+        if output.contains("No solution found when resolving dependencies") {
+            // Pull the conflicting package names if present, for specificity.
+            let pkg = output.contains("cisco-ai-mcp-scanner") ? "cisco-ai-mcp-scanner" : "a dependency"
+            return "Upstream packaging conflict in this DefenseClaw release: its Python wheel and \(pkg) pin incompatible versions of the same library, so it cannot be installed in any environment. This is a bug in the release itself — not the app — and there is no upgrade flag that fixes it. Wait for a corrected upstream release. (Copy Full Upgrade Log in Settings for details.)"
+        }
+        if output.localizedCaseInsensitiveContains("could not determine latest release") {
+            return "Couldn't reach the release server (offline or GitHub rate-limited). Try again shortly."
+        }
+        // Fall back to the most meaningful single line.
+        let errorLine = output.split(separator: "\n")
+            .first { $0.contains("×") || $0.localizedCaseInsensitiveContains("error:") }
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        return errorLine ?? "defenseclaw upgrade exited \(exitCode). See Copy Full Upgrade Log in Settings."
+    }
+
     func performRuntimeUpgrade() {
         guard runtimeUpgradeState == .idle || runtimeUpgradeState == .checking,
               availableRuntimeUpdate != nil else { return }
@@ -342,14 +363,7 @@ final class AppState {
                 reloadConfig()                     // gateway restarted; reconnect
             } else {
                 runtimeUpgradeLog = result.output // full log, for Copy in Settings
-                // Surface the most meaningful line: prefer the resolver/installer
-                // error over the Python traceback tail.
-                let errorLine = result.output.split(separator: "\n")
-                    .first { $0.contains("×") || $0.localizedCaseInsensitiveContains("error:") }
-                    .map(String.init)
-                runtimeUpgradeState = .failed(
-                    errorLine ?? "defenseclaw upgrade exited \(result.exitCode): \(String(result.output.suffix(200)))"
-                )
+                runtimeUpgradeState = .failed(Self.summarizeUpgradeFailure(result.output, exitCode: result.exitCode))
             }
         }
     }

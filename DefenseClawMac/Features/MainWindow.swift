@@ -153,8 +153,9 @@ struct MainWindow: View {
                     .font(.callout.weight(.semibold))
                 Text(runtimeStatusText)
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .foregroundStyle(isRuntimeFailed ? Cisco.red : .secondary)
+                    .lineLimit(isRuntimeFailed ? 4 : 1)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             switch appState.runtimeUpgradeState {
             case .installing, .downloading:
@@ -178,6 +179,11 @@ struct MainWindow: View {
         .background(Cisco.surfaceRaised, in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Cisco.green.opacity(0.6)))
         .padding(.top, 6)
+    }
+
+    private var isRuntimeFailed: Bool {
+        if case .failed = appState.runtimeUpgradeState { return true }
+        return false
     }
 
     private var runtimeStatusText: String {
