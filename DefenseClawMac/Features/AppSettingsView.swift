@@ -52,18 +52,10 @@ private struct GeneralSettings: View {
                 LabeledContent("Installed", value: UpdateChecker.currentVersion)
                 if let update = appState.availableUpdate {
                     LabeledContent("Available", value: update.tag)
-                    HStack {
-                        Button("Upgrade App & Restart") { appState.performUpgrade() }
-                        switch appState.upgradeState {
-                        case .downloading: Text("Downloading…").font(.caption).foregroundStyle(.secondary)
-                        case .installing: Text("Installing…").font(.caption).foregroundStyle(.secondary)
-                        case .failed(let why): Text(why).font(.caption).foregroundStyle(Cisco.red)
-                        default: EmptyView()
-                        }
-                    }
+                    macAppStatus
                 } else {
                     LabeledContent("Status",
-                                   value: appState.lastCheckFailed
+                                   value: appState.appUpdateCheckFailed
                                        ? "Could not check (offline or GitHub rate-limited)"
                                        : "Up to date")
                 }
@@ -73,19 +65,7 @@ private struct GeneralSettings: View {
                 LabeledContent("Installed", value: appState.installedRuntimeVersion ?? "unknown")
                 if let update = appState.availableRuntimeUpdate {
                     LabeledContent("Available", value: update.tag)
-                    HStack {
-                        Button("Upgrade Runtime") { appState.performRuntimeUpgrade() }
-                        switch appState.runtimeUpgradeState {
-                        case .installing, .downloading:
-                            Text(appState.runtimeUpgradeLogTail.isEmpty ? "Running `defenseclaw upgrade`…" : appState.runtimeUpgradeLogTail)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        case .failed(let why):
-                            Text(why).font(.caption).foregroundStyle(Cisco.red).lineLimit(2)
-                        default: EmptyView()
-                        }
-                    }
+                    runtimeStatus
                     if case .failed = appState.runtimeUpgradeState, !appState.runtimeUpgradeLog.isEmpty {
                         Button("Copy Full Upgrade Log") {
                             copyToPasteboard(appState.runtimeUpgradeLog)
@@ -97,20 +77,99 @@ private struct GeneralSettings: View {
                         .foregroundStyle(.secondary)
                 } else {
                     LabeledContent("Status",
-                                   value: appState.lastCheckFailed
+                                   value: appState.runtimeUpdateCheckFailed
                                        ? "Could not check (offline or GitHub rate-limited)"
                                        : "Up to date")
                 }
-                Button(appState.upgradeState == .checking ? "Checking…" : "Check Both for Updates") {
-                    Task { await appState.checkForUpdates(force: true) }
+            }
+
+            Section("Update Actions") {
+                HStack(spacing: 8) {
+                    Button(macAppButtonTitle) {
+                        appState.performMacAppUpgradeCheck()
+                    }
+                    .disabled(macAppActionDisabled)
+
+                    Button(runtimeButtonTitle) {
+                        appState.performRuntimeUpgradeCheck()
+                    }
+                    .disabled(runtimeActionDisabled)
+
+                    Button("Upgrade Both") {
+                        appState.performBothUpgrades()
+                    }
+                    .disabled(macAppActionDisabled || runtimeActionDisabled)
                 }
-                .disabled(appState.upgradeState == .checking)
             }
             Text("The menu bar shield is always available while DefenseClaw is running.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
         .padding(20)
+    }
+
+    @ViewBuilder
+    private var macAppStatus: some View {
+        switch appState.upgradeState {
+        case .checking:
+            Text("Checking…").font(.caption).foregroundStyle(.secondary)
+        case .downloading:
+            Text("Downloading…").font(.caption).foregroundStyle(.secondary)
+        case .installing:
+            Text("Installing…").font(.caption).foregroundStyle(.secondary)
+        case .failed(let why):
+            Text(why).font(.caption).foregroundStyle(Cisco.red).lineLimit(2)
+        default:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private var runtimeStatus: some View {
+        switch appState.runtimeUpgradeState {
+        case .checking:
+            Text("Checking…").font(.caption).foregroundStyle(.secondary)
+        case .installing, .downloading:
+            Text(appState.runtimeUpgradeLogTail.isEmpty ? "Running `defenseclaw upgrade`…" : appState.runtimeUpgradeLogTail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        case .failed(let why):
+            Text(why).font(.caption).foregroundStyle(Cisco.red).lineLimit(2)
+        default:
+            EmptyView()
+        }
+    }
+
+    private var macAppButtonTitle: String {
+        switch appState.upgradeState {
+        case .checking: "Checking App…"
+        case .downloading: "Downloading App…"
+        case .installing: "Installing App…"
+        default: "Upgrade Mac App"
+        }
+    }
+
+    private var runtimeButtonTitle: String {
+        switch appState.runtimeUpgradeState {
+        case .checking: "Checking Runtime…"
+        case .downloading, .installing: "Upgrading Runtime…"
+        default: "Upgrade Runtime"
+        }
+    }
+
+    private var macAppActionDisabled: Bool {
+        switch appState.upgradeState {
+        case .checking, .downloading, .installing: true
+        default: false
+        }
+    }
+
+    private var runtimeActionDisabled: Bool {
+        switch appState.runtimeUpgradeState {
+        case .checking, .downloading, .installing: true
+        default: false
+        }
     }
 }
 

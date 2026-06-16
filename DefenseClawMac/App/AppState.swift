@@ -84,6 +84,7 @@ final class AppState {
     /// Persisted across launches: GitHub's unauthenticated API allows 60
     /// requests/hour per IP, so app relaunches must not re-check each time.
     @ObservationIgnored @AppStorage("lastUpdateCheckTime") private var lastUpdateCheckTime: Double = 0
+    @ObservationIgnored @AppStorage("lastMacAppUpdateCheckTime") private var lastMacAppUpdateCheckTime: Double = 0
 
     // DefenseClaw runtime (CLI + gateway) update state
     var installedRuntimeVersion: String?
@@ -91,11 +92,14 @@ final class AppState {
     var runtimeUpgradeState: UpgradeState = .idle
     var runtimeBannerDismissed = false
     var runtimeUpgradeLogTail = ""
+    @ObservationIgnored @AppStorage("lastRuntimeUpdateCheckTime") private var lastRuntimeUpdateCheckTime: Double = 0
     /// Full `defenseclaw upgrade` output from the last failed run (for Copy).
     var runtimeUpgradeLog = ""
     /// True when the last release lookup failed (offline / GitHub rate limit) —
     /// "Up to date" must not be claimed on a failed check.
     var lastCheckFailed = false
+    var appUpdateCheckFailed = false
+    var runtimeUpdateCheckFailed = false
 
     // Pulse state
     var health: HealthSnapshot = HealthSnapshot()
@@ -341,27 +345,70 @@ final class AppState {
     /// DefenseClaw runtime; re-checked every 6h by the pulse.
     func checkForUpdates(force: Bool = false) async {
         guard force || Date().timeIntervalSince1970 - lastUpdateCheckTime > 6 * 3600 else { return }
-        lastUpdateCheckTime = Date().timeIntervalSince1970
+        let now = Date().timeIntervalSince1970
+        lastUpdateCheckTime = now
+        lastMacAppUpdateCheckTime = now
+        lastRuntimeUpdateCheckTime = now
+
+        let appRelease = await refreshMacAppUpdate()
+        let runtimeRelease = await refreshRuntimeUpdate()
+        lastCheckFailed = (appRelease == nil || runtimeRelease == nil)
+    }
+
+    /// Check only this macOS app. Used by Settings when the user wants to keep
+    /// the DefenseClaw runtime untouched.
+    func checkForMacAppUpdate(force: Bool = false) async {
+        guard force || Date().timeIntervalSince1970 - lastMacAppUpdateCheckTime > 6 * 3600 else { return }
+        lastMacAppUpdateCheckTime = Date().timeIntervalSince1970
+
+        _ = await refreshMacAppUpdate()
+        lastCheckFailed = appUpdateCheckFailed || runtimeUpdateCheckFailed
+    }
+
+    /// Check only the underlying DefenseClaw runtime.
+    func checkForRuntimeUpdate(force: Bool = false) async {
+        guard force || Date().timeIntervalSince1970 - lastRuntimeUpdateCheckTime > 6 * 3600 else { return }
+        lastRuntimeUpdateCheckTime = Date().timeIntervalSince1970
+
+        _ = await refreshRuntimeUpdate()
+        lastCheckFailed = appUpdateCheckFailed || runtimeUpdateCheckFailed
+    }
+
+    private func refreshMacAppUpdate() async -> ReleaseInfo? {
         upgradeState = .checking
+        defer {
+            if upgradeState == .checking { upgradeState = .idle }
+        }
 
         // Mac app. A nil release means the check FAILED (offline, API rate
         // limit) — keep any previously known update rather than clearing it.
         let appRelease = await updater.latestRelease()
         if let release = appRelease {
+            appUpdateCheckFailed = false
             if UpdateChecker.isNewer(release.version, than: UpdateChecker.currentVersion) {
                 if release != availableUpdate { updateBannerDismissed = false }
                 availableUpdate = release
             } else {
                 availableUpdate = nil
             }
+        } else {
+            appUpdateCheckFailed = true
         }
-        upgradeState = .idle
+        return appRelease
+    }
+
+    private func refreshRuntimeUpdate() async -> ReleaseInfo? {
+        runtimeUpgradeState = .checking
+        defer {
+            if runtimeUpgradeState == .checking { runtimeUpgradeState = .idle }
+        }
 
         // DefenseClaw runtime: installed via `defenseclaw --version`,
         // latest from the upstream repo's releases.
         let versionResult = await cli.run(arguments: ["--version"])
         installedRuntimeVersion = UpdateChecker.parseVersion(versionResult.output)
         let runtimeRelease = await updater.latestRuntimeRelease()
+        runtimeUpdateCheckFailed = runtimeRelease == nil
         if let installed = installedRuntimeVersion, let latest = runtimeRelease {
             if UpdateChecker.isNewer(latest.version, than: installed) {
                 if latest != availableRuntimeUpdate { runtimeBannerDismissed = false }
@@ -370,7 +417,7 @@ final class AppState {
                 availableRuntimeUpdate = nil
             }
         }
-        lastCheckFailed = (appRelease == nil || runtimeRelease == nil)
+        return runtimeRelease
     }
 
     /// Runs `defenseclaw upgrade --yes` — downloads release artifacts,
@@ -396,28 +443,66 @@ final class AppState {
         return errorLine ?? "defenseclaw upgrade exited \(exitCode). See Copy Full Upgrade Log in Settings."
     }
 
+    func performMacAppUpgradeCheck() {
+        Task {
+            await checkForMacAppUpdate(force: true)
+            performUpgrade()
+        }
+    }
+
+    func performRuntimeUpgradeCheck() {
+        Task {
+            await checkForRuntimeUpdate(force: true)
+            _ = await runRuntimeUpgradeIfAvailable()
+        }
+    }
+
+    func performBothUpgrades() {
+        Task {
+            await checkForUpdates(force: true)
+            let shouldRefreshRuntimeAfterUpgrade = availableUpdate == nil
+            let runtimeUpgradeSucceeded = await runRuntimeUpgradeIfAvailable(refreshAfterSuccess: shouldRefreshRuntimeAfterUpgrade)
+            guard runtimeUpgradeSucceeded else { return }
+            performUpgrade()
+        }
+    }
+
     func performRuntimeUpgrade() {
-        guard runtimeUpgradeState == .idle || runtimeUpgradeState == .checking,
-              availableRuntimeUpdate != nil else { return }
+        Task {
+            _ = await runRuntimeUpgradeIfAvailable()
+        }
+    }
+
+    private func runRuntimeUpgradeIfAvailable(refreshAfterSuccess: Bool = true) async -> Bool {
+        switch runtimeUpgradeState {
+        case .downloading, .installing:
+            return false
+        default:
+            break
+        }
+        guard availableRuntimeUpdate != nil else { return true }
         runtimeUpgradeState = .installing
         runtimeUpgradeLogTail = ""
-        Task {
-            let result = await cli.run(arguments: ["upgrade", "--yes"]) { line in
-                Task { @MainActor in
-                    let trimmed = line.trimmingCharacters(in: .whitespaces)
-                    if !trimmed.isEmpty { self.runtimeUpgradeLogTail = trimmed }
-                }
+        let result = await cli.run(arguments: ["upgrade", "--yes"]) { line in
+            Task { @MainActor in
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if !trimmed.isEmpty { self.runtimeUpgradeLogTail = trimmed }
             }
-            if result.succeeded {
-                runtimeUpgradeState = .idle
-                runtimeUpgradeLogTail = ""
-                availableRuntimeUpdate = nil
-                await checkForUpdates(force: true) // re-read installed version
-                reloadConfig()                     // gateway restarted; reconnect
-            } else {
-                runtimeUpgradeLog = result.output // full log, for Copy in Settings
-                runtimeUpgradeState = .failed(Self.summarizeUpgradeFailure(result.output, exitCode: result.exitCode))
+        }
+        if result.succeeded {
+            runtimeUpgradeState = .idle
+            runtimeUpgradeLogTail = ""
+            runtimeUpgradeLog = ""
+            availableRuntimeUpdate = nil
+            if refreshAfterSuccess {
+                await checkForRuntimeUpdate(force: true) // re-read installed version
             }
+            reloadConfig()                    // gateway restarted; reconnect
+            return true
+        } else {
+            runtimeUpgradeLog = result.output // full log, for Copy in Settings
+            runtimeUpgradeState = .failed(Self.summarizeUpgradeFailure(result.output, exitCode: result.exitCode))
+            return false
         }
     }
 
