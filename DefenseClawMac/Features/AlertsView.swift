@@ -15,7 +15,11 @@ struct AlertsView: View {
     private var rows: [AlertRow] {
         appState.unackedAlerts.filter { row in
             if let severityFilter, row.severity != severityFilter { return false }
-            if kindFilter != "all", row.kind != kindFilter { return false }
+            if kindFilter == "blocks" {
+                guard isBlock(row) else { return false }
+            } else if kindFilter != "all", row.kind != kindFilter {
+                return false
+            }
             if !search.isEmpty {
                 let hay = "\(row.action) \(row.target) \(row.details)".lowercased()
                 if !hay.contains(search.lowercased()) { return false }
@@ -103,6 +107,8 @@ struct AlertsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in
             Task { await appState.refreshAlerts() }
         }
+        .task { applyPendingPanelRequest() }
+        .onChange(of: appState.alertPanelRequest) { _, _ in applyPendingPanelRequest() }
         // Audit rows clear the whole severity class via the CLI (stronger confirm
         // than the TUI, spec §15.5); scan/egress rows live in gateway.jsonl and
         // fall through to a local hide (same as Dismiss).
@@ -138,6 +144,7 @@ struct AlertsView: View {
                 Spacer()
                 Picker("Kind", selection: $kindFilter) {
                     Text("All kinds").tag("all")
+                    Text("Blocks").tag("blocks")
                     Text("Audit").tag("audit")
                     Text("Scans").tag("scan")
                     Text("Egress").tag("egress")
@@ -147,5 +154,24 @@ struct AlertsView: View {
             }
         }
         .padding(12)
+    }
+
+    private func isBlock(_ row: AlertRow) -> Bool {
+        let hay = "\(row.action) \(row.details)".lowercased()
+        return hay.contains("block") || hay.contains("reject")
+            || hay.contains("deny") || hay.contains("quarantine")
+    }
+
+    private func applyPendingPanelRequest() {
+        guard let request = appState.consumeAlertPanelRequest() else { return }
+        selection = []
+        search = ""
+        severityFilter = nil
+        switch request {
+        case .all:
+            kindFilter = "all"
+        case .blocks:
+            kindFilter = "blocks"
+        }
     }
 }

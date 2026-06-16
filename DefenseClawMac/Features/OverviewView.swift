@@ -176,24 +176,54 @@ struct OverviewView: View {
     private var enforcementTilesCard: some View {
         DCCard("Enforcement", systemImage: "checkmark.shield", fillHeight: true) {
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 10) {
-                StatCard(
-                    title: "Hook Calls (\(max(appState.health.connectors.count, 1)) connectors)",
-                    value: "\(tiles.hookCalls)", tint: Cisco.blue
-                )
-                StatCard(title: "Blocks", value: "\(tiles.blocks)",
-                         tint: tiles.blocks > 0 ? Cisco.red : .secondary)
-                StatCard(title: "Findings", value: "\(findingsCount)", tint: Cisco.orange)
-                StatCard(
-                    title: "Guardrail",
-                    value: appState.config.guardrailEnabled ? "ON" : "OFF",
-                    tint: appState.config.guardrailEnabled ? Cisco.green : .secondary
-                ) {
-                    if let mode = appState.config.guardrailMode {
-                        Text(mode).font(.caption2).foregroundStyle(.secondary)
-                    }
+                Button {
+                    appState.openLogs(.init(preset: .hooks))
+                } label: {
+                    StatCard(
+                        title: "Hook Calls (\(max(appState.health.connectors.count, 1)) connectors)",
+                        value: "\(tiles.hookCalls)", tint: Cisco.blue
+                    )
                 }
+                .buttonStyle(.plain)
+                .help("Open hook logs")
+
+                Button {
+                    appState.openAudit(preset: "blocks")
+                } label: {
+                    StatCard(title: "Blocks", value: "\(tiles.blocks)",
+                             tint: tiles.blocks > 0 ? Cisco.red : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Open blocked audit events")
+
+                Button {
+                    appState.openAlerts(filter: .all)
+                } label: {
+                    StatCard(title: "Findings", value: "\(findingsCount)", tint: Cisco.orange)
+                }
+                .buttonStyle(.plain)
+                .help("Open all alerts")
+
+                Button {
+                    appState.openLogs(.init(preset: .guardrail))
+                } label: {
+                    StatCard(
+                        title: guardrailTileTitle,
+                        value: appState.config.guardrailEnabled ? "ON" : "OFF",
+                        tint: appState.config.guardrailEnabled ? Cisco.green : .secondary
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Open guardrail logs")
             }
         }
+    }
+
+    private var guardrailTileTitle: String {
+        if let mode = appState.config.guardrailMode, !mode.isEmpty {
+            return "Guardrail - \(mode)"
+        }
+        return "Guardrail"
     }
 
     /// Hero card: scanner/guardrail/keys status, mirroring the TUI's SCANNERS box.

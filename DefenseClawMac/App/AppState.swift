@@ -55,6 +55,17 @@ enum PanelID: String, CaseIterable, Identifiable {
     }
 }
 
+enum AlertPanelRequest: Equatable {
+    case all
+    case blocks
+}
+
+struct LogPanelRequest: Equatable {
+    var preset: LogPreset
+    var actionFilter: String = "all"
+    var eventTypeFilter: String = "all"
+}
+
 @Observable
 @MainActor
 final class AppState {
@@ -104,6 +115,9 @@ final class AppState {
     // UI state
     var selectedPanel: PanelID = .overview
     var monitoringPaused = false
+    var alertPanelRequest: AlertPanelRequest?
+    var auditPresetRequest: String?
+    var logPanelRequest: LogPanelRequest?
 
     // Settings (mirrored via @AppStorage in views; defaults here)
     @ObservationIgnored @AppStorage("pulseInterval") var pulseInterval: Double = 5
@@ -287,6 +301,38 @@ final class AppState {
     func dismiss(_ rows: [AlertRow]) {
         for row in rows { dismissedIDs.insert(row.id) }
         unackedAlerts.removeAll { row in rows.contains { $0.id == row.id } }
+    }
+
+    // MARK: - Panel deep links
+
+    func openAlerts(filter: AlertPanelRequest) {
+        alertPanelRequest = filter
+        selectedPanel = .alerts
+    }
+
+    func consumeAlertPanelRequest() -> AlertPanelRequest? {
+        defer { alertPanelRequest = nil }
+        return alertPanelRequest
+    }
+
+    func openAudit(preset: String) {
+        auditPresetRequest = preset
+        selectedPanel = .audit
+    }
+
+    func consumeAuditPresetRequest() -> String? {
+        defer { auditPresetRequest = nil }
+        return auditPresetRequest
+    }
+
+    func openLogs(_ request: LogPanelRequest) {
+        logPanelRequest = request
+        selectedPanel = .logs
+    }
+
+    func consumeLogPanelRequest() -> LogPanelRequest? {
+        defer { logPanelRequest = nil }
+        return logPanelRequest
     }
 
     // MARK: - Self-update

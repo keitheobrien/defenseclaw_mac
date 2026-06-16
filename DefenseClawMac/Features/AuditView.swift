@@ -58,9 +58,16 @@ struct AuditView: View {
                 }
             }
         }
-        .task { load(reset: true) }
+        .task {
+            if !applyPendingPanelRequest() {
+                load(reset: true)
+            }
+        }
         .onChange(of: preset) { _, _ in load(reset: true) }
         .onChange(of: search) { _, _ in load(reset: true) }
+        .onChange(of: appState.auditPresetRequest) { _, _ in
+            _ = applyPendingPanelRequest()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in load(reset: true) }
         .fileExporter(
             isPresented: $exporterPresented,
@@ -162,6 +169,19 @@ struct AuditView: View {
             exportDocument = AuditExportDocument(data: data)
             exporterPresented = true
         }
+    }
+
+    @discardableResult
+    private func applyPendingPanelRequest() -> Bool {
+        guard let requested = appState.consumeAuditPresetRequest() else { return false }
+        selection = []
+        search = ""
+        if preset == requested {
+            load(reset: true)
+        } else {
+            preset = requested
+        }
+        return true
     }
 }
 

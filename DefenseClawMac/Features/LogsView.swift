@@ -67,7 +67,13 @@ struct LogsView: View {
                 }
             }
         }
-        .task { await load() }
+        .task {
+            if applyPendingPanelRequest() {
+                await load(force: true)
+            } else {
+                await load()
+            }
+        }
         .task(id: appState.health.fetchedAt) { await load() } // pulse-fed
         .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in reload() }
         .onChange(of: preset) { _, _ in applyFilter() }
@@ -75,6 +81,10 @@ struct LogsView: View {
         .onChange(of: actionFilter) { _, _ in applyFilter() }
         .onChange(of: eventTypeFilter) { _, _ in applyFilter() }
         .onChange(of: search) { _, _ in applyFilter() }
+        .onChange(of: appState.logPanelRequest) { _, _ in
+            guard applyPendingPanelRequest() else { return }
+            Task { await load(force: true) }
+        }
     }
 
     private var filterBar: some View {
@@ -173,5 +183,18 @@ struct LogsView: View {
             _ = await appState.stream.reload()
             await load(force: true)
         }
+    }
+
+    @discardableResult
+    private func applyPendingPanelRequest() -> Bool {
+        guard let request = appState.consumeLogPanelRequest() else { return false }
+        preset = request.preset
+        actionFilter = request.actionFilter
+        eventTypeFilter = request.eventTypeFilter
+        severityFloor = nil
+        search = ""
+        stream = .gateway
+        autoScroll = true
+        return true
     }
 }
