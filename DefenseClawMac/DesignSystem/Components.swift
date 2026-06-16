@@ -74,11 +74,15 @@ struct StatCard<Content: View>: View {
 struct DCCard<Content: View>: View {
     let title: String
     var systemImage: String?
+    /// When true the card stretches to fill the available height so siblings
+    /// in an equal-height row share one rectangle height (content stays top).
+    var fillHeight: Bool = false
     @ViewBuilder var content: Content
 
-    init(_ title: String, systemImage: String? = nil, @ViewBuilder content: () -> Content) {
+    init(_ title: String, systemImage: String? = nil, fillHeight: Bool = false, @ViewBuilder content: () -> Content) {
         self.title = title
         self.systemImage = systemImage
+        self.fillHeight = fillHeight
         self.content = content()
     }
 
@@ -92,9 +96,10 @@ struct DCCard<Content: View>: View {
                 Spacer()
             }
             content
+            if fillHeight { Spacer(minLength: 0) }
         }
         .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: fillHeight ? .infinity : nil, alignment: .topLeading)
         .background(Cisco.surfacePanel, in: RoundedRectangle(cornerRadius: 12))
     }
 }

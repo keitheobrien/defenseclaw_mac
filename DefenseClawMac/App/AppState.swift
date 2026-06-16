@@ -88,6 +88,7 @@ final class AppState {
 
     // Pulse state
     var health: HealthSnapshot = HealthSnapshot()
+    var scanners: [ScannerStatus] = []
     var gatewayReachable = false
     var lastGatewayError: GatewayError?
     var config = DefenseClawConfig()
@@ -193,6 +194,12 @@ final class AppState {
             gatewayReachable = false
         }
         wasReachable = gatewayReachable
+
+        // Scanner statuses don't depend on the gateway (binaries on PATH,
+        // config, .env) — refresh them even when offline so the card stays
+        // useful. guardrailState falls back to the last-known subsystem.
+        let guardrailState = health.subsystems.first { $0.name == "guardrail" }?.state
+        scanners = ScannerProbe.statuses(config: config, guardrailState: guardrailState)
 
         // Tail the JSONL stream and refresh the alert set.
         _ = await stream.poll()

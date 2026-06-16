@@ -16,6 +16,8 @@ struct DefenseClawConfig: Sendable {
     var connectorRulePacks: [String: String] = [:]
     var guardrailEnabled = false
     var guardrailMode: String?
+    var guardrailPort: Int?
+    var guardrailRulePack: String = "default"
     var registrySources: [RegistrySourceConfig] = []
     var raw: YAMLNode = .mapping([:])
 
@@ -242,6 +244,10 @@ actor ConfigStore {
         c.connectorMode = root["connector.mode"]?.string ?? root["claw.mode"]?.string ?? root["mode"]?.string
         c.guardrailEnabled = root["guardrail.enabled"]?.bool ?? false
         c.guardrailMode = root["guardrail.mode"]?.string
+        c.guardrailPort = root["guardrail.port"]?.int
+        if let packDir = root["guardrail.rule_pack_dir"]?.string, !packDir.isEmpty {
+            c.guardrailRulePack = (packDir as NSString).lastPathComponent
+        }
         // Multi-connector roster (guardrail.connectors: {codex: {...}, ...}),
         // plus each connector's mode and rule pack for the Overview table.
         if let roster = root["guardrail.connectors"]?.mapping {

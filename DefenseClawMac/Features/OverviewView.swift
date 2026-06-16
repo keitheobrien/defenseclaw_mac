@@ -25,14 +25,19 @@ struct OverviewView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 14) {
-                // Hero row: compact health card beside the enforcement tile grid —
-                // no full-width card with dead space in the middle.
+                // Hero row: System Health · Scanners · Enforcement —
+                // the three at-a-glance status blocks, all equal height.
+                // fixedSize pins the row to its tallest card; fillHeight on
+                // each card stretches the shorter ones to match.
                 HStack(alignment: .top, spacing: 14) {
                     healthCard
+                        .frame(maxWidth: .infinity)
+                    scannersCard
                         .frame(maxWidth: .infinity)
                     enforcementTilesCard
                         .frame(maxWidth: .infinity)
                 }
+                .fixedSize(horizontal: false, vertical: true)
                 if !appState.health.connectors.isEmpty { connectorCard }
                 activityCard
                 HStack(alignment: .top, spacing: 14) {
@@ -81,7 +86,7 @@ struct OverviewView: View {
     // MARK: Cards
 
     private var healthCard: some View {
-        DCCard("System Health", systemImage: "heart.text.square") {
+        DCCard("System Health", systemImage: "heart.text.square", fillHeight: true) {
             if appState.gatewayReachable {
                 // Headline: state + uptime side by side, no dead space.
                 HStack(spacing: 10) {
@@ -169,7 +174,7 @@ struct OverviewView: View {
 
     /// Hero right half: the TUI's four tiles as a 2×2 grid.
     private var enforcementTilesCard: some View {
-        DCCard("Enforcement", systemImage: "checkmark.shield") {
+        DCCard("Enforcement", systemImage: "checkmark.shield", fillHeight: true) {
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 10) {
                 StatCard(
                     title: "Hook Calls (\(max(appState.health.connectors.count, 1)) connectors)",
@@ -188,6 +193,39 @@ struct OverviewView: View {
                     }
                 }
             }
+        }
+    }
+
+    /// Hero card: scanner/guardrail/keys status, mirroring the TUI's SCANNERS box.
+    private var scannersCard: some View {
+        DCCard("Scanners", systemImage: "magnifyingglass.circle", fillHeight: true) {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(appState.scanners) { s in
+                    HStack(spacing: 6) {
+                        Circle().fill(scannerColor(s.level)).frame(width: 7, height: 7)
+                        Text(s.name)
+                            .font(.caption.weight(.medium))
+                        Spacer(minLength: 8)
+                        Text(s.detail)
+                            .font(.caption)
+                            .foregroundStyle(scannerColor(s.level))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
+                if appState.scanners.isEmpty {
+                    Text("Probing scanners…").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func scannerColor(_ level: ScannerStatus.Level) -> Color {
+        switch level {
+        case .active: Cisco.green
+        case .builtin: .secondary
+        case .warn: Cisco.orange
+        case .missing: Cisco.red
         }
     }
 
