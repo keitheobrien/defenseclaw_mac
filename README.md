@@ -6,7 +6,11 @@ Native menu-bar companion app for [cisco-ai-defense/defenseclaw](https://github.
 
 The app lives in the menu bar: the shield icon shows live gateway/alert state, and the popover gives an at-a-glance summary with recent findings — even while the main window is closed or minimized.
 
-<p align="center"><img src="images/menubar-popover.png" width="420" alt="Menu bar popover"></p>
+<p align="center">
+  <img src="images/menubar-popover.png" width="352" alt="Menu bar popover">
+  &nbsp;&nbsp;
+  <img src="images/settings-general.png" width="289" alt="Settings window with update controls">
+</p>
 
 ## Install
 
