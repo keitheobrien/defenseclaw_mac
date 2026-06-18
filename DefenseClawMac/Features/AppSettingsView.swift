@@ -15,7 +15,9 @@ struct AppSettingsView: View {
             ConnectionSettings()
                 .tabItem { Label("Connection", systemImage: "network") }
         }
-        .frame(width: 480, height: 320)
+        // Tall enough for the General tab's grouped sections so nothing
+        // scrolls; wide enough that Connection's file paths aren't clipped.
+        .frame(width: 560, height: 720)
     }
 }
 
@@ -27,26 +29,28 @@ private struct GeneralSettings: View {
 
     var body: some View {
         Form {
-            Toggle("Show Dock icon", isOn: $showDockIcon)
-                .onChange(of: showDockIcon) { _, newValue in
-                    UserDefaults.standard.set(newValue, forKey: "showDockIconResolved")
-                    NSApp.setActivationPolicy(newValue ? .regular : .accessory)
-                    if newValue { NSApp.activate(ignoringOtherApps: true) }
-                }
-            Label("Closing the window keeps DefenseClaw running in the menu bar. Use Quit in the menu bar popover (or ⌘Q) to fully exit.",
-                  systemImage: "menubar.arrow.up.rectangle")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Toggle("Hide to menu bar when minimized (removes Dock icon until reopened)", isOn: $hideOnMinimize)
-            Toggle("Launch at login", isOn: $launchAtLogin)
-                .onChange(of: launchAtLogin) { _, newValue in
-                    do {
-                        if newValue { try SMAppService.mainApp.register() }
-                        else { try SMAppService.mainApp.unregister() }
-                    } catch {
-                        launchAtLogin = SMAppService.mainApp.status == .enabled
+            Section("General") {
+                Toggle("Show Dock icon", isOn: $showDockIcon)
+                    .onChange(of: showDockIcon) { _, newValue in
+                        UserDefaults.standard.set(newValue, forKey: "showDockIconResolved")
+                        NSApp.setActivationPolicy(newValue ? .regular : .accessory)
+                        if newValue { NSApp.activate(ignoringOtherApps: true) }
                     }
-                }
+                Toggle("Hide to menu bar when minimized (removes Dock icon until reopened)", isOn: $hideOnMinimize)
+                Toggle("Launch at login", isOn: $launchAtLogin)
+                    .onChange(of: launchAtLogin) { _, newValue in
+                        do {
+                            if newValue { try SMAppService.mainApp.register() }
+                            else { try SMAppService.mainApp.unregister() }
+                        } catch {
+                            launchAtLogin = SMAppService.mainApp.status == .enabled
+                        }
+                    }
+                Label("Closing the window keeps DefenseClaw running in the menu bar. Use Quit in the menu bar popover (or ⌘Q) to fully exit.",
+                      systemImage: "menubar.arrow.up.rectangle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             Section("Updates — Mac app (this application)") {
                 LabeledContent("Installed", value: UpdateChecker.currentVersion)
@@ -105,7 +109,7 @@ private struct GeneralSettings: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .padding(20)
+        .formStyle(.grouped)
     }
 
     @ViewBuilder
@@ -180,24 +184,48 @@ private struct MonitoringSettings: View {
 
     var body: some View {
         Form {
-            LabeledContent("Health pulse") {
-                Slider(value: $pulseInterval, in: 2...60, step: 1) {
-                    Text("Pulse")
-                } minimumValueLabel: { Text("2s") } maximumValueLabel: { Text("60s") }
-                .frame(width: 220)
+            Section("Refresh cadence") {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Health pulse")
+                        Spacer()
+                        Text("\(Int(pulseInterval))s")
+                            .font(.body.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    Slider(value: $pulseInterval, in: 2...60, step: 1) {
+                        Text("Health pulse")
+                    } minimumValueLabel: { Text("2s").font(.caption2) }
+                      maximumValueLabel: { Text("60s").font(.caption2) }
+                    .labelsHidden()
+                    Text("Drives the menu bar icon, health card, and alert detection.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Background refresh")
+                        Spacer()
+                        Text(backgroundInterval >= 60
+                             ? "\(Int(backgroundInterval / 60))m" : "\(Int(backgroundInterval))s")
+                            .font(.body.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    Slider(value: $backgroundInterval, in: 15...300, step: 15) {
+                        Text("Background refresh")
+                    } minimumValueLabel: { Text("15s").font(.caption2) }
+                      maximumValueLabel: { Text("5m").font(.caption2) }
+                    .labelsHidden()
+                    Text("Cadence for heavier panels (audit counts, AI usage) while the app runs.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
-            Text("Currently every \(Int(pulseInterval))s — drives the menu bar icon, health card, and alert detection.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            LabeledContent("Background refresh") {
-                Slider(value: $backgroundInterval, in: 15...300, step: 15) {
-                    Text("Background")
-                } minimumValueLabel: { Text("15s") } maximumValueLabel: { Text("5m") }
-                .frame(width: 220)
+            Section {
+                Toggle("Keep monitoring while window is hidden", isOn: $backgroundMonitoring)
             }
-            Toggle("Keep monitoring while window is hidden", isOn: $backgroundMonitoring)
         }
-        .padding(20)
+        .formStyle(.grouped)
     }
 }
 
@@ -209,15 +237,19 @@ private struct NotificationSettings: View {
 
     var body: some View {
         Form {
-            Toggle("Notify on CRITICAL findings", isOn: $notifyCritical)
-            Toggle("Notify on HIGH findings", isOn: $notifyHigh)
-            Toggle("Notify when gateway goes offline / recovers", isOn: $notifyGatewayOffline)
-            Text("Notifications include target and severity only — never prompt or payload contents.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Button("Reset seen-alert history") { seenAlertHighWater = 0 }
+            Section("Desktop notifications") {
+                Toggle("Notify on CRITICAL findings", isOn: $notifyCritical)
+                Toggle("Notify on HIGH findings", isOn: $notifyHigh)
+                Toggle("Notify when gateway goes offline / recovers", isOn: $notifyGatewayOffline)
+                Text("Notifications include target and severity only — never prompt or payload contents.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                Button("Reset seen-alert history") { seenAlertHighWater = 0 }
+            }
         }
-        .padding(20)
+        .formStyle(.grouped)
     }
 }
 
@@ -227,14 +259,35 @@ private struct ConnectionSettings: View {
 
     var body: some View {
         Form {
-            LabeledContent("Gateway", value: "http://\(appState.config.gatewayHost):\(appState.config.gatewayPort)")
-            LabeledContent("Config", value: ConfigStore.configURL.path)
-            LabeledContent("Audit DB", value: ConfigStore.auditDBURL.path)
-            LabeledContent("Token", value: appState.config.gatewayToken == nil ? "not set" : "configured (hidden)")
-            TextField("defenseclaw binary path (optional override)", text: $binaryPath)
-                .textFieldStyle(.roundedBorder)
-            Button("Reload config.yaml now") { appState.reloadConfig() }
+            Section("Gateway") {
+                LabeledContent("Endpoint", value: "http://\(appState.config.gatewayHost):\(appState.config.gatewayPort)")
+                LabeledContent("Token", value: appState.config.gatewayToken == nil ? "not set" : "configured (hidden)")
+            }
+            // Paths get their own line, monospaced + selectable, so long
+            // values aren't clipped by the label/value column truncation.
+            Section("Files") {
+                pathRow("Config", ConfigStore.configURL.path)
+                pathRow("Audit DB", ConfigStore.auditDBURL.path)
+            }
+            Section("defenseclaw CLI") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Binary path (optional override)")
+                    TextField("auto-detected on PATH if blank", text: $binaryPath)
+                        .textFieldStyle(.roundedBorder)
+                }
+                Button("Reload config.yaml now") { appState.reloadConfig() }
+            }
         }
-        .padding(20)
+        .formStyle(.grouped)
+    }
+
+    private func pathRow(_ label: String, _ path: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(.caption).foregroundStyle(.secondary)
+            Text(path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                .font(.callout.monospaced())
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
