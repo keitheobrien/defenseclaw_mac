@@ -10,7 +10,7 @@ The app lives in the menu bar: the shield icon shows live gateway/alert state, a
 
 ## Install
 
-Grab the latest prebuilt app from [Releases](https://github.com/keitheobrien/defenseclaw_mac/releases) (arm64, macOS 14+). The app is ad-hoc signed, not notarized — on first launch use right-click → Open, or clear quarantine with `xattr -d com.apple.quarantine /Applications/DefenseClawMac.app`.
+Grab the latest prebuilt app from [Releases](https://github.com/keitheobrien/defenseclaw_mac/releases) (arm64, macOS 14+). Release builds are signed with Developer ID, use hardened runtime, and are notarized by Apple with a stapled ticket. Unzip the archive, move `DefenseClawMac.app` to `/Applications`, then open it normally. If you previously installed an ad-hoc build, delete the old `/Applications/DefenseClawMac.app` before copying in the notarized release.
 
 ## Build & run
 
@@ -24,7 +24,7 @@ Build from source — no prebuilt binary ships in the git tree itself (`build/` 
   ```
   open "$(xcodebuild -project DefenseClawMac.xcodeproj -scheme DefenseClawMac -configuration Release -showBuildSettings | awk '/BUILT_PRODUCTS_DIR/{print $3; exit}')/DefenseClawMac.app"
   ```
-- Requires macOS 14+ and Xcode 16+. No external dependencies (SQLite via the SDK's `SQLite3` module; YAML via a built-in minimal parser). The build is ad-hoc signed for local use — it is not notarized for distribution.
+- Requires macOS 14+ and Xcode 16+. No external dependencies (SQLite via the SDK's `SQLite3` module; YAML via a built-in minimal parser). Local source builds are for development; distribution releases are built separately with Developer ID signing and Apple notarization.
 
 ## What it connects to
 
