@@ -88,16 +88,21 @@ actor AuditStore {
 
     private func decodeAuditEvent(_ r: [String: Any]) -> AuditEvent {
         let details = (r["details"] as? String) ?? ""
-        // Connector attribution comes from the `connector=` kv in details
-        // (the TUI's parse_kv_details), not the actor (which is the hook name).
-        let connector = ConnectorAttribution.fromDetails(details)
+        let target = (r["target"] as? String) ?? ""
+        // Connector attribution: the `connector=` kv in details (the TUI's
+        // parse_kv_details), else the "<connector>:<event>" target prefix —
+        // not the actor, which is the hook name.
+        let connector = {
+            let kv = ConnectorAttribution.fromDetails(details)
+            return kv.isEmpty ? ConnectorAttribution.fromTarget(target) : kv
+        }()
         return AuditEvent(
             id: (r["id"] as? String) ?? String(describing: r["id"] ?? UUID().uuidString),
             timestamp: DCDates.parse(r["timestamp"]) ?? Date(timeIntervalSince1970: 0),
             action: (r["action"] as? String) ?? "",
             eventType: (r["event_type"] as? String) ?? (r["type"] as? String) ?? "audit",
             connector: connector.isEmpty ? ((r["connector"] as? String) ?? "") : connector,
-            target: (r["target"] as? String) ?? "",
+            target: target,
             actor: (r["actor"] as? String) ?? "",
             details: details,
             structuredJSON: (r["structured_json"] as? String) ?? "",

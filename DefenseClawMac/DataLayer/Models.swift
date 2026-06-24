@@ -587,6 +587,20 @@ enum ConnectorAttribution {
         guard let range = details.range(of: "connector=") else { return "" }
         return String(details[range.upperBound...].prefix { !$0.isWhitespace && $0 != "," })
     }
+
+    /// Hook scan targets are "<connector>:<event>" (e.g. "claudecode:PostToolUse"),
+    /// so the connector is the prefix before the first colon. Filesystem-path
+    /// targets ("/Users/…") and URLs are connector-agnostic and return "".
+    static func fromTarget(_ target: String) -> String {
+        guard !target.contains("/"), let colon = target.firstIndex(of: ":") else { return "" }
+        let prefix = String(target[..<colon])
+        // A bare connector token: letters/digits/_/- only (rules out schemes
+        // and hosts, which carry dots or aren't followed by an event name).
+        guard !prefix.isEmpty,
+              prefix.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" })
+        else { return "" }
+        return prefix
+    }
 }
 
 enum DCDates {

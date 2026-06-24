@@ -68,7 +68,10 @@ actor EventStreamReader {
             block.severity = Severity.parse((scan["severity_max"] as? String) ?? (obj["severity"] as? String))
             block.verdict = (scan["verdict"] as? String) ?? block.verdict
             block.timestamp = max(block.timestamp, ts)
-            if !connector.isEmpty { block.connector = connector }
+            // Hook scans carry the connector in the target prefix
+            // ("claudecode:PostToolUse"), not a top-level field.
+            let resolved = !connector.isEmpty ? connector : ConnectorAttribution.fromTarget(block.target)
+            if !resolved.isEmpty { block.connector = resolved }
             if let total = scan["total_count"] as? Int, total > block.findingCount {
                 block.findingCount = total
             }
@@ -87,7 +90,8 @@ actor EventStreamReader {
                 block.findingTitles.append(title)
             }
             block.timestamp = max(block.timestamp, ts)
-            if !connector.isEmpty { block.connector = connector }
+            let resolved = !connector.isEmpty ? connector : ConnectorAttribution.fromTarget(block.target)
+            if !resolved.isEmpty { block.connector = resolved }
             scanBlockMap[scanID] = block
         }
     }
@@ -176,18 +180,19 @@ actor EventStreamReader {
         switch rowType {
         case "scan_finding":
             let finding = (obj["scan_finding"] as? [String: Any]) ?? obj
+            let findingTarget = (finding["target"] as? String) ?? target
             delta.findings.append(ScanFindingEvent(
                 id: nextID(obj, "finding"),
                 timestamp: ts,
                 scanner: (finding["scanner"] as? String) ?? "scanner",
-                target: (finding["target"] as? String) ?? target,
+                target: findingTarget,
                 title: (finding["title"] as? String) ?? action,
                 detail: (finding["description"] as? String) ?? details,
                 location: (finding["location"] as? String) ?? "",
                 remediation: (finding["remediation"] as? String) ?? "",
                 severity: severity,
                 runID: (obj["run_id"] as? String) ?? "",
-                connector: connector
+                connector: connector.isEmpty ? ConnectorAttribution.fromTarget(findingTarget) : connector
             ))
         case "activity":
             let before = jsonString(obj["before_json"] ?? obj["before"])
