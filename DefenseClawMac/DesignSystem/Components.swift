@@ -104,6 +104,42 @@ struct DCCard<Content: View>: View {
     }
 }
 
+/// Connector filter — segmented "All · conn0 · conn1 …" chip shared by
+/// Alerts/Audit/Logs/Activity (TUI connector-filter chip). Renders nothing
+/// on single-connector installs, exactly like the TUI hides it for ≤1.
+struct ConnectorFilterChip: View {
+    let names: [String]
+    @Binding var selection: String   // "" = All
+
+    var body: some View {
+        if names.count > 1 {
+            HStack(spacing: 6) {
+                Image(systemName: "cable.connector")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                chip("All", value: "")
+                ForEach(names, id: \.self) { name in chip(name, value: name) }
+            }
+        }
+    }
+
+    private func chip(_ label: String, value: String) -> some View {
+        let isOn = selection == value
+        return Button {
+            selection = value
+        } label: {
+            Text(label)
+                .font(.caption.weight(isOn ? .semibold : .regular))
+                .padding(.horizontal, 9)
+                .padding(.vertical, 3)
+                .background(isOn ? Cisco.blue : Color.secondary.opacity(0.12))
+                .foregroundStyle(isOn ? Color.white : Color.primary)
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 /// Single-select chip row — native port of the TUI's cycling filter chips.
 struct FilterChipRow<T: Hashable>: View {
     let options: [(label: String, value: T)]

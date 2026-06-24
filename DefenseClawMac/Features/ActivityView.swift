@@ -9,14 +9,28 @@ struct ActivityView: View {
     @State private var selected: ActivityMutation?
 
     private var filtered: [ActivityMutation] {
-        guard !search.isEmpty else { return mutations }
-        let q = search.lowercased()
-        return mutations.filter {
-            "\($0.actor) \($0.action) \($0.targetType) \($0.targetID) \($0.reason)".lowercased().contains(q)
+        mutations.filter { m in
+            guard appState.connectorFilterAllows(m.connector) else { return false }
+            guard !search.isEmpty else { return true }
+            let q = search.lowercased()
+            return "\(m.actor) \(m.action) \(m.targetType) \(m.targetID) \(m.reason)".lowercased().contains(q)
         }
     }
 
     var body: some View {
+        @Bindable var state = appState
+        VStack(spacing: 0) {
+            if appState.activeConnectorNames.count > 1 {
+                ConnectorFilterChip(names: appState.activeConnectorNames, selection: $state.connectorFilter)
+                    .padding(10)
+                Divider()
+            }
+            content
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         Group {
             if filtered.isEmpty {
                 DCEmptyState(

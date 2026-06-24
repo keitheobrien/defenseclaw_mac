@@ -173,6 +173,7 @@ struct ScanFindingEvent: Identifiable, Sendable, Hashable {
     var remediation: String
     var severity: Severity
     var runID: String
+    var connector: String = ""
 }
 
 struct EgressEvent: Identifiable, Sendable, Hashable {
@@ -184,6 +185,7 @@ struct EgressEvent: Identifiable, Sendable, Hashable {
     var looksLikeLLM: Bool
     var branch: String
     var severity: Severity
+    var connector: String = ""
 }
 
 /// A scan summary block grouped by scan_id from gateway.jsonl — the unit the
@@ -197,6 +199,7 @@ struct ScanBlockEvent: Identifiable, Sendable, Hashable {
     var verdict: String
     var findingCount: Int
     var findingTitles: [String]
+    var connector: String = ""
     var id: String { "scan-\(scanID)" }
 }
 
@@ -221,6 +224,15 @@ enum AlertRow: Identifiable, Hashable {
         case .scan: "scan"
         case .finding: "scan finding"
         case .egress: "egress"
+        }
+    }
+    /// Attributed connector for the connector filter ("" = unattributed).
+    var connectorName: String {
+        switch self {
+        case .audit(let e): e.connector
+        case .scan(let e): e.connector
+        case .finding(let e): e.connector
+        case .egress(let e): e.connector
         }
     }
     var timestamp: Date {
@@ -289,6 +301,7 @@ struct ActivityMutation: Identifiable, Sendable, Hashable {
     var versionTo: String
     var beforeJSON: String
     var afterJSON: String
+    var connector: String = ""
 }
 
 // MARK: - Logs
@@ -308,6 +321,7 @@ struct LogRow: Identifiable, Sendable {
     var eventType: String
     var message: String
     var rawJSON: String
+    var connector: String = ""
 }
 
 /// Filter presets ported from the TUI's FILTER_PRESETS.
@@ -565,6 +579,15 @@ enum GatewayError: LocalizedError {
 }
 
 // MARK: - Shared helpers
+
+enum ConnectorAttribution {
+    /// Extract the `connector=<name>` value from an audit event's kv details
+    /// (matches the TUI's parse_kv_details(...).get("connector")).
+    static func fromDetails(_ details: String) -> String {
+        guard let range = details.range(of: "connector=") else { return "" }
+        return String(details[range.upperBound...].prefix { !$0.isWhitespace && $0 != "," })
+    }
+}
 
 enum DCDates {
     static let iso: ISO8601DateFormatter = {

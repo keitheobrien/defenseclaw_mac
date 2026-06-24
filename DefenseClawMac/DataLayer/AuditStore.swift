@@ -87,15 +87,19 @@ actor AuditStore {
     }
 
     private func decodeAuditEvent(_ r: [String: Any]) -> AuditEvent {
-        AuditEvent(
+        let details = (r["details"] as? String) ?? ""
+        // Connector attribution comes from the `connector=` kv in details
+        // (the TUI's parse_kv_details), not the actor (which is the hook name).
+        let connector = ConnectorAttribution.fromDetails(details)
+        return AuditEvent(
             id: (r["id"] as? String) ?? String(describing: r["id"] ?? UUID().uuidString),
             timestamp: DCDates.parse(r["timestamp"]) ?? Date(timeIntervalSince1970: 0),
             action: (r["action"] as? String) ?? "",
             eventType: (r["event_type"] as? String) ?? (r["type"] as? String) ?? "audit",
-            connector: (r["connector"] as? String) ?? (r["actor"] as? String) ?? "",
+            connector: connector.isEmpty ? ((r["connector"] as? String) ?? "") : connector,
             target: (r["target"] as? String) ?? "",
             actor: (r["actor"] as? String) ?? "",
-            details: (r["details"] as? String) ?? "",
+            details: details,
             structuredJSON: (r["structured_json"] as? String) ?? "",
             severity: Severity.parse(r["severity"] as? String),
             runID: (r["run_id"] as? String) ?? ""
@@ -301,7 +305,8 @@ actor AuditStore {
                 versionFrom: (r["version_from"] as? String) ?? "",
                 versionTo: (r["version_to"] as? String) ?? "",
                 beforeJSON: (r["before_json"] as? String) ?? "",
-                afterJSON: (r["after_json"] as? String) ?? ""
+                afterJSON: (r["after_json"] as? String) ?? "",
+                connector: (r["connector"] as? String) ?? ConnectorAttribution.fromDetails((r["reason"] as? String) ?? "")
             )
         }
     }

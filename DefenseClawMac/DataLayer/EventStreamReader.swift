@@ -56,6 +56,7 @@ actor EventStreamReader {
     private func ingestScanBlock(_ obj: [String: Any]) {
         let eventType = (obj["event_type"] as? String) ?? ""
         let ts = DCDates.parse(obj["ts"] ?? obj["timestamp"]) ?? Date()
+        let connector = (obj["connector"] as? String) ?? ""
         if eventType == "scan", let scan = obj["scan"] as? [String: Any],
            let scanID = scan["scan_id"].map({ String(describing: $0) }), !scanID.isEmpty {
             var block = scanBlockMap[scanID] ?? ScanBlockEvent(
@@ -67,6 +68,7 @@ actor EventStreamReader {
             block.severity = Severity.parse((scan["severity_max"] as? String) ?? (obj["severity"] as? String))
             block.verdict = (scan["verdict"] as? String) ?? block.verdict
             block.timestamp = max(block.timestamp, ts)
+            if !connector.isEmpty { block.connector = connector }
             if let total = scan["total_count"] as? Int, total > block.findingCount {
                 block.findingCount = total
             }
@@ -85,6 +87,7 @@ actor EventStreamReader {
                 block.findingTitles.append(title)
             }
             block.timestamp = max(block.timestamp, ts)
+            if !connector.isEmpty { block.connector = connector }
             scanBlockMap[scanID] = block
         }
     }
@@ -165,6 +168,10 @@ actor EventStreamReader {
         let eventType = (obj["event_type"] as? String) ?? (obj["event"] as? String) ?? rowType
         let target = (obj["target"] as? String) ?? ""
         let details = (obj["details"] as? String) ?? (obj["message"] as? String) ?? (obj["msg"] as? String) ?? ""
+        // Gateway JSONL rows carry the attributed connector at top level; fall
+        // back to the connector= kv in details for older/embedded rows.
+        let connector = (obj["connector"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            ?? ConnectorAttribution.fromDetails(details)
 
         switch rowType {
         case "scan_finding":
@@ -179,7 +186,8 @@ actor EventStreamReader {
                 location: (finding["location"] as? String) ?? "",
                 remediation: (finding["remediation"] as? String) ?? "",
                 severity: severity,
-                runID: (obj["run_id"] as? String) ?? ""
+                runID: (obj["run_id"] as? String) ?? "",
+                connector: connector
             ))
         case "activity":
             let before = jsonString(obj["before_json"] ?? obj["before"])
@@ -195,7 +203,8 @@ actor EventStreamReader {
                 versionFrom: String(describing: obj["version_from"] ?? ""),
                 versionTo: String(describing: obj["version_to"] ?? ""),
                 beforeJSON: before,
-                afterJSON: after
+                afterJSON: after,
+                connector: connector
             ))
         case "egress":
             delta.egress.append(EgressEvent(
@@ -206,7 +215,8 @@ actor EventStreamReader {
                 reason: (obj["reason"] as? String) ?? details,
                 looksLikeLLM: (obj["looks_like_llm"] as? Bool) ?? false,
                 branch: (obj["branch"] as? String) ?? "",
-                severity: severity
+                severity: severity,
+                connector: connector
             ))
         default:
             break
@@ -223,7 +233,8 @@ actor EventStreamReader {
             action: action,
             eventType: eventType,
             message: message.isEmpty ? raw : message,
-            rawJSON: raw
+            rawJSON: raw,
+            connector: connector
         ))
     }
 

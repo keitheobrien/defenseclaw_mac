@@ -119,6 +119,9 @@ final class AppState {
     // UI state
     var selectedPanel: PanelID = .overview
     var monitoringPaused = false
+    /// Connector filter shared by Alerts/Audit/Logs/Activity ("" = All),
+    /// the multi-connector equivalent of the TUI's connector-filter chip.
+    var connectorFilter: String = ""
     var alertPanelRequest: AlertPanelRequest?
     var auditPresetRequest: String?
     var logPanelRequest: LogPanelRequest?
@@ -519,6 +522,34 @@ final class AppState {
             }
             // On success the app terminates and relaunches — nothing to do here.
         }
+    }
+
+    // MARK: - Connector filter (multi-connector parity, connector_filter.py)
+
+    /// Active connector names in roster order — live health first, then config.
+    /// ≤1 means single-connector: no filter chrome (the TUI hides the chip).
+    var activeConnectorNames: [String] {
+        let fromHealth = health.connectors.map(\.name).filter { !$0.isEmpty }
+        if !fromHealth.isEmpty { return fromHealth }
+        return config.connectors
+    }
+
+    /// Step the filter All → conn0 → conn1 → … → All (collapses to All when ≤1).
+    func cycleConnectorFilter() {
+        let names = activeConnectorNames
+        guard names.count > 1 else { connectorFilter = ""; return }
+        let order = [""] + names
+        let idx = order.firstIndex(of: connectorFilter) ?? 0
+        connectorFilter = order[(idx + 1) % order.count]
+    }
+
+    /// True when a row attributed to `connector` is visible under the filter.
+    /// All shows everything; an explicit filter requires an exact match and
+    /// hides unattributed rows (connector_filter.filter_allows).
+    func connectorFilterAllows(_ connector: String) -> Bool {
+        let current = connectorFilter.trimmingCharacters(in: .whitespaces).lowercased()
+        if current.isEmpty { return true }
+        return current == connector.trimmingCharacters(in: .whitespaces).lowercased()
     }
 
     /// Connector roster for filesystem catalog scans: live health first,

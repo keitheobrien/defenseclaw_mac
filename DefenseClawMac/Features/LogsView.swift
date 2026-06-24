@@ -26,6 +26,7 @@ struct LogsView: View {
     private func applyFilter() {
         let query = search.lowercased()
         filtered = rows.filter { row in
+            if !appState.connectorFilterAllows(row.connector) { return false }
             guard preset.matches(row) else { return false }
             if let severityFloor, row.severity < severityFloor { return false }
             if actionFilter != "all", !row.action.lowercased().contains(actionFilter) { return false }
@@ -81,6 +82,7 @@ struct LogsView: View {
         .onChange(of: actionFilter) { _, _ in applyFilter() }
         .onChange(of: eventTypeFilter) { _, _ in applyFilter() }
         .onChange(of: search) { _, _ in applyFilter() }
+        .onChange(of: appState.connectorFilter) { _, _ in applyFilter() }
         .onChange(of: appState.logPanelRequest) { _, _ in
             guard applyPendingPanelRequest() else { return }
             Task { await load(force: true) }
@@ -88,12 +90,17 @@ struct LogsView: View {
     }
 
     private var filterBar: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        @Bindable var state = appState
+        return VStack(alignment: .leading, spacing: 6) {
             Picker("Stream", selection: $stream) {
                 ForEach(LogStream.allCases) { s in Text(s.title).tag(s) }
             }
             .pickerStyle(.segmented)
             .onChange(of: stream) { _, _ in Task { await load(force: true) } }
+
+            if appState.activeConnectorNames.count > 1 {
+                ConnectorFilterChip(names: appState.activeConnectorNames, selection: $state.connectorFilter)
+            }
 
             HStack(spacing: 10) {
                 FilterChipRow(

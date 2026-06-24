@@ -14,6 +14,7 @@ struct AlertsView: View {
 
     private var rows: [AlertRow] {
         appState.unackedAlerts.filter { row in
+            if !appState.connectorFilterAllows(row.connectorName) { return false }
             if let severityFilter, row.severity != severityFilter { return false }
             if kindFilter == "blocks" {
                 guard isBlock(row) else { return false }
@@ -127,7 +128,9 @@ struct AlertsView: View {
         }
     }
 
+    @ViewBuilder
     private var header: some View {
+        @Bindable var state = appState
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
                 ForEach([Severity.critical, .high, .medium, .low], id: \.self) { sev in
@@ -135,6 +138,7 @@ struct AlertsView: View {
                     StatCard(title: sev.rawValue, value: "\(count)", tint: Cisco.severityColor(sev))
                 }
             }
+            ConnectorFilterChip(names: appState.activeConnectorNames, selection: $state.connectorFilter)
             HStack {
                 FilterChipRow(
                     options: [("All", Optional<Severity>.none)] +

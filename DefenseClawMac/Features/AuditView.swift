@@ -20,18 +20,29 @@ struct AuditView: View {
         ("Scans", "scans"), ("Credentials", "credentials"),
     ]
 
+    /// Loaded rows narrowed by the shared connector filter.
+    private var visibleEvents: [AuditEvent] {
+        events.filter { appState.connectorFilterAllows($0.connector) }
+    }
+
     var body: some View {
+        @Bindable var state = appState
         VStack(spacing: 0) {
-            HStack {
-                FilterChipRow(options: Self.presets, selection: $preset)
-                Spacer()
-                Text("\(events.count) events loaded")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    FilterChipRow(options: Self.presets, selection: $preset)
+                    Spacer()
+                    Text("\(visibleEvents.count) events loaded")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                if appState.activeConnectorNames.count > 1 {
+                    ConnectorFilterChip(names: appState.activeConnectorNames, selection: $state.connectorFilter)
+                }
             }
             .padding(10)
             Divider()
-            if events.isEmpty {
+            if visibleEvents.isEmpty {
                 DCEmptyState(
                     title: "No audit events",
                     message: "Nothing in \(ConfigStore.auditDBURL.path) matches. The gateway writes audit events as it enforces policy.",
@@ -78,7 +89,7 @@ struct AuditView: View {
     }
 
     private var table: some View {
-        Table(events, selection: $selection) {
+        Table(visibleEvents, selection: $selection) {
             TableColumn("Time") { e in
                 Text(e.timestamp, format: .dateTime.month().day().hour().minute().second())
                     .font(.caption.monospacedDigit())
@@ -104,12 +115,12 @@ struct AuditView: View {
         }
         .contextMenu(forSelectionType: String.self) { ids in
             Button("Copy Details") {
-                let texts = events.filter { ids.contains($0.id) }
+                let texts = visibleEvents.filter { ids.contains($0.id) }
                     .map { "\($0.timestamp) \($0.action) \($0.target) [\($0.severity.rawValue)] \($0.details)" }
                 copyToPasteboard(texts.joined(separator: "\n"))
             }
             Button("Copy Structured JSON") {
-                let texts = events.filter { ids.contains($0.id) }.map(\.structuredJSON)
+                let texts = visibleEvents.filter { ids.contains($0.id) }.map(\.structuredJSON)
                 copyToPasteboard(texts.joined(separator: "\n"))
             }
         } primaryAction: { _ in }
@@ -152,7 +163,7 @@ struct AuditView: View {
 
     private func prepareExport() {
         // Schema identical to the TUI's export (spec §9.9).
-        let source = selection.isEmpty ? events : events.filter { selection.contains($0.id) }
+        let source = selection.isEmpty ? visibleEvents : visibleEvents.filter { selection.contains($0.id) }
         let payload: [[String: String]] = source.map { e in
             [
                 "id": e.id,
