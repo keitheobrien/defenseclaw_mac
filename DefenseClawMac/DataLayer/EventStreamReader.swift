@@ -65,7 +65,8 @@ actor EventStreamReader {
             )
             block.scanner = (scan["scanner"] as? String) ?? block.scanner
             block.target = (scan["target"] as? String) ?? block.target
-            block.severity = Severity.parse((scan["severity_max"] as? String) ?? (obj["severity"] as? String))
+            let summarySeverity = Severity.parse((scan["severity_max"] as? String) ?? (obj["severity"] as? String))
+            if summarySeverity > block.severity { block.severity = summarySeverity }
             block.verdict = (scan["verdict"] as? String) ?? block.verdict
             block.timestamp = max(block.timestamp, ts)
             // Hook scans carry the connector in the target prefix
@@ -86,6 +87,8 @@ actor EventStreamReader {
                 verdict: "", findingCount: 0, findingTitles: []
             )
             block.findingCount += 1
+            let findingSeverity = Severity.parse((finding["severity"] as? String) ?? (obj["severity"] as? String))
+            if findingSeverity > block.severity { block.severity = findingSeverity }
             if let title = finding["title"] as? String, block.findingTitles.count < 5 {
                 block.findingTitles.append(title)
             }

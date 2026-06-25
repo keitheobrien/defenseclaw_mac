@@ -159,30 +159,6 @@ actor AuditStore {
             .filter { $0.severity != .info } // bucket filter: C/H/M/L only (WARNING→MEDIUM)
     }
 
-    /// Overview tile sources (app.py::_hook_event_timestamps & friends).
-    /// The TUI counts within its loaded windows: hook calls and blocks among
-    /// the most recent 500 audit events (list_events(500)); findings among
-    /// the severity-bearing alert queue (list_alerts(500)).
-    func overviewTileCounts() -> (hookCalls: Int, blocks: Int, findings: Int) {
-        guard tableExists("audit_events") else { return (0, 0, 0) }
-        func countInWindow(_ where_: String) -> Int {
-            let sql = """
-                SELECT COUNT(*) AS n FROM (
-                    SELECT action, details, severity FROM audit_events
-                    ORDER BY timestamp DESC LIMIT 500
-                ) WHERE \(where_)
-                """
-            return (query(sql).first?["n"] as? Int) ?? 0
-        }
-        let hookCalls = countInWindow("action = 'connector-hook'")
-        let blocks = countInWindow("""
-            LOWER(action) IN ('block','guardrail-block','deny','quarantine')
-            OR details LIKE '%action=block%' OR details LIKE '%action=deny%'
-            """)
-        let findings = alertQueueEvents(limit: 500).count
-        return (hookCalls, blocks, findings)
-    }
-
     /// db.py::get_counts — Overview ENFORCEMENT summary.
     func enforcementSummary() -> (blockedSkills: Int, allowedSkills: Int, blockedMCPs: Int, allowedMCPs: Int, totalScans: Int, activeAlerts: Int) {
         func count(_ sql: String) -> Int {
@@ -214,6 +190,47 @@ actor AuditStore {
             return (rows.first?["n"] as? Int) ?? 0
         }
         return (count(["allow"]), count(["block", "reject"]), count(["scan"]))
+    }
+
+    /// Menu bar decision counts for hook/tool traffic in the last 24h.
+    /// Hook calls are stored as `connector-hook` rows, with allow/block
+    /// decisions encoded in the details string (`action=allow|block|deny`).
+    func hookToolDecisionCounts24h() -> (allowed: Int, blocked: Int) {
+        guard tableExists("audit_events") else { return (0, 0) }
+        let since = DCDates.iso.string(from: Date().addingTimeInterval(-24 * 3600))
+        let rows = query("""
+            SELECT action, details FROM audit_events
+            WHERE timestamp >= ?
+              AND (
+                LOWER(action) = 'connector-hook'
+                OR LOWER(action) IN ('allow','allowed','block','blocked','deny','denied','reject','rejected','guardrail-block','quarantine')
+                OR LOWER(details) LIKE '%action=allow%'
+                OR LOWER(details) LIKE '%action=block%'
+                OR LOWER(details) LIKE '%action=deny%'
+                OR LOWER(details) LIKE '%action=reject%'
+              )
+            """, binds: [since])
+
+        var allowed = 0
+        var blocked = 0
+        for row in rows {
+            let action = ((row["action"] as? String) ?? "").lowercased()
+            let details = ((row["details"] as? String) ?? "").lowercased()
+            let isHookCall = action == "connector-hook"
+            let isBlocked = ["block", "blocked", "deny", "denied", "reject", "rejected", "guardrail-block", "quarantine"].contains(action)
+                || details.contains("action=block")
+                || details.contains("action=deny")
+                || details.contains("action=reject")
+            let isAllowed = ["allow", "allowed"].contains(action)
+                || details.contains("action=allow")
+
+            if isBlocked {
+                blocked += 1
+            } else if isHookCall || isAllowed {
+                allowed += 1
+            }
+        }
+        return (allowed, blocked)
     }
 
     /// Hourly allowed/blocked histogram for the last 24h (Overview enhancement).

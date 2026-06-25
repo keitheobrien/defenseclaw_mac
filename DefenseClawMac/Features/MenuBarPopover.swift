@@ -2,12 +2,10 @@
 // 24h enforcement micro-bars, recent unacked alerts, footer actions.
 
 import SwiftUI
-import Charts
 
 struct MenuBarPopover: View {
     @Environment(AppState.self) private var appState
     @Environment(\.openWindow) private var openWindow
-    @State private var counts: (allowed: Int, blocked: Int, scanned: Int) = (0, 0, 0)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -23,7 +21,7 @@ struct MenuBarPopover: View {
         .padding(12)
         .frame(width: 360)
         .task {
-            counts = await appState.audit.enforcementCounts24h()
+            await appState.refreshMenuBarEnforcementCounts()
         }
     }
 
@@ -68,19 +66,40 @@ struct MenuBarPopover: View {
     }
 
     private var enforcementBars: some View {
-        Chart {
-            BarMark(x: .value("Count", counts.allowed), y: .value("Kind", "Allowed"))
-                .foregroundStyle(Cisco.green)
-            BarMark(x: .value("Count", counts.blocked), y: .value("Kind", "Blocked"))
-                .foregroundStyle(Cisco.red)
-            BarMark(x: .value("Count", counts.scanned), y: .value("Kind", "Scanned"))
-                .foregroundStyle(Cisco.blue)
+        let counts = appState.menuBarEnforcementCounts
+        let maxValue = max(counts.allowed, counts.blocked, counts.scanned, 1)
+        return VStack(alignment: .leading, spacing: 7) {
+            enforcementRow("Allowed", value: counts.allowed, tint: Cisco.green, maxValue: maxValue)
+            enforcementRow("Blocked", value: counts.blocked, tint: Cisco.red, maxValue: maxValue)
+            enforcementRow("Scanned", value: counts.scanned, tint: Cisco.blue, maxValue: maxValue)
         }
-        .chartXAxis(.hidden)
-        .chartYAxis {
-            AxisMarks { _ in AxisValueLabel().font(.caption2) }
+        .padding(.vertical, 2)
+    }
+
+    private func enforcementRow(_ title: String, value: Int, tint: Color, maxValue: Int) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(value)")
+                    .font(.caption.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(value == 0 ? Color.secondary : tint)
+            }
+            GeometryReader { proxy in
+                let width = value == 0
+                    ? CGFloat.zero
+                    : max(CGFloat(2), proxy.size.width * CGFloat(value) / CGFloat(maxValue))
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.secondary.opacity(0.14))
+                    Capsule().fill(tint).frame(width: width)
+                }
+            }
+            .frame(height: 4)
         }
-        .frame(height: 64)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(title) \(value)")
     }
 
     @ViewBuilder

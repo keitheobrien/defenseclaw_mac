@@ -108,6 +108,12 @@ struct ConnectorHealth: Identifiable, Sendable {
     var id: String { name }
 }
 
+struct EnforcementCounts: Sendable, Equatable {
+    var allowed: Int = 0
+    var blocked: Int = 0
+    var scanned: Int = 0
+}
+
 /// One label/value row of the Overview CONFIGURATION box (parity with the
 /// TUI's global configuration lines).
 struct ConfigurationRow: Identifiable, Sendable {

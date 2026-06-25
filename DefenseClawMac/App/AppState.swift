@@ -112,6 +112,7 @@ final class AppState {
     // Alerts state
     var unackedAlerts: [AlertRow] = []
     var dismissedIDs: Set<String> = []
+    var menuBarEnforcementCounts = EnforcementCounts()
     /// Last `alerts acknowledge` failure, surfaced in the popover/panel.
     var ackError: String?
     var scanInFlight = false
@@ -224,8 +225,25 @@ final class AppState {
 
         // Tail the JSONL stream and refresh the alert set.
         _ = await stream.poll()
+        await refreshMenuBarEnforcementCounts()
         await refreshAlerts()
         await checkForUpdates() // no-op unless 6h have passed
+    }
+
+    func refreshMenuBarEnforcementCounts() async {
+        let decisions = await audit.hookToolDecisionCounts24h()
+        let since = Date().addingTimeInterval(-24 * 3600)
+        let highCriticalScans = await stream.scanBlocks.filter { block in
+            block.timestamp >= since && (block.severity == .critical || block.severity == .high)
+        }.count
+        let next = EnforcementCounts(
+            allowed: decisions.allowed,
+            blocked: decisions.blocked,
+            scanned: highCriticalScans
+        )
+        if menuBarEnforcementCounts != next {
+            menuBarEnforcementCounts = next
+        }
     }
 
     func refreshAlerts() async {

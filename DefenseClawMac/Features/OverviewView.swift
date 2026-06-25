@@ -6,7 +6,6 @@ import Charts
 
 struct OverviewView: View {
     @Environment(AppState.self) private var appState
-    @State private var tiles: (hookCalls: Int, blocks: Int, findings: Int) = (0, 0, 0)
     @State private var summary: (blockedSkills: Int, allowedSkills: Int, blockedMCPs: Int, allowedMCPs: Int, totalScans: Int, activeAlerts: Int) = (0, 0, 0, 0, 0, 0)
     @State private var hourly: [HourlyPoint] = []
     @State private var doctorChecks: [DoctorCheck] = []
@@ -220,7 +219,7 @@ struct OverviewView: View {
                 } label: {
                     StatCard(
                         title: "Hook Calls (\(max(appState.health.connectors.count, 1)) connectors)",
-                        value: "\(tiles.hookCalls)", tint: Cisco.blue
+                        value: "\(heroHookCalls)", tint: Cisco.blue
                     )
                 }
                 .buttonStyle(.plain)
@@ -229,8 +228,8 @@ struct OverviewView: View {
                 Button {
                     appState.openAudit(preset: "blocks")
                 } label: {
-                    StatCard(title: "Blocks", value: "\(tiles.blocks)",
-                             tint: tiles.blocks > 0 ? Cisco.red : .secondary)
+                    StatCard(title: "Blocks", value: "\(heroBlocks)",
+                             tint: heroBlocks > 0 ? Cisco.red : .secondary)
                 }
                 .buttonStyle(.plain)
                 .help("Open blocked audit events")
@@ -377,6 +376,14 @@ struct OverviewView: View {
         appState.unackedAlerts.filter { $0.severity > .info }.count
     }
 
+    private var heroHookCalls: Int {
+        appState.menuBarEnforcementCounts.allowed + appState.menuBarEnforcementCounts.blocked
+    }
+
+    private var heroBlocks: Int {
+        appState.menuBarEnforcementCounts.blocked
+    }
+
     private func summaryItem(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title).font(.caption2).foregroundStyle(.secondary)
@@ -396,11 +403,11 @@ struct OverviewView: View {
         }
     }
 
-    /// Tile/summary/chart reload WITHOUT triggering a pulse — also driven by
-    /// the pulse tick (task(id: fetchedAt)) so the tiles track live data the
-    /// way the TUI's refresh does, without a pulse→fetchedAt→pulse loop.
+    /// Summary/chart reload WITHOUT triggering a pulse — also driven by the
+    /// pulse tick (task(id: fetchedAt)) so the panels track live data without a
+    /// pulse→fetchedAt→pulse loop. Hero enforcement counts come from
+    /// AppState.menuBarEnforcementCounts so they reconcile with the menu bar.
     private func loadData() async {
-        tiles = await appState.audit.overviewTileCounts()
         summary = await appState.audit.enforcementSummary()
         hourly = await appState.audit.hourlyEnforcement24h()
             .map { HourlyPoint(hour: $0.hour, klass: $0.action, count: $0.count) }
