@@ -195,6 +195,8 @@ actor ConfigStore {
     static let configURL = dataDirectory.appendingPathComponent("config.yaml")
     static let auditDBURL = dataDirectory.appendingPathComponent("audit.db")
     static let gatewayJSONLURL = dataDirectory.appendingPathComponent("gateway.jsonl")
+    static let gatewayLogURL = dataDirectory.appendingPathComponent("gateway.log")
+    static let watchdogLogURL = dataDirectory.appendingPathComponent("watchdog.log")
 
     private(set) var config = DefenseClawConfig()
 

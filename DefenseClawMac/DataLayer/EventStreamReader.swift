@@ -16,8 +16,13 @@ actor EventStreamReader {
     static let tailBudget = 512 * 1024
 
     private let url: URL
+    private let gatewayLogURL: URL
+    private let watchdogLogURL: URL
     private var offset: UInt64 = 0
+    private var gatewayLogOffset: UInt64 = 0
+    private var watchdogLogOffset: UInt64 = 0
     private var rowCounter = 0
+    private var plainLogCounter = 0
 
     private(set) var logBuffers: [LogStream: [LogRow]] = [:]
     private(set) var findings: [ScanFindingEvent] = []
@@ -35,8 +40,14 @@ actor EventStreamReader {
 
     private let bufferCap = 20_000
 
-    init(url: URL = ConfigStore.gatewayJSONLURL) {
+    init(
+        url: URL = ConfigStore.gatewayJSONLURL,
+        gatewayLogURL: URL = ConfigStore.gatewayLogURL,
+        watchdogLogURL: URL = ConfigStore.watchdogLogURL
+    ) {
         self.url = url
+        self.gatewayLogURL = gatewayLogURL
+        self.watchdogLogURL = watchdogLogURL
     }
 
     /// One full-file pass for scan/scan_finding rows (cheap substring prefilter,
@@ -109,28 +120,31 @@ actor EventStreamReader {
             blocksScannedOnce = true
             scanWholeFileForBlocks()
         }
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return StreamDelta() }
-        defer { try? handle.close() }
-        let size = (try? handle.seekToEnd()) ?? 0
-
-        if offset == 0 || offset > size {
-            // First read, or the file was truncated/rotated: read tail budget only.
-            offset = size > UInt64(Self.tailBudget) ? size - UInt64(Self.tailBudget) : 0
-        }
-        guard size > offset else { return StreamDelta() }
-
-        try? handle.seek(toOffset: offset)
-        guard let data = try? handle.readToEnd(), !data.isEmpty else { return StreamDelta() }
-        offset = size
-
         var delta = StreamDelta()
-        let text = String(decoding: data, as: UTF8.self)
-        for line in text.split(separator: "\n") {
-            guard let lineData = line.data(using: .utf8),
-                  let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any]
-            else { continue }
-            ingest(obj, raw: String(line), into: &delta)
+        if let handle = try? FileHandle(forReadingFrom: url) {
+            defer { try? handle.close() }
+            let size = (try? handle.seekToEnd()) ?? 0
+
+            if offset == 0 || offset > size {
+                // First read, or the file was truncated/rotated: read tail budget only.
+                offset = size > UInt64(Self.tailBudget) ? size - UInt64(Self.tailBudget) : 0
+            }
+            if size > offset {
+                try? handle.seek(toOffset: offset)
+                if let data = try? handle.readToEnd(), !data.isEmpty {
+                    offset = size
+                    let text = String(decoding: data, as: UTF8.self)
+                    for line in text.split(separator: "\n") {
+                        guard let lineData = line.data(using: .utf8),
+                              let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any]
+                        else { continue }
+                        ingest(obj, raw: String(line), into: &delta)
+                    }
+                }
+            }
         }
+        ingestPlainLog(gatewayLogURL, stream: .gateway, offset: &gatewayLogOffset, into: &delta)
+        ingestPlainLog(watchdogLogURL, stream: .watchdog, offset: &watchdogLogOffset, into: &delta)
 
         for row in delta.logRows {
             logBuffers[row.stream, default: []].append(row)
@@ -156,7 +170,101 @@ actor EventStreamReader {
         egress = []
         scanBlockMap = [:]
         blocksScannedOnce = false
+        gatewayLogOffset = 0
+        watchdogLogOffset = 0
         return poll()
+    }
+
+    private func ingestPlainLog(_ url: URL, stream: LogStream, offset: inout UInt64, into delta: inout StreamDelta) {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        if offset == 0 || offset > size {
+            offset = size > UInt64(Self.tailBudget) ? size - UInt64(Self.tailBudget) : 0
+        }
+        guard size > offset else { return }
+
+        try? handle.seek(toOffset: offset)
+        guard let data = try? handle.readToEnd(), !data.isEmpty else { return }
+        offset = size
+
+        let text = String(decoding: data, as: UTF8.self)
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let raw = String(line)
+            guard !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            delta.logRows.append(plainLogRow(raw, stream: stream))
+        }
+    }
+
+    private func plainLogRow(_ line: String, stream: LogStream) -> LogRow {
+        plainLogCounter += 1
+        let metadata = parsePlainLogMetadata(line, stream: stream)
+        return LogRow(
+            id: "plain-\(stream.rawValue)-\(plainLogCounter)",
+            timestamp: metadata.timestamp ?? Date(),
+            stream: stream,
+            severity: metadata.severity,
+            action: metadata.action,
+            eventType: metadata.eventType,
+            message: line,
+            rawJSON: line,
+            connector: metadata.connector
+        )
+    }
+
+    private func parsePlainLogMetadata(_ line: String, stream: LogStream) -> (
+        timestamp: Date?, severity: Severity, action: String, eventType: String, connector: String
+    ) {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        let timestamp = parsePlainLogTimestamp(trimmed)
+        let lower = trimmed.lowercased()
+        let severity: Severity
+        if lower.contains("critical") || lower.contains("fatal") {
+            severity = .critical
+        } else if lower.contains("error") || lower.contains("http 4") || lower.contains("http 5") {
+            severity = .high
+        } else if lower.contains("warn") {
+            severity = .medium
+        } else {
+            severity = .info
+        }
+
+        var eventType = stream.rawValue
+        var connector = ""
+        if let open = trimmed.firstIndex(of: "["), let close = trimmed[open...].firstIndex(of: "]") {
+            let tag = String(trimmed[trimmed.index(after: open)..<close])
+            let parts = tag.split(separator: ":", maxSplits: 1).map(String.init)
+            eventType = parts.first?.lowercased() ?? eventType
+            if parts.count == 2 { connector = parts[1].lowercased() }
+        }
+
+        let action = firstPlainLogValue("phase", in: trimmed)
+            ?? firstPlainLogValue("action", in: trimmed)
+            ?? (lower.contains("completed") ? "completed" : "")
+        return (timestamp, severity, action, eventType, connector)
+    }
+
+    private func firstPlainLogValue(_ key: String, in line: String) -> String? {
+        guard let range = line.range(of: "\(key)=") else { return nil }
+        let value = line[range.upperBound...].prefix { !$0.isWhitespace }
+        return value.isEmpty ? nil : String(value)
+    }
+
+    private func parsePlainLogTimestamp(_ line: String) -> Date? {
+        guard line.count >= 12 else { return nil }
+        let prefix = String(line.prefix(12))
+        guard prefix.range(of: #"^\d{2}:\d{2}:\d{2}\.\d{3}$"#, options: .regularExpression) != nil else {
+            return nil
+        }
+        let parts = prefix.split { $0 == ":" || $0 == "." }.compactMap { Int($0) }
+        guard parts.count == 4 else { return nil }
+        var components = Calendar(identifier: .gregorian).dateComponents(in: TimeZone(secondsFromGMT: 0)!, from: Date())
+        components.hour = parts[0]
+        components.minute = parts[1]
+        components.second = parts[2]
+        components.nanosecond = parts[3] * 1_000_000
+        components.timeZone = TimeZone(secondsFromGMT: 0)
+        return Calendar(identifier: .gregorian).date(from: components)
     }
 
     private func nextID(_ obj: [String: Any], _ kind: String) -> String {
@@ -233,19 +341,23 @@ actor EventStreamReader {
         }
 
         // Every row also lands in a log stream (parity with load_gateway_log_views).
-        let stream = classifyStream(rowType: rowType, eventType: eventType, action: action, details: details)
+        let stream = classifyStream(parsed)
         let message = displayMessage(for: parsed, severity: severity, raw: raw)
-        delta.logRows.append(LogRow(
-            id: nextID(obj, "log"),
-            timestamp: ts,
-            stream: stream,
-            severity: severity,
-            action: action,
-            eventType: eventType,
-            message: message.isEmpty ? raw : message,
-            rawJSON: raw,
-            connector: connector
-        ))
+        // The TUI's Gateway and Watchdog tabs are backed by gateway.log and
+        // watchdog.log. JSONL rows feed the structured tabs and counters.
+        if stream != .gateway && stream != .watchdog {
+            delta.logRows.append(LogRow(
+                id: nextID(obj, "log"),
+                timestamp: ts,
+                stream: stream,
+                severity: severity,
+                action: action,
+                eventType: eventType,
+                message: message.isEmpty ? raw : message,
+                rawJSON: raw,
+                connector: connector
+            ))
+        }
     }
 
     private struct ParsedLogFields {
@@ -253,7 +365,9 @@ actor EventStreamReader {
         var eventType = ""
         var action = ""
         var target = ""
+        var rawDetails = ""
         var details = ""
+        var lifecycleDetails: [String: String] = [:]
         var actor = ""
         var connector = ""
         var subsystem = ""
@@ -261,8 +375,19 @@ actor EventStreamReader {
         var scanner = ""
         var verdict = ""
         var findingTitle = ""
+        var findingRuleID = ""
         var findingLocation = ""
         var findingCount: Int?
+        var errorSubsystem = ""
+        var errorCode = ""
+        var errorMessage = ""
+        var errorCause = ""
+        var diagnosticComponent = ""
+        var diagnosticMessage = ""
+        var activityAction = ""
+        var activityTarget = ""
+        var versionFrom = ""
+        var versionTo = ""
     }
 
     private func parseLogFields(_ obj: [String: Any], rowType: String) -> ParsedLogFields {
@@ -272,6 +397,9 @@ actor EventStreamReader {
         let finding = obj["scan_finding"] as? [String: Any]
         let audit = obj["audit"] as? [String: Any]
         let payload = obj["payload"] as? [String: Any]
+        let error = obj["error"] as? [String: Any]
+        let diagnostic = obj["diagnostic"] as? [String: Any]
+        let activity = obj["activity"] as? [String: Any]
 
         let eventType = firstString(
             obj["event_type"], obj["event"], obj["type"], obj["row_type"], rowType
@@ -282,7 +410,9 @@ actor EventStreamReader {
             audit?["action"],
             payload?["action"],
             scan?["action"],
-            finding?["action"]
+            finding?["action"],
+            error?["code"],
+            activity?["action"]
         )
         let target = firstString(
             obj["target"],
@@ -290,9 +420,10 @@ actor EventStreamReader {
             audit?["target"],
             payload?["target"],
             scan?["target"],
-            finding?["target"]
+            finding?["target"],
+            activityTarget(activity)
         )
-        let details = sanitizeLogDetails(firstString(
+        let rawDetails = firstString(
             obj["details"],
             obj["message"],
             obj["msg"],
@@ -307,7 +438,8 @@ actor EventStreamReader {
             finding?["content"],
             scan?["details"],
             scan?["content"]
-        ))
+        )
+        let details = sanitizeLogDetails(rawDetails)
         let connector = firstString(
             obj["connector"],
             lifecycleDetails?["connector"],
@@ -316,6 +448,7 @@ actor EventStreamReader {
             scan?["connector"],
             finding?["connector"],
             ConnectorAttribution.fromTarget(target),
+            ConnectorAttribution.fromDetails(rawDetails),
             ConnectorAttribution.fromDetails(details)
         )
         return ParsedLogFields(
@@ -323,7 +456,9 @@ actor EventStreamReader {
             eventType: eventType,
             action: action,
             target: target,
+            rawDetails: rawDetails,
             details: details,
+            lifecycleDetails: stringMap(lifecycleDetails),
             actor: firstString(obj["actor"], lifecycleDetails?["actor"], audit?["actor"], payload?["actor"]),
             connector: connector,
             subsystem: firstString(lifecycle?["subsystem"], obj["subsystem"], payload?["subsystem"]),
@@ -331,31 +466,89 @@ actor EventStreamReader {
             scanner: firstString(scan?["scanner"], finding?["scanner"], obj["scanner"]),
             verdict: firstString(scan?["verdict"], obj["verdict"], payload?["verdict"]),
             findingTitle: firstString(finding?["title"], obj["title"]),
+            findingRuleID: firstString(finding?["rule_id"], obj["rule_id"]),
             findingLocation: firstString(finding?["location"], obj["location"]),
-            findingCount: firstInt(scan?["total_count"], scan?["finding_count"], obj["finding_count"])
+            findingCount: firstInt(scan?["total_count"], scan?["finding_count"], obj["finding_count"]),
+            errorSubsystem: firstString(error?["subsystem"]),
+            errorCode: firstString(error?["code"]),
+            errorMessage: firstString(error?["message"]),
+            errorCause: firstString(error?["cause"]),
+            diagnosticComponent: firstString(diagnostic?["component"]),
+            diagnosticMessage: firstString(diagnostic?["message"]),
+            activityAction: firstString(activity?["action"]),
+            activityTarget: activityTarget(activity),
+            versionFrom: firstString(activity?["version_from"]),
+            versionTo: firstString(activity?["version_to"])
         )
     }
 
     private func displayMessage(for row: ParsedLogFields, severity: Severity, raw: String) -> String {
         switch row.eventType {
         case "lifecycle":
+            if row.lifecycleDetails["action"] == "connector-hook" {
+                return renderHookLifecycleLine(row, severity: severity)
+            }
             let subject = [row.subsystem, row.transition].filter { !$0.isEmpty }.joined(separator: " ")
-            let headline = [subject, row.action].filter { !$0.isEmpty }.joined(separator: " ")
-            let actorTarget = actorTarget(row.actor, row.target)
-            return joinedParts(headline, actorTarget, row.details, fallback: raw)
+            return joinedWords("LIFECYCLE", subject.uppercased(), renderInlineDetails(row.lifecycleDetails, limit: 3))
+        case "error":
+            let message = truncateLogText(row.errorMessage, limit: 120)
+            return joinedWords(
+                "ERROR",
+                row.errorSubsystem.uppercased(),
+                row.errorCode.isEmpty ? "" : "code=\(row.errorCode)",
+                message.isEmpty ? "" : "msg=\(message)",
+                row.errorCause.isEmpty ? "" : "cause=\(row.errorCause)"
+            )
+        case "diagnostic":
+            return joinedWords("DIAG", row.diagnosticComponent.uppercased(), truncateLogText(row.diagnosticMessage, limit: 120))
         case "scan":
             let findingText = row.findingCount.map { "\($0) finding\($0 == 1 ? "" : "s")" } ?? ""
-            let severityText = severity > .info ? severity.rawValue : ""
-            let headline = joinedWords("Scan", row.verdict, row.scanner)
-            return joinedParts(headline, row.target, severityText, findingText, row.details, fallback: raw)
+            return joinedWords(
+                "SCAN",
+                severity.rawValue.uppercased(),
+                "scanner=\(nonEmpty(row.scanner, "-"))",
+                "target=\(truncateLogText(row.target, limit: 40))",
+                "verdict=\(nonEmpty(row.verdict, "-"))",
+                findingText
+            )
         case "scan_finding":
-            let headline = joinedWords("Finding", row.findingTitle)
-            let severityText = severity > .info ? severity.rawValue : ""
-            return joinedParts(headline, row.scanner, row.target, row.findingLocation, severityText, row.details, fallback: raw)
+            return joinedWords(
+                "FINDING",
+                severity.rawValue.uppercased(),
+                "rule=\(nonEmpty(row.findingRuleID, "-"))",
+                truncateLogText(row.findingTitle.isEmpty ? row.target : row.findingTitle, limit: 80)
+            )
+        case "activity":
+            return joinedWords(
+                "ACT",
+                severity.rawValue.uppercased(),
+                "actor=\(nonEmpty(row.actor, "-"))",
+                "action=\(nonEmpty(row.activityAction, row.action.isEmpty ? "-" : row.action))",
+                "target=\(truncateLogText(nonEmpty(row.activityTarget, "-"), limit: 36))",
+                "\(nonEmpty(row.versionFrom, "empty"))->\(nonEmpty(row.versionTo, "empty"))"
+            )
         default:
             let headline = joinedWords(row.action, row.eventType == "event" ? "" : row.eventType)
             return joinedParts(headline, actorTarget(row.actor, row.target), row.details, fallback: raw)
         }
+    }
+
+    private func renderHookLifecycleLine(_ row: ParsedLogFields, severity: Severity) -> String {
+        let parsed = parseLogKeyValues(row.rawDetails)
+        let connector = parsed["connector"] ?? row.connector
+        let decision = parsed["action"] ?? parsed["decision"] ?? ""
+        let decisionSeverity = parsed["severity"] ?? ""
+        let mode = parsed["mode"] ?? ""
+        let elapsed = parsed["elapsed"] ?? parsed["duration_ms"] ?? ""
+        let head = truncateLogText(joinedWords(connector, row.target), limit: 36)
+        var pieces: [String] = []
+        if !decision.isEmpty { pieces.append(decision) }
+        if !decisionSeverity.isEmpty, decisionSeverity.uppercased() != "NONE" {
+            pieces.append(decisionSeverity.uppercased())
+        }
+        if !mode.isEmpty, mode != "observe" { pieces.append(mode) }
+        if !elapsed.isEmpty { pieces.append(elapsed) }
+        return joinedWords("HOOK", severity.rawValue.uppercased(), nonEmpty(head, "-"), pieces.joined(separator: " · "))
     }
 
     private func actorTarget(_ actor: String, _ target: String) -> String {
@@ -396,10 +589,65 @@ actor EventStreamReader {
         return nil
     }
 
+    private func activityTarget(_ activity: [String: Any]?) -> String {
+        let targetType = firstString(activity?["target_type"])
+        let targetID = firstString(activity?["target_id"])
+        if targetType.isEmpty { return targetID }
+        return "\(targetType):\(targetID)"
+    }
+
+    private func stringMap(_ values: [String: Any]?) -> [String: String] {
+        guard let values else { return [:] }
+        return values.reduce(into: [:]) { result, item in
+            let value = firstString(item.value)
+            if !value.isEmpty { result[item.key] = value }
+        }
+    }
+
+    private func renderInlineDetails(_ details: [String: String], limit: Int) -> String {
+        guard limit > 0, !details.isEmpty else { return "" }
+        return details.keys.sorted().prefix(limit)
+            .map { "\($0)=\(details[$0] ?? "")" }
+            .joined(separator: " ")
+    }
+
+    private func nonEmpty(_ value: String, _ fallback: String) -> String {
+        value.isEmpty ? fallback : value
+    }
+
+    private func truncateLogText(_ value: String, limit: Int) -> String {
+        guard limit > 0 else { return "" }
+        guard value.count > limit else { return value }
+        if limit <= 3 { return String(repeating: ".", count: limit) }
+        return String(value.prefix(limit - 3)) + "..."
+    }
+
     private func sanitizeLogDetails(_ details: String) -> String {
-        let tokens = logDetailTokens(from: details)
-            .filter { !isNoisyLogDetailToken($0) }
+        let tokens = logDetailTokens(from: removeRedactedMetadataSegments(from: details))
+            .compactMap(humanLogDetailToken)
         return tokens.joined(separator: " ")
+    }
+
+    private func removeRedactedMetadataSegments(from text: String) -> String {
+        var result = ""
+        var index = text.startIndex
+        while index < text.endIndex {
+            if text[index] == "<" {
+                if let close = text[index...].firstIndex(of: ">") {
+                    let segment = String(text[index...close]).lowercased()
+                    if isRedactedMetadata(segment) {
+                        index = text.index(after: close)
+                        continue
+                    }
+                } else {
+                    let tail = String(text[index...]).lowercased()
+                    if isRedactedMetadata(tail) { break }
+                }
+            }
+            result.append(text[index])
+            index = text.index(after: index)
+        }
+        return result
     }
 
     private func logDetailTokens(from text: String) -> [String] {
@@ -430,17 +678,40 @@ actor EventStreamReader {
         return tokens
     }
 
+    private func humanLogDetailToken(_ token: String) -> String? {
+        guard !isNoisyLogDetailToken(token) else { return nil }
+
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = splitLogDetailToken(trimmed)
+        guard let key = parts.key, let value = parts.value else { return trimmed }
+
+        switch key {
+        case "action", "decision", "verdict":
+            return value
+        case "mode":
+            return "\(value) mode"
+        case "would_block":
+            return boolValue(value) == true ? "would block" : nil
+        case "result":
+            return value == "ok" || value == "success" ? nil : "result=\(value)"
+        default:
+            return trimmed
+        }
+    }
+
     private func isNoisyLogDetailToken(_ token: String) -> Bool {
         let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
         let lower = trimmed.trimmingCharacters(in: CharacterSet(charactersIn: ",;")).lowercased()
         guard !lower.isEmpty else { return true }
 
-        let parts = lower.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
-        let key = parts.first.map(String.init)?
-            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'` "))
-            ?? lower
-        let value = parts.count > 1 ? String(parts[1]) : ""
-        let hasValue = parts.count > 1
+        if isRedactedMetadata(lower) {
+            return true
+        }
+
+        let parts = splitLogDetailToken(lower)
+        let key = parts.key ?? lower
+        let value = parts.value ?? ""
+        let hasValue = parts.value != nil
 
         if !hasValue {
             if lower.contains("<redacted"), lower.contains("len=") || lower.contains("sha=") {
@@ -449,6 +720,15 @@ actor EventStreamReader {
             return isLikelyHashValue(lower)
         }
         if key.contains("hash") || key.contains("hmac") || key.contains("checksum") || key.contains("digest") {
+            return true
+        }
+        if key == "connector" || key == "severity" || key == "raw_origin" || key.hasPrefix("raw_") {
+            return true
+        }
+        if key == "len" || key.hasSuffix("_len") || key.hasSuffix("_length") || key == "length" {
+            return true
+        }
+        if key == "hook_compatibility_status" || key == "hook_script_version" {
             return true
         }
         if key == "sha" || key.hasPrefix("sha") || key.hasSuffix("_sha") {
@@ -460,7 +740,11 @@ actor EventStreamReader {
         if key.contains("bytes") || key == "byte" || key == "size" ||
             key == "content-length" || key == "content_length" ||
             key == "payload_len" || key == "body_len" ||
-            key == "request_len" || key == "response_len" {
+            key == "request_len" || key == "response_len" ||
+            key == "body_bytes" || key == "request_bytes" || key == "response_bytes" {
+            return true
+        }
+        if key == "result", value == "ok" || value == "success" {
             return true
         }
         if value.contains("<redacted"), value.contains("len=") || value.contains("sha=") {
@@ -470,6 +754,87 @@ actor EventStreamReader {
             return true
         }
         return false
+    }
+
+    private func isRedactedMetadata(_ value: String) -> Bool {
+        value.contains("<redacted") && (value.contains("len=") || value.contains("sha="))
+    }
+
+    private func splitLogDetailToken(_ token: String) -> (key: String?, value: String?) {
+        let parts = token.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2 else { return (nil, nil) }
+        let key = String(parts[0]).trimmingCharacters(in: CharacterSet(charactersIn: "\"'` "))
+        let value = String(parts[1]).trimmingCharacters(in: CharacterSet(charactersIn: "\"'`,; "))
+        guard !key.isEmpty, !value.isEmpty else { return (nil, nil) }
+        return (key.lowercased(), value)
+    }
+
+    private func parseLogKeyValues(_ text: String) -> [String: String] {
+        var pairs: [String: String] = [:]
+        var index = text.startIndex
+
+        func skipWhitespace() {
+            while index < text.endIndex, text[index].isWhitespace {
+                index = text.index(after: index)
+            }
+        }
+
+        while index < text.endIndex {
+            skipWhitespace()
+            let keyStart = index
+            while index < text.endIndex, text[index] != "=", !text[index].isWhitespace {
+                index = text.index(after: index)
+            }
+            guard index < text.endIndex, text[index] == "=" else { break }
+            let key = String(text[keyStart..<index]).lowercased()
+            index = text.index(after: index)
+
+            let valueStart = index
+            if index < text.endIndex, text[index] == "\"" {
+                index = text.index(after: index)
+                let quotedStart = index
+                while index < text.endIndex, text[index] != "\"" {
+                    if text[index] == "\\", text.index(after: index) < text.endIndex {
+                        index = text.index(index, offsetBy: 2)
+                    } else {
+                        index = text.index(after: index)
+                    }
+                }
+                pairs[key] = String(text[quotedStart..<index])
+                if index < text.endIndex { index = text.index(after: index) }
+                continue
+            }
+            if index < text.endIndex, text[index] == "<" {
+                var depth = 0
+                while index < text.endIndex {
+                    if text[index] == "<" {
+                        depth += 1
+                    } else if text[index] == ">" {
+                        depth -= 1
+                        if depth == 0 {
+                            index = text.index(after: index)
+                            break
+                        }
+                    }
+                    index = text.index(after: index)
+                }
+            } else {
+                while index < text.endIndex, !text[index].isWhitespace {
+                    index = text.index(after: index)
+                }
+            }
+            let value = String(text[valueStart..<index])
+            if !key.isEmpty, !value.isEmpty { pairs[key] = value }
+        }
+        return pairs
+    }
+
+    private func boolValue(_ value: String) -> Bool? {
+        switch value.lowercased() {
+        case "true", "yes", "1": return true
+        case "false", "no", "0": return false
+        default: return nil
+        }
     }
 
     private func isLikelyHashValue(_ value: String) -> Bool {
@@ -486,18 +851,34 @@ actor EventStreamReader {
         character.unicodeScalars.allSatisfy { CharacterSet.whitespacesAndNewlines.contains($0) }
     }
 
-    private func classifyStream(rowType: String, eventType: String, action: String, details: String) -> LogStream {
-        let haystack = "\(rowType) \(eventType) \(action) \(details)".lowercased()
-        if haystack.contains("verdict") || haystack.contains("judge") || haystack.contains("triage") {
+    private func classifyStream(_ row: ParsedLogFields) -> LogStream {
+        if isOtelLogRow(row) { return .otel }
+        let type = row.eventType.lowercased()
+        if [
+            "verdict", "judge", "lifecycle", "error", "diagnostic",
+            "scan", "scan_finding", "activity",
+        ].contains(type) {
             return .verdicts
         }
-        if haystack.contains("otel") || haystack.contains("otlp") || haystack.contains("telemetry") {
-            return .otel
-        }
+        let haystack = "\(row.rowType) \(row.eventType) \(row.action) \(row.details)".lowercased()
         if haystack.contains("watchdog") || haystack.contains("health probe") {
             return .watchdog
         }
         return .gateway
+    }
+
+    private func isOtelLogRow(_ row: ParsedLogFields) -> Bool {
+        let action = (row.activityAction.isEmpty ? row.lifecycleDetails["action"] ?? "" : row.activityAction)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if action.hasPrefix("otel.ingest.")
+            || action.hasPrefix("codex.notify.")
+            || ["otel.ingest", "codex.notify", "connector-hook"].contains(action) {
+            return true
+        }
+        let subsystem = row.subsystem.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let component = row.diagnosticComponent.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return ["otel", "telemetry"].contains(subsystem) || ["otel", "telemetry"].contains(component)
     }
 
     private func jsonString(_ value: Any?) -> String {

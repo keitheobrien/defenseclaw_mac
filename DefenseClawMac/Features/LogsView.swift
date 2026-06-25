@@ -45,7 +45,7 @@ struct LogsView: View {
                 DCEmptyState(
                     title: "No log lines",
                     message: rows.isEmpty
-                        ? "No data in \(ConfigStore.gatewayJSONLURL.lastPathComponent) for the \(stream.title) stream yet."
+                        ? "No data in \(sourceFilename(for: stream)) for the \(stream.title) stream yet."
                         : "Nothing matches the current filters.",
                     systemImage: "text.alignleft"
                 )
@@ -141,18 +141,25 @@ struct LogsView: View {
                     RoundedRectangle(cornerRadius: 1.5)
                         .fill(Cisco.severityColor(row.severity))
                         .frame(width: 3)
-                    Text(row.timestamp, format: .dateTime.hour().minute().second())
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                    Text(row.stream.rawValue.uppercased())
-                        .font(.system(.caption2, design: .monospaced).weight(.semibold))
-                        .foregroundStyle(Cisco.blue)
-                    VStack(alignment: .leading, spacing: 3) {
+                    if isPlainFileRow(row) {
                         Text(row.message)
-                            .font(.caption)
+                            .font(.system(.caption, design: .monospaced))
                             .lineLimit(2)
                             .textSelection(.enabled)
-                        logMetadata(row)
+                    } else {
+                        Text(row.timestamp, format: .dateTime.hour().minute().second())
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                        Text(row.stream.rawValue.uppercased())
+                            .font(.system(.caption2, design: .monospaced).weight(.semibold))
+                            .foregroundStyle(Cisco.blue)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(row.message)
+                                .font(.caption)
+                                .lineLimit(2)
+                                .textSelection(.enabled)
+                            logMetadata(row)
+                        }
                     }
                 }
                 .id(row.id)
@@ -176,6 +183,21 @@ struct LogsView: View {
                     }
                 }
             }
+        }
+    }
+
+    private func isPlainFileRow(_ row: LogRow) -> Bool {
+        row.rawJSON == row.message && (row.stream == .gateway || row.stream == .watchdog)
+    }
+
+    private func sourceFilename(for stream: LogStream) -> String {
+        switch stream {
+        case .gateway:
+            ConfigStore.gatewayLogURL.lastPathComponent
+        case .watchdog:
+            ConfigStore.watchdogLogURL.lastPathComponent
+        case .verdicts, .otel:
+            ConfigStore.gatewayJSONLURL.lastPathComponent
         }
     }
 
