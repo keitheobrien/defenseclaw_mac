@@ -16,6 +16,7 @@ struct DefenseClawApp: App {
             MainWindow()
                 .environment(appState)
                 .frame(minWidth: 980, minHeight: 640)
+                .preferredColorScheme(.dark)
                 .onAppear { appState.start() }
         }
         .defaultSize(width: 1180, height: 760)
@@ -59,6 +60,7 @@ struct DefenseClawApp: App {
         MenuBarExtra {
             MenuBarPopover()
                 .environment(appState)
+                .preferredColorScheme(.dark)
         } label: {
             MenuBarIcon()
                 .environment(appState)
@@ -68,6 +70,7 @@ struct DefenseClawApp: App {
         Settings {
             AppSettingsView()
                 .environment(appState)
+                .preferredColorScheme(.dark)
         }
     }
 }
@@ -102,6 +105,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var miniaturizeObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // The Cisco palette is designed for a dark surface (the adaptive tokens'
+        // dark variants), so pin the whole app to dark aqua regardless of the
+        // system's light/dark setting. This forces every window, popover, and
+        // the Settings panel to dark and resolves all Color.adaptive(...) tokens
+        // to their dark values. (The menu-bar status item template still tints
+        // itself to the real menu bar, which is what we want.)
+        NSApp.appearance = NSAppearance(named: .darkAqua)
+
         // Window state restoration replays a stale sidebar selection through the
         // List binding, desyncing highlight from content — start fresh instead.
         UserDefaults.standard.register(defaults: ["NSQuitAlwaysKeepsWindows": false])
