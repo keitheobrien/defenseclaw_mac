@@ -30,7 +30,7 @@ struct OverviewView: View {
                 // fixedSize pins the row to its tallest card; fillHeight on
                 // each card stretches the shorter ones to match.
                 HStack(alignment: .top, spacing: 14) {
-                    healthCard
+                    servicesCard
                         .frame(maxWidth: .infinity)
                     scannersCard
                         .frame(maxWidth: .infinity)
@@ -38,6 +38,7 @@ struct OverviewView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .fixedSize(horizontal: false, vertical: true)
+                configurationCard
                 if !appState.health.connectors.isEmpty { connectorCard }
                 activityCard
                 HStack(alignment: .top, spacing: 14) {
@@ -85,44 +86,31 @@ struct OverviewView: View {
 
     // MARK: Cards
 
-    private var healthCard: some View {
-        DCCard("System Health", systemImage: "heart.text.square", fillHeight: true) {
+    /// Hero left: the TUI's SERVICES box — the nine subsystems (Gateway, Agent,
+    /// Watchdog, Guardrail, API, Sinks, Telemetry, AI Discovery, Sandbox), each
+    /// with a state-colored bullet, name, running/disabled state word, and
+    /// detail. Falls back to a gateway-unreachable hint when the API is down.
+    private var servicesCard: some View {
+        DCCard("Services", systemImage: "square.stack.3d.up", fillHeight: true) {
             if appState.gatewayReachable {
-                // Headline: state + uptime side by side, no dead space.
-                HStack(spacing: 10) {
-                    StatePill(raw: appState.health.state)
-                    Text(uptimeText)
-                        .font(.title3.weight(.semibold))
-                    Text("uptime")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    if let version = appState.health.version {
-                        Text("v\(version)").font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                if let lastError = appState.health.lastError, !lastError.isEmpty {
-                    Label(lastError, systemImage: "exclamationmark.triangle")
-                        .font(.caption)
-                        .foregroundStyle(Cisco.orange)
-                        .lineLimit(2)
-                }
-                Divider()
-                // Subsystems as a two-column chip grid that fills the card.
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())],
-                          alignment: .leading, spacing: 6) {
-                    ForEach(appState.health.subsystems) { sub in
-                        HStack {
-                            Text(sub.name)
+                VStack(alignment: .leading, spacing: 5) {
+                    ForEach(appState.services) { svc in
+                        HStack(spacing: 8) {
+                            serviceBullet(svc.state)
+                            Text(svc.name)
+                                .font(.caption.weight(.medium))
+                                .frame(width: 92, alignment: .leading)
+                            Text(svc.state)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(Cisco.stateColor(raw: svc.state))
+                                .frame(width: 66, alignment: .leading)
+                            Text(svc.detail)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
-                            Spacer(minLength: 4)
-                            StatePill(raw: sub.state)
+                                .truncationMode(.tail)
+                            Spacer(minLength: 0)
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Cisco.surfaceRaised, in: RoundedRectangle(cornerRadius: 7))
                     }
                 }
             } else {
@@ -145,10 +133,61 @@ struct OverviewView: View {
         }
     }
 
-    private var uptimeText: String {
-        let secs = appState.health.uptimeMs / 1000
-        let h = secs / 3600, m = (secs % 3600) / 60
-        return h > 0 ? "\(h)h \(m)m" : "\(m)m"
+    /// Filled dot for a running-ish service, hollow ring otherwise — the TUI's
+    /// ●/○ convention, colored by state.
+    @ViewBuilder
+    private func serviceBullet(_ state: String) -> some View {
+        let running = ["running", "active", "enabled", "clean", "allowed"].contains(state.lowercased())
+        let color = Cisco.stateColor(raw: state)
+        if running {
+            Circle().fill(color).frame(width: 7, height: 7)
+        } else {
+            Circle().strokeBorder(color, lineWidth: 1).frame(width: 7, height: 7)
+        }
+    }
+
+
+    /// Full-width CONFIGURATION box (parity with the TUI's global configuration
+    /// panel). Uses the same DCCard chrome as the Connectors box — navy panel
+    /// background and blue header — with the same zebra-striped table rows. The
+    /// stripes use the system's *neutral* alternating content background colors
+    /// (the exact colors SwiftUI's Table paints in the Connectors box), so the
+    /// rows read black/grey over the blue card rather than blue-on-blue.
+    private var configurationCard: some View {
+        DCCard("Configuration", systemImage: "slider.horizontal.3") {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(appState.configurationRows.enumerated()), id: \.element.id) { index, row in
+                    HStack(alignment: .top, spacing: 12) {
+                        Text(row.label)
+                            .font(.body)
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                            .frame(width: 150, alignment: .leading)
+                        Text(row.value)
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Self.zebra(index))
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+    }
+
+    /// The two neutral, opaque alternating-row colors for the config table —
+    /// true black/grey (no blue tint) covering the navy card, matching the
+    /// black/grey zebra striping of the Connectors table.
+    private static func zebra(_ index: Int) -> Color {
+        index.isMultiple(of: 2)
+            ? Color.adaptive(light: 0xFFFFFF, dark: 0x1C1C1E)   // base row (near-black)
+            : Color.adaptive(light: 0xEFEFEF, dark: 0x2A2A2C)   // alternate row (grey)
     }
 
     private var connectorCard: some View {

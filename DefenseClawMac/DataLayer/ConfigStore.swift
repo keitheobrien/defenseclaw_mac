@@ -18,6 +18,16 @@ struct DefenseClawConfig: Sendable {
     var guardrailMode: String?
     var guardrailPort: Int?
     var guardrailRulePack: String = "default"
+    // Global posture surfaced in the Overview CONFIGURATION box.
+    var redactionEnabled = true              // privacy.disable_redaction (inverted)
+    var hiltEnabled = false                  // hilt.enabled (human-in-the-loop approval)
+    var hiltMinSeverity = "HIGH"             // hilt.min_severity
+    var environment: String?                 // environment
+    var policyDir: String?                   // policy_dir
+    var dataDir: String?                     // data_dir
+    var llmProvider: String?                 // llm.provider (→ inspect_llm.provider)
+    var llmModel: String?                    // llm.model (→ inspect_llm.model)
+    var aiDefenseEndpoint: String?           // cisco_ai_defense.endpoint
     var registrySources: [RegistrySourceConfig] = []
     var raw: YAMLNode = .mapping([:])
 
@@ -248,6 +258,16 @@ actor ConfigStore {
         if let packDir = root["guardrail.rule_pack_dir"]?.string, !packDir.isEmpty {
             c.guardrailRulePack = (packDir as NSString).lastPathComponent
         }
+        // Global posture for the Overview CONFIGURATION box.
+        c.redactionEnabled = !(root["privacy.disable_redaction"]?.bool ?? false)
+        c.hiltEnabled = root["hilt.enabled"]?.bool ?? false
+        c.hiltMinSeverity = root["hilt.min_severity"]?.string ?? "HIGH"
+        c.environment = root["environment"]?.string
+        c.policyDir = root["policy_dir"]?.string
+        c.dataDir = root["data_dir"]?.string
+        c.llmProvider = root["llm.provider"]?.string ?? root["inspect_llm.provider"]?.string
+        c.llmModel = root["llm.model"]?.string ?? root["inspect_llm.model"]?.string
+        c.aiDefenseEndpoint = root["cisco_ai_defense.endpoint"]?.string
         // Multi-connector roster (guardrail.connectors: {codex: {...}, ...}),
         // plus each connector's mode and rule pack for the Overview table.
         if let roster = root["guardrail.connectors"]?.mapping {

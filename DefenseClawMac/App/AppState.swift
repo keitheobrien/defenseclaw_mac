@@ -524,6 +524,170 @@ final class AppState {
         }
     }
 
+    // MARK: - Services card (Overview hero, parity with the TUI SERVICES panel)
+
+    /// The nine SERVICES rows mirrored from the TUI's `service_cards()`, in the
+    /// same order: each carries a runtime state (from /health) and a one-line
+    /// detail sourced from the matching subsystem's details and/or config.
+    var services: [ServiceStatus] {
+        let running = Set(["running", "active", "enabled"])
+
+        // Agent: roll the per-connector states into one aggregate, the way an
+        // operator reads the CONNECTORS table — running only when all are up,
+        // degraded when some are, disabled when every one is down/absent.
+        let connStates = health.connectors.map { $0.state.lowercased() }
+        let up = connStates.filter { running.contains($0) }.count
+        let total = connStates.count
+        let agentState: String = {
+            guard total > 0 else { return health.connectors.isEmpty && config.connectors.isEmpty ? "unknown" : "disabled" }
+            if up == total { return "running" }
+            if up > 0 { return "degraded" }
+            return connStates.first ?? "unknown"
+        }()
+        let agentDetail: String = {
+            guard total > 0 else {
+                let n = config.connectors.count
+                return n > 0 ? "\(n) connector\(n == 1 ? "" : "s") configured" : ""
+            }
+            if up == total { return "\(total) connector\(total == 1 ? "" : "s") active" }
+            return "\(up)/\(total) connectors running"
+        }()
+
+        func sub(_ key: String) -> HealthSnapshot.Subsystem? { health.subsystem(key) }
+        func state(_ key: String, default def: String = "disabled") -> String {
+            sub(key)?.state ?? def
+        }
+
+        // Gateway: standalone-mode summary when disabled, else uptime.
+        let gatewayDetail: String = {
+            let g = sub("gateway")
+            if (g?.state.lowercased() ?? "") == "disabled", let summary = g?.details["summary"], !summary.isEmpty {
+                return summary
+            }
+            let secs = health.uptimeMs / 1000
+            guard secs > 0 else { return "" }
+            let h = secs / 3600, m = (secs % 3600) / 60
+            return h > 0 ? "up \(h)h \(m)m" : "up \(m)m"
+        }()
+
+        // Watchdog: "N skill dirs, M plugin dirs".
+        let watchdogDetail: String = {
+            guard let d = sub("watcher")?.details else { return "" }
+            var parts: [String] = []
+            if let s = d["skill_dirs"] { parts.append("\(s) skill dirs") }
+            if let p = d["plugin_dirs"] { parts.append("\(p) plugin dirs") }
+            return parts.joined(separator: ", ")
+        }()
+
+        // Guardrail: from config (mode, port, rule pack) — only when enabled.
+        let guardrailDetail: String = {
+            guard config.guardrailEnabled else { return "" }
+            var parts: [String] = []
+            if let m = config.guardrailMode, !m.isEmpty { parts.append(m) }
+            if let p = config.guardrailPort { parts.append("port \(p)") }
+            if !config.guardrailRulePack.isEmpty { parts.append(config.guardrailRulePack) }
+            return parts.joined(separator: ", ")
+        }()
+
+        // AI Discovery: "N active, M new, mode".
+        let aiDetail: String = {
+            guard let d = sub("ai_discovery")?.details else { return "" }
+            var parts: [String] = []
+            if let a = d["active_signals"] { parts.append("\(a) active") }
+            if let n = d["new_signals"] { parts.append("\(n) new") }
+            if let mode = d["mode"], !mode.isEmpty { parts.append(mode) }
+            return parts.joined(separator: ", ")
+        }()
+
+        return [
+            ServiceStatus(key: "gateway", name: "Gateway", state: state("gateway"), detail: gatewayDetail),
+            ServiceStatus(key: "agent", name: "Agent", state: agentState, detail: agentDetail),
+            ServiceStatus(key: "watchdog", name: "Watchdog", state: state("watcher"), detail: watchdogDetail),
+            ServiceStatus(key: "guardrail", name: "Guardrail", state: state("guardrail"), detail: guardrailDetail),
+            ServiceStatus(key: "api", name: "API", state: state("api"), detail: sub("api")?.details["addr"] ?? ""),
+            ServiceStatus(key: "sinks", name: "Sinks", state: state("sinks"), detail: ""),
+            ServiceStatus(key: "telemetry", name: "Telemetry", state: state("telemetry"), detail: ""),
+            ServiceStatus(key: "ai_discovery", name: "AI Discovery", state: state("ai_discovery"), detail: aiDetail),
+            ServiceStatus(key: "sandbox", name: "Sandbox", state: state("sandbox"), detail: ""),
+        ]
+    }
+
+    // MARK: - Configuration box (Overview, parity with the TUI CONFIGURATION panel)
+
+    /// The global CONFIGURATION rows shown above the Connectors table, mirroring
+    /// the TUI's "All connectors" configuration view (Agents / Redaction /
+    /// Policy posture / Enforcement / Human approval / Environment / dirs / LLM
+    /// / AI Defense).
+    var configurationRows: [ConfigurationRow] {
+        // Roster size: live connector rows first, then the config roster.
+        let agentCount = health.connectors.isEmpty ? config.connectors.count : health.connectors.count
+        let multiConnector = config.connectorModes.count > 1 || config.connectors.count > 1
+
+        // First row: "Agents: N active" when multi-connector, else the single
+        // connector's name (TUI's active_connector_name()).
+        let agentRow: ConfigurationRow = {
+            if multiConnector || agentCount > 1 {
+                return .init(label: "Agents", value: "\(agentCount) active")
+            }
+            let name = (config.connectorName ?? config.connectorMode ?? "").lowercased()
+            return .init(label: "Agent", value: name)
+        }()
+
+        let redaction = config.redactionEnabled ? "ON (redacted)" : "OFF (RAW)"
+        let approval = config.hiltEnabled ? "ON (min \(config.hiltMinSeverity))" : "OFF"
+
+        var rows: [ConfigurationRow] = [
+            agentRow,
+            .init(label: "Redaction", value: redaction),
+            .init(label: "Policy posture", value: policyPosture),
+            .init(label: "Enforcement", value: enforcementLabel),
+            .init(label: "Human approval", value: approval),
+            .init(label: "Environment", value: (config.environment?.isEmpty == false ? config.environment! : "unknown")),
+            .init(label: "Policy dir", value: config.policyDir?.nonEmpty ?? "—"),
+            .init(label: "Data dir", value: config.dataDir?.nonEmpty ?? "—"),
+        ]
+        if let provider = config.llmProvider?.nonEmpty {
+            rows.append(.init(label: "LLM provider", value: provider))
+        }
+        if let model = config.llmModel?.nonEmpty {
+            rows.append(.init(label: "LLM model", value: model))
+        }
+        if let endpoint = config.aiDefenseEndpoint?.nonEmpty {
+            rows.append(.init(label: "AI Defense", value: endpoint))
+        }
+        return rows
+    }
+
+    /// Mirrors the TUI's `_policy_posture`.
+    private var policyPosture: String {
+        let mode = config.guardrailMode?.nonEmpty ?? "observe"
+        let scanner = config.guardrailRulePack.nonEmpty ?? "default"
+        let packs = Set(config.connectorRulePacks.values.filter { !$0.isEmpty })
+        if config.connectorModes.count > 1 {
+            let modes = Set(config.connectorModes.values.filter { !$0.isEmpty })
+            if packs.count > 1 || modes.count > 1 { return "per-connector (see roster)" }
+            let onlyPack = packs.first ?? scanner
+            let onlyMode = modes.first ?? mode
+            return "all connectors: \(onlyMode) (\(onlyPack))"
+        }
+        if mode == "action" { return "action: block CRIT, alert MED+ (\(scanner))" }
+        return "balanced: block CRIT, alert MED+ (\(scanner))"
+    }
+
+    /// Mirrors the TUI's `_enforcement_label`.
+    private var enforcementLabel: String {
+        if config.connectorModes.count > 1 {
+            return "\(config.connectorModes.count) connectors (hook observability)"
+        }
+        let connector = (config.connectorName ?? config.connectorMode ?? "").lowercased()
+        let mode = config.guardrailMode?.nonEmpty ?? "observe"
+        if connector.isEmpty { return "not configured (\(mode))" }
+        if connector == "openclaw" || connector == "zeptoclaw" {
+            return "\(connector) proxy guardrail (\(mode))"
+        }
+        return "\(connector) hook observability (\(mode))"
+    }
+
     // MARK: - Connector filter (multi-connector parity, connector_filter.py)
 
     /// Active connector names in roster order — live health first, then config.

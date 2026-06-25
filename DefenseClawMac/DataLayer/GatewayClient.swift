@@ -103,7 +103,11 @@ actor GatewayClient {
         for key in known {
             if let sub = dict[key] as? [String: Any],
                let state = (sub["state"] as? String) ?? (sub["status"] as? String) {
-                snap.subsystems.append(.init(name: key, state: state, detail: sub["detail"] as? String ?? sub["error"] as? String))
+                snap.subsystems.append(.init(
+                    name: key, state: state,
+                    detail: sub["detail"] as? String ?? sub["error"] as? String,
+                    details: Self.flattenDetails(sub["details"])
+                ))
             } else if let state = dict[key] as? String {
                 snap.subsystems.append(.init(name: key, state: state, detail: nil))
             }
@@ -132,6 +136,25 @@ actor GatewayClient {
             )
         }
         return snap
+    }
+
+    /// Stringify the scalar entries of a /health subsystem "details" object so
+    /// the Services card can read addr/summary/skill_dirs/active_signals/etc.
+    /// without dragging non-Sendable `Any` values into the snapshot. Nested
+    /// arrays/objects are dropped — the Services details only need scalars.
+    static func flattenDetails(_ value: Any?) -> [String: String] {
+        guard let dict = value as? [String: Any] else { return [:] }
+        var out: [String: String] = [:]
+        for (k, v) in dict {
+            switch v {
+            case let s as String: out[k] = s
+            case let i as Int: out[k] = String(i)
+            case let b as Bool: out[k] = b ? "true" : "false"
+            case let d as Double: out[k] = String(d)
+            default: break
+            }
+        }
+        return out
     }
 
     func status() async throws -> [String: Any] {

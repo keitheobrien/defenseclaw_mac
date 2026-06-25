@@ -71,8 +71,27 @@ struct HealthSnapshot: Sendable {
         var name: String
         var state: String
         var detail: String?
+        /// Stringified scalar values from the /health subsystem's nested
+        /// "details" object (e.g. skill_dirs, active_signals, addr, summary).
+        var details: [String: String] = [:]
         var id: String { name }
     }
+
+    /// Look up a parsed subsystem by its /health key.
+    func subsystem(_ key: String) -> Subsystem? {
+        subsystems.first { $0.name == key }
+    }
+}
+
+/// One row of the Overview SERVICES card — mirrors the TUI's ServiceCard
+/// (gateway, agent, watchdog, guardrail, api, sinks, telemetry, ai_discovery,
+/// sandbox), each with a runtime state and a one-line detail.
+struct ServiceStatus: Identifiable, Sendable {
+    var key: String
+    var name: String
+    var state: String
+    var detail: String
+    var id: String { key }
 }
 
 struct ConnectorHealth: Identifiable, Sendable {
@@ -87,6 +106,19 @@ struct ConnectorHealth: Identifiable, Sendable {
     var errors: Int = 0
     var state: String
     var id: String { name }
+}
+
+/// One label/value row of the Overview CONFIGURATION box (parity with the
+/// TUI's global configuration lines).
+struct ConfigurationRow: Identifiable, Sendable {
+    var label: String
+    var value: String
+    var id: String { label }
+}
+
+extension String {
+    /// self when non-empty, otherwise nil — for `?? fallback` chains.
+    var nonEmpty: String? { isEmpty ? nil : self }
 }
 
 // MARK: - Catalog items (skills / MCPs / plugins / tools)
