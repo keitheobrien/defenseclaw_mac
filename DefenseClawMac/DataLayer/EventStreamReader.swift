@@ -171,14 +171,16 @@ actor EventStreamReader {
         ingestScanBlock(obj) // keeps the scan_id-grouped block map current
         let ts = DCDates.parse(obj["ts"] ?? obj["timestamp"] ?? obj["time"]) ?? Date()
         let severity = Severity.parse(obj["severity"] as? String)
-        let action = (obj["action"] as? String) ?? ""
-        let eventType = (obj["event_type"] as? String) ?? (obj["event"] as? String) ?? rowType
-        let target = (obj["target"] as? String) ?? ""
-        let details = (obj["details"] as? String) ?? (obj["message"] as? String) ?? (obj["msg"] as? String) ?? ""
-        // Gateway JSONL rows carry the attributed connector at top level; fall
-        // back to the connector= kv in details for older/embedded rows.
-        let connector = (obj["connector"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-            ?? ConnectorAttribution.fromDetails(details)
+        let parsed = parseLogFields(obj, rowType: rowType)
+        let action = parsed.action
+        let eventType = parsed.eventType
+        let target = parsed.target
+        let details = parsed.details
+        // Gateway JSONL rows carry the attributed connector at top level or in
+        // nested lifecycle/audit payloads; fall back to connector= kv details.
+        let connector = parsed.connector.isEmpty
+            ? ConnectorAttribution.fromDetails(details)
+            : parsed.connector
 
         switch rowType {
         case "scan_finding":
@@ -232,7 +234,7 @@ actor EventStreamReader {
 
         // Every row also lands in a log stream (parity with load_gateway_log_views).
         let stream = classifyStream(rowType: rowType, eventType: eventType, action: action, details: details)
-        let message = [action, target, details].filter { !$0.isEmpty }.joined(separator: " · ")
+        let message = displayMessage(for: parsed, severity: severity, raw: raw)
         delta.logRows.append(LogRow(
             id: nextID(obj, "log"),
             timestamp: ts,
@@ -244,6 +246,244 @@ actor EventStreamReader {
             rawJSON: raw,
             connector: connector
         ))
+    }
+
+    private struct ParsedLogFields {
+        var rowType = ""
+        var eventType = ""
+        var action = ""
+        var target = ""
+        var details = ""
+        var actor = ""
+        var connector = ""
+        var subsystem = ""
+        var transition = ""
+        var scanner = ""
+        var verdict = ""
+        var findingTitle = ""
+        var findingLocation = ""
+        var findingCount: Int?
+    }
+
+    private func parseLogFields(_ obj: [String: Any], rowType: String) -> ParsedLogFields {
+        let lifecycle = obj["lifecycle"] as? [String: Any]
+        let lifecycleDetails = lifecycle?["details"] as? [String: Any]
+        let scan = obj["scan"] as? [String: Any]
+        let finding = obj["scan_finding"] as? [String: Any]
+        let audit = obj["audit"] as? [String: Any]
+        let payload = obj["payload"] as? [String: Any]
+
+        let eventType = firstString(
+            obj["event_type"], obj["event"], obj["type"], obj["row_type"], rowType
+        )
+        let action = firstString(
+            obj["action"],
+            lifecycleDetails?["action"],
+            audit?["action"],
+            payload?["action"],
+            scan?["action"],
+            finding?["action"]
+        )
+        let target = firstString(
+            obj["target"],
+            lifecycleDetails?["target"],
+            audit?["target"],
+            payload?["target"],
+            scan?["target"],
+            finding?["target"]
+        )
+        let details = sanitizeLogDetails(firstString(
+            obj["details"],
+            obj["message"],
+            obj["msg"],
+            obj["content"],
+            lifecycleDetails?["details"],
+            lifecycleDetails?["content"],
+            audit?["details"],
+            audit?["content"],
+            payload?["details"],
+            payload?["content"],
+            finding?["description"],
+            finding?["content"],
+            scan?["details"],
+            scan?["content"]
+        ))
+        let connector = firstString(
+            obj["connector"],
+            lifecycleDetails?["connector"],
+            audit?["connector"],
+            payload?["connector"],
+            scan?["connector"],
+            finding?["connector"],
+            ConnectorAttribution.fromTarget(target),
+            ConnectorAttribution.fromDetails(details)
+        )
+        return ParsedLogFields(
+            rowType: rowType,
+            eventType: eventType,
+            action: action,
+            target: target,
+            details: details,
+            actor: firstString(obj["actor"], lifecycleDetails?["actor"], audit?["actor"], payload?["actor"]),
+            connector: connector,
+            subsystem: firstString(lifecycle?["subsystem"], obj["subsystem"], payload?["subsystem"]),
+            transition: firstString(lifecycle?["transition"], obj["transition"], payload?["transition"]),
+            scanner: firstString(scan?["scanner"], finding?["scanner"], obj["scanner"]),
+            verdict: firstString(scan?["verdict"], obj["verdict"], payload?["verdict"]),
+            findingTitle: firstString(finding?["title"], obj["title"]),
+            findingLocation: firstString(finding?["location"], obj["location"]),
+            findingCount: firstInt(scan?["total_count"], scan?["finding_count"], obj["finding_count"])
+        )
+    }
+
+    private func displayMessage(for row: ParsedLogFields, severity: Severity, raw: String) -> String {
+        switch row.eventType {
+        case "lifecycle":
+            let subject = [row.subsystem, row.transition].filter { !$0.isEmpty }.joined(separator: " ")
+            let headline = [subject, row.action].filter { !$0.isEmpty }.joined(separator: " ")
+            let actorTarget = actorTarget(row.actor, row.target)
+            return joinedParts(headline, actorTarget, row.details, fallback: raw)
+        case "scan":
+            let findingText = row.findingCount.map { "\($0) finding\($0 == 1 ? "" : "s")" } ?? ""
+            let severityText = severity > .info ? severity.rawValue : ""
+            let headline = joinedWords("Scan", row.verdict, row.scanner)
+            return joinedParts(headline, row.target, severityText, findingText, row.details, fallback: raw)
+        case "scan_finding":
+            let headline = joinedWords("Finding", row.findingTitle)
+            let severityText = severity > .info ? severity.rawValue : ""
+            return joinedParts(headline, row.scanner, row.target, row.findingLocation, severityText, row.details, fallback: raw)
+        default:
+            let headline = joinedWords(row.action, row.eventType == "event" ? "" : row.eventType)
+            return joinedParts(headline, actorTarget(row.actor, row.target), row.details, fallback: raw)
+        }
+    }
+
+    private func actorTarget(_ actor: String, _ target: String) -> String {
+        if !actor.isEmpty && !target.isEmpty { return "\(actor) -> \(target)" }
+        return actor.isEmpty ? target : actor
+    }
+
+    private func joinedWords(_ parts: String...) -> String {
+        parts.filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    private func joinedParts(_ parts: String..., fallback: String) -> String {
+        let message = parts
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
+        return message.isEmpty ? fallback : message
+    }
+
+    private func firstString(_ values: Any?...) -> String {
+        for value in values {
+            if let string = value as? String {
+                let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { return trimmed }
+            } else if let value {
+                let string = String(describing: value).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !string.isEmpty { return string }
+            }
+        }
+        return ""
+    }
+
+    private func firstInt(_ values: Any?...) -> Int? {
+        for value in values {
+            if let int = value as? Int { return int }
+            if let string = value as? String, let int = Int(string) { return int }
+        }
+        return nil
+    }
+
+    private func sanitizeLogDetails(_ details: String) -> String {
+        let tokens = logDetailTokens(from: details)
+            .filter { !isNoisyLogDetailToken($0) }
+        return tokens.joined(separator: " ")
+    }
+
+    private func logDetailTokens(from text: String) -> [String] {
+        var tokens: [String] = []
+        var current = ""
+        var angleDepth = 0
+
+        func appendCurrent() {
+            let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { tokens.append(trimmed) }
+            current = ""
+        }
+
+        for character in text {
+            if character == "<" {
+                angleDepth += 1
+                current.append(character)
+            } else if character == ">" {
+                if angleDepth > 0 { angleDepth -= 1 }
+                current.append(character)
+            } else if isWhitespace(character), angleDepth == 0 {
+                appendCurrent()
+            } else {
+                current.append(character)
+            }
+        }
+        appendCurrent()
+        return tokens
+    }
+
+    private func isNoisyLogDetailToken(_ token: String) -> Bool {
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = trimmed.trimmingCharacters(in: CharacterSet(charactersIn: ",;")).lowercased()
+        guard !lower.isEmpty else { return true }
+
+        let parts = lower.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+        let key = parts.first.map(String.init)?
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'` "))
+            ?? lower
+        let value = parts.count > 1 ? String(parts[1]) : ""
+        let hasValue = parts.count > 1
+
+        if !hasValue {
+            if lower.contains("<redacted"), lower.contains("len=") || lower.contains("sha=") {
+                return true
+            }
+            return isLikelyHashValue(lower)
+        }
+        if key.contains("hash") || key.contains("hmac") || key.contains("checksum") || key.contains("digest") {
+            return true
+        }
+        if key == "sha" || key.hasPrefix("sha") || key.hasSuffix("_sha") {
+            return true
+        }
+        if key.contains("elapsed") || key.contains("duration") || key.contains("latency") || key == "took" || key == "took_ms" {
+            return true
+        }
+        if key.contains("bytes") || key == "byte" || key == "size" ||
+            key == "content-length" || key == "content_length" ||
+            key == "payload_len" || key == "body_len" ||
+            key == "request_len" || key == "response_len" {
+            return true
+        }
+        if value.contains("<redacted"), value.contains("len=") || value.contains("sha=") {
+            return true
+        }
+        if isLikelyHashValue(value) {
+            return true
+        }
+        return false
+    }
+
+    private func isLikelyHashValue(_ value: String) -> Bool {
+        let candidate = value.trimmingCharacters(in: CharacterSet(charactersIn: "\"'`,;<>"))
+        guard candidate.count >= 16 else { return false }
+        return candidate.unicodeScalars.allSatisfy { scalar in
+            ("0"..."9").contains(Character(scalar)) ||
+                ("a"..."f").contains(Character(scalar)) ||
+                ("A"..."F").contains(Character(scalar))
+        }
+    }
+
+    private func isWhitespace(_ character: Character) -> Bool {
+        character.unicodeScalars.allSatisfy { CharacterSet.whitespacesAndNewlines.contains($0) }
     }
 
     private func classifyStream(rowType: String, eventType: String, action: String, details: String) -> LogStream {

@@ -21,7 +21,7 @@ struct LogsView: View {
     @State private var isAtBottom = true
 
     private static let actionOptions = ["all", "block", "allow", "reject", "scan", "verdict", "hook"]
-    private static let eventTypeOptions = ["all", "audit", "scan", "hook", "skill", "mcp", "plugin"]
+    private static let eventTypeOptions = ["all", "lifecycle", "audit", "scan", "hook", "egress", "skill", "mcp", "plugin"]
 
     private func applyFilter() {
         let query = search.lowercased()
@@ -147,10 +147,13 @@ struct LogsView: View {
                     Text(row.stream.rawValue.uppercased())
                         .font(.system(.caption2, design: .monospaced).weight(.semibold))
                         .foregroundStyle(Cisco.blue)
-                    Text(row.message)
-                        .font(.system(.caption, design: .monospaced))
-                        .lineLimit(3)
-                        .textSelection(.enabled)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(row.message)
+                            .font(.caption)
+                            .lineLimit(2)
+                            .textSelection(.enabled)
+                        logMetadata(row)
+                    }
                 }
                 .id(row.id)
                 .listRowSeparator(.hidden)
@@ -172,6 +175,27 @@ struct LogsView: View {
                         proxy.scrollTo(last.id, anchor: .bottom)
                     }
                 }
+            }
+        }
+    }
+
+    private func logMetadata(_ row: LogRow) -> some View {
+        let parts = [
+            row.connector.isEmpty ? "" : row.connector,
+            row.eventType.isEmpty ? "" : row.eventType,
+            row.action.isEmpty ? "" : row.action,
+        ].filter { !$0.isEmpty }
+
+        return HStack(spacing: 6) {
+            ForEach(Array(parts.prefix(4).enumerated()), id: \.offset) { _, part in
+                Text(part)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.secondary.opacity(0.12), in: Capsule())
             }
         }
     }
