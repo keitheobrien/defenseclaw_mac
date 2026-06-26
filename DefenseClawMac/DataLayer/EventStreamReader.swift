@@ -14,6 +14,7 @@ struct StreamDelta: Sendable {
 
 actor EventStreamReader {
     static let tailBudget = 512 * 1024
+    static let tailLineLimit = 2_000
 
     private let url: URL
     private let gatewayLogURL: URL
@@ -30,9 +31,8 @@ actor EventStreamReader {
     private(set) var egress: [EgressEvent] = []
 
     /// Scan blocks grouped by scan_id — mirrors load_gateway_scan_blocks,
-    /// which reads the WHOLE file (not the 512 KiB tail).
+    /// which reads the bounded gateway.jsonl tail (512 KiB / 2,000 lines).
     private var scanBlockMap: [String: ScanBlockEvent] = [:]
-    private var blocksScannedOnce = false
 
     var scanBlocks: [ScanBlockEvent] {
         scanBlockMap.values.sorted { $0.timestamp > $1.timestamp }
@@ -50,13 +50,37 @@ actor EventStreamReader {
         self.watchdogLogURL = watchdogLogURL
     }
 
-    /// One full-file pass for scan/scan_finding rows (cheap substring prefilter,
-    /// JSON parse only on candidate lines). Tail polling keeps it current after.
-    private func scanWholeFileForBlocks() {
-        guard let data = try? Data(contentsOf: url) else { return }
-        let text = String(decoding: data, as: UTF8.self)
-        for line in text.split(separator: "\n") {
-            guard line.contains("\"event_type\":\"scan") else { continue }
+    /// Reload scan/scan_finding rows from the same bounded tail the TUI uses.
+    /// This keeps the Findings tile current and prevents stale historical
+    /// gateway.jsonl rows from inflating the live alert count.
+    private func refreshScanBlocksFromTail() {
+        guard let handle = try? FileHandle(forReadingFrom: url) else {
+            scanBlockMap = [:]
+            return
+        }
+        defer { try? handle.close() }
+
+        let size = (try? handle.seekToEnd()) ?? 0
+        let readSize = min(size, UInt64(Self.tailBudget))
+        let start = size - readSize
+        try? handle.seek(toOffset: start)
+        guard let data = try? handle.read(upToCount: Int(readSize)), !data.isEmpty else {
+            scanBlockMap = [:]
+            return
+        }
+
+        var text = String(decoding: data, as: UTF8.self)
+        if start > 0 {
+            if let newline = text.firstIndex(of: "\n") {
+                text = String(text[text.index(after: newline)...])
+            } else {
+                text = ""
+            }
+        }
+
+        scanBlockMap = [:]
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false).suffix(Self.tailLineLimit) {
+            guard line.contains("\"event_type\":\"scan") || line.contains("\"event_type\": \"scan") else { continue }
             guard let lineData = line.data(using: .utf8),
                   let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any]
             else { continue }
@@ -116,10 +140,7 @@ actor EventStreamReader {
 
     /// Reads any new bytes appended since the last call; first call reads the tail budget.
     func poll() -> StreamDelta {
-        if !blocksScannedOnce {
-            blocksScannedOnce = true
-            scanWholeFileForBlocks()
-        }
+        refreshScanBlocksFromTail()
         var delta = StreamDelta()
         if let handle = try? FileHandle(forReadingFrom: url) {
             defer { try? handle.close() }
@@ -169,7 +190,6 @@ actor EventStreamReader {
         activity = []
         egress = []
         scanBlockMap = [:]
-        blocksScannedOnce = false
         gatewayLogOffset = 0
         watchdogLogOffset = 0
         return poll()

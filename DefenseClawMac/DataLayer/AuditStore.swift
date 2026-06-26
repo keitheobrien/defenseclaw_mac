@@ -129,8 +129,11 @@ actor AuditStore {
             binds.append(contentsOf: severities.map(\.rawValue))
         }
         if let actionLike, !actionLike.isEmpty {
-            conds.append("(" + actionLike.map { _ in "action LIKE ?" }.joined(separator: " OR ") + ")")
-            binds.append(contentsOf: actionLike.map { "%\($0)%" })
+            conds.append("(" + actionLike.map { _ in "(action LIKE ? OR details LIKE ?)" }.joined(separator: " OR ") + ")")
+            for pattern in actionLike {
+                let like = "%\(pattern)%"
+                binds.append(contentsOf: [like, like])
+            }
         }
         if !conds.isEmpty { sql += " WHERE " + conds.joined(separator: " AND ") }
         sql += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
@@ -179,58 +182,68 @@ actor AuditStore {
         )
     }
 
-    /// 24h enforcement counts for the Overview bars: (allowed, blocked, scanned).
-    func enforcementCounts24h() -> (allowed: Int, blocked: Int, scanned: Int) {
+    /// Connector breakdown parity with the TUI:
+    /// `AuditPanelModel.refresh()` loads the latest 500 audit rows, and the
+    /// hook-call tile's `_connector_hook_breakdown()` scans `items[-200:]`.
+    /// The descending DB sort means that is the oldest 200 rows within the
+    /// loaded 500-row window. Mirroring that keeps per-connector stats aligned
+    /// with the TUI instead of showing a much larger 24h total.
+    func overviewHookBreakdown(limit: Int = 500, breakdownWindow: Int = 200) -> (allow: Int, alert: Int, block: Int) {
         guard tableExists("audit_events") else { return (0, 0, 0) }
-        let since = DCDates.iso.string(from: Date().addingTimeInterval(-24 * 3600))
-        func count(_ patterns: [String]) -> Int {
-            let cond = patterns.map { _ in "action LIKE ?" }.joined(separator: " OR ")
-            let rows = query("SELECT COUNT(*) AS n FROM audit_events WHERE timestamp >= ? AND (\(cond))",
-                             binds: [since] + patterns.map { "%\($0)%" })
-            return (rows.first?["n"] as? Int) ?? 0
-        }
-        return (count(["allow"]), count(["block", "reject"]), count(["scan"]))
-    }
-
-    /// Menu bar decision counts for hook/tool traffic in the last 24h.
-    /// Hook calls are stored as `connector-hook` rows, with allow/block
-    /// decisions encoded in the details string (`action=allow|block|deny`).
-    func hookToolDecisionCounts24h() -> (allowed: Int, blocked: Int) {
-        guard tableExists("audit_events") else { return (0, 0) }
-        let since = DCDates.iso.string(from: Date().addingTimeInterval(-24 * 3600))
         let rows = query("""
             SELECT action, details FROM audit_events
-            WHERE timestamp >= ?
-              AND (
-                LOWER(action) = 'connector-hook'
-                OR LOWER(action) IN ('allow','allowed','block','blocked','deny','denied','reject','rejected','guardrail-block','quarantine')
-                OR LOWER(details) LIKE '%action=allow%'
-                OR LOWER(details) LIKE '%action=block%'
-                OR LOWER(details) LIKE '%action=deny%'
-                OR LOWER(details) LIKE '%action=reject%'
-              )
-            """, binds: [since])
-
-        var allowed = 0
-        var blocked = 0
-        for row in rows {
-            let action = ((row["action"] as? String) ?? "").lowercased()
-            let details = ((row["details"] as? String) ?? "").lowercased()
-            let isHookCall = action == "connector-hook"
-            let isBlocked = ["block", "blocked", "deny", "denied", "reject", "rejected", "guardrail-block", "quarantine"].contains(action)
-                || details.contains("action=block")
-                || details.contains("action=deny")
-                || details.contains("action=reject")
-            let isAllowed = ["allow", "allowed"].contains(action)
-                || details.contains("action=allow")
-
-            if isBlocked {
-                blocked += 1
-            } else if isHookCall || isAllowed {
-                allowed += 1
+            ORDER BY timestamp DESC, rowid DESC LIMIT ?
+            """, binds: [limit])
+        let window = rows.suffix(max(breakdownWindow, 1))
+        var allow = 0
+        var alert = 0
+        var block = 0
+        for row in window {
+            guard ((row["action"] as? String) ?? "") == "connector-hook" else { continue }
+            switch detailValue("action", in: (row["details"] as? String) ?? "").lowercased() {
+            case "allow":
+                allow += 1
+            case "alert", "warn":
+                alert += 1
+            case "block", "deny":
+                block += 1
+            default:
+                break
             }
         }
-        return (allowed, blocked)
+        return (allow, alert, block)
+    }
+
+    /// TUI Hook Calls tile parity: `_hook_event_timestamps()` counts every
+    /// connector-hook event in the latest loaded 500 audit rows.
+    func overviewHookCallCount(limit: Int = 500) -> Int {
+        guard tableExists("audit_events") else { return 0 }
+        let rows = query("""
+            SELECT action FROM audit_events
+            ORDER BY timestamp DESC, rowid DESC LIMIT ?
+            """, binds: [limit])
+        return rows.reduce(0) { total, row in
+            total + (((row["action"] as? String) == "connector-hook") ? 1 : 0)
+        }
+    }
+
+    /// TUI Blocks tile parity: `_block_event_timestamps()` scans the latest
+    /// loaded 500 audit rows and treats block-class actions or hook details
+    /// with `action=block|deny` as block events.
+    func overviewBlockCount(limit: Int = 500) -> Int {
+        guard tableExists("audit_events") else { return 0 }
+        let rows = query("""
+            SELECT action, details FROM audit_events
+            ORDER BY timestamp DESC, rowid DESC LIMIT ?
+            """, binds: [limit])
+        return rows.reduce(0) { total, row in
+            let action = ((row["action"] as? String) ?? "").lowercased()
+            let decision = detailValue("action", in: (row["details"] as? String) ?? "").lowercased()
+            let isBlock = ["block", "guardrail-block", "deny", "quarantine"].contains(action)
+                || decision == "block"
+                || decision == "deny"
+            return total + (isBlock ? 1 : 0)
+        }
     }
 
     /// Hourly allowed/blocked histogram for the last 24h (Overview enhancement).
@@ -361,35 +374,53 @@ actor AuditStore {
     /// fallback for hook connectors, whose calls arrive out-of-band of the
     /// gateway's request counters. Connector attribution comes from the
     /// `connector=<name>` kv token in each event's details.
-    func connectorStats(window: Int = 1000) -> [String: ConnectorStats] {
+    func connectorStats(window: Int = 500, breakdownWindow: Int = 200) -> [String: ConnectorStats] {
         guard tableExists("audit_events") else { return [:] }
         let rows = query("""
             SELECT action, severity, timestamp, details FROM audit_events
-            ORDER BY timestamp DESC LIMIT ?
+            ORDER BY timestamp DESC, rowid DESC LIMIT ?
             """, binds: [window])
         var stats: [String: ConnectorStats] = [:]
         for r in rows {
             let details = (r["details"] as? String) ?? ""
-            guard let range = details.range(of: "connector=") else { continue }
-            let connector = details[range.upperBound...]
-                .prefix { !$0.isWhitespace && $0 != "," }
-            guard !connector.isEmpty else { continue }
-            let name = String(connector)
+            let name = ConnectorAttribution.fromDetails(details)
+            guard !name.isEmpty else { continue }
             var s = stats[name] ?? ConnectorStats()
-            let action = ((r["action"] as? String) ?? "").lowercased()
-            if action == "connector-hook" { s.hookCalls += 1 }
-            if ["block", "guardrail-block", "deny", "quarantine"].contains(action)
-                || details.contains("action=block") || details.contains("action=deny") {
-                s.blocks += 1
-            }
-            let severity = Severity.parse(r["severity"] as? String)
-            if severity > .info { s.alerts += 1 }
             if let ts = DCDates.parse(r["timestamp"]), ts > (s.lastActivity ?? .distantPast) {
                 s.lastActivity = ts
             }
             stats[name] = s
         }
+        for r in rows.suffix(max(breakdownWindow, 1)) {
+            let details = (r["details"] as? String) ?? ""
+            let name = ConnectorAttribution.fromDetails(details)
+            guard !name.isEmpty, ((r["action"] as? String) ?? "") == "connector-hook" else { continue }
+            var s = stats[name] ?? ConnectorStats()
+            switch detailValue("action", in: details).lowercased() {
+            case "allow":
+                s.hookCalls += 1
+            case "alert", "warn":
+                s.hookCalls += 1
+                s.alerts += 1
+            case "block", "deny":
+                s.hookCalls += 1
+                s.blocks += 1
+            default:
+                break
+            }
+            stats[name] = s
+        }
         return stats
+    }
+
+    private func detailValue(_ key: String, in details: String) -> String {
+        let prefix = "\(key)="
+        for token in details.split(whereSeparator: { $0.isWhitespace || $0 == "," || $0 == ";" }) {
+            guard token.hasPrefix(prefix) else { continue }
+            return String(token.dropFirst(prefix.count))
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\"'`"))
+        }
+        return ""
     }
 
     /// Newest block-class event timestamp — used for new-alert detection.

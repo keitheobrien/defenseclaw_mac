@@ -61,6 +61,7 @@ enum AlertPanelRequest: Equatable {
 }
 
 struct LogPanelRequest: Equatable {
+    var stream: LogStream = .gateway
     var preset: LogPreset
     var actionFilter: String = "all"
     var eventTypeFilter: String = "all"
@@ -112,7 +113,7 @@ final class AppState {
     // Alerts state
     var unackedAlerts: [AlertRow] = []
     var dismissedIDs: Set<String> = []
-    var menuBarEnforcementCounts = EnforcementCounts()
+    var overviewEnforcementMetrics = OverviewEnforcementMetrics()
     /// Last `alerts acknowledge` failure, surfaced in the popover/panel.
     var ackError: String?
     var scanInFlight = false
@@ -225,24 +226,19 @@ final class AppState {
 
         // Tail the JSONL stream and refresh the alert set.
         _ = await stream.poll()
-        await refreshMenuBarEnforcementCounts()
         await refreshAlerts()
+        await refreshOverviewEnforcementMetrics()
         await checkForUpdates() // no-op unless 6h have passed
     }
 
-    func refreshMenuBarEnforcementCounts() async {
-        let decisions = await audit.hookToolDecisionCounts24h()
-        let since = Date().addingTimeInterval(-24 * 3600)
-        let highCriticalScans = await stream.scanBlocks.filter { block in
-            block.timestamp >= since && (block.severity == .critical || block.severity == .high)
-        }.count
-        let next = EnforcementCounts(
-            allowed: decisions.allowed,
-            blocked: decisions.blocked,
-            scanned: highCriticalScans
+    func refreshOverviewEnforcementMetrics() async {
+        let next = OverviewEnforcementMetrics(
+            hookCalls: await audit.overviewHookCallCount(),
+            blocks: await audit.overviewBlockCount(),
+            findings: unackedAlerts.filter { $0.severity > .info }.count
         )
-        if menuBarEnforcementCounts != next {
-            menuBarEnforcementCounts = next
+        if overviewEnforcementMetrics != next {
+            overviewEnforcementMetrics = next
         }
     }
 

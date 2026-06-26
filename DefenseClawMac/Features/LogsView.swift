@@ -246,7 +246,7 @@ struct LogsView: View {
         eventTypeFilter = request.eventTypeFilter
         severityFloor = nil
         search = ""
-        stream = .gateway
+        stream = request.stream
         autoScroll = true
         return true
     }

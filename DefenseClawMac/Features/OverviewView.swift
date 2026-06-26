@@ -215,7 +215,7 @@ struct OverviewView: View {
         DCCard("Enforcement", systemImage: "checkmark.shield", fillHeight: true) {
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 10) {
                 Button {
-                    appState.openLogs(.init(preset: .hooks))
+                    appState.openLogs(.init(stream: .otel, preset: .hooks))
                 } label: {
                     StatCard(
                         title: "Hook Calls (\(max(appState.health.connectors.count, 1)) connectors)",
@@ -368,20 +368,17 @@ struct OverviewView: View {
 
     // MARK: Actions
 
-    /// The TUI's Findings tile counts ALL severity-bearing alert rows
-    /// (CRITICAL/HIGH/MEDIUM/LOW across audit queue + scan blocks + egress) —
-    /// disambiguated against TUI 0.7.0 live: 290 = C+H+LOW when the app's
-    /// C+H-only count read 265. The menu bar badge stays C+H ("critical/high").
+    /// Same TUI-parity Findings count used by the menu bar.
     private var findingsCount: Int {
-        appState.unackedAlerts.filter { $0.severity > .info }.count
+        appState.overviewEnforcementMetrics.findings
     }
 
     private var heroHookCalls: Int {
-        appState.menuBarEnforcementCounts.allowed + appState.menuBarEnforcementCounts.blocked
+        appState.overviewEnforcementMetrics.hookCalls
     }
 
     private var heroBlocks: Int {
-        appState.menuBarEnforcementCounts.blocked
+        appState.overviewEnforcementMetrics.blocks
     }
 
     private func summaryItem(_ title: String, _ value: String) -> some View {
@@ -406,7 +403,7 @@ struct OverviewView: View {
     /// Summary/chart reload WITHOUT triggering a pulse — also driven by the
     /// pulse tick (task(id: fetchedAt)) so the panels track live data without a
     /// pulse→fetchedAt→pulse loop. Hero enforcement counts come from
-    /// AppState.menuBarEnforcementCounts so they reconcile with the menu bar.
+    /// AppState.overviewEnforcementMetrics so they reconcile with the menu bar.
     private func loadData() async {
         summary = await appState.audit.enforcementSummary()
         hourly = await appState.audit.hourlyEnforcement24h()

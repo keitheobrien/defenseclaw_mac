@@ -1,5 +1,5 @@
 // Menu bar popover (spec §5.1): health header, per-connector lines,
-// 24h enforcement micro-bars, recent unacked alerts, footer actions.
+// recent enforcement metrics, recent unacked alerts, footer actions.
 
 import SwiftUI
 
@@ -21,7 +21,8 @@ struct MenuBarPopover: View {
         .padding(12)
         .frame(width: 360)
         .task {
-            await appState.refreshMenuBarEnforcementCounts()
+            await appState.refreshAlerts()
+            await appState.refreshOverviewEnforcementMetrics()
         }
     }
 
@@ -66,40 +67,110 @@ struct MenuBarPopover: View {
     }
 
     private var enforcementBars: some View {
-        let counts = appState.menuBarEnforcementCounts
-        let maxValue = max(counts.allowed, counts.blocked, counts.scanned, 1)
+        let metrics = appState.overviewEnforcementMetrics
         return VStack(alignment: .leading, spacing: 7) {
-            enforcementRow("Allowed", value: counts.allowed, tint: Cisco.green, maxValue: maxValue)
-            enforcementRow("Blocked", value: counts.blocked, tint: Cisco.red, maxValue: maxValue)
-            enforcementRow("Scanned", value: counts.scanned, tint: Cisco.blue, maxValue: maxValue)
+            enforcementRow(
+                "Hook Calls",
+                value: metrics.hookCalls,
+                detail: "recent connector hooks",
+                tint: Cisco.blue,
+                progress: activityProgress(metrics.hookCalls)
+            ) {
+                appState.openLogs(.init(stream: .otel, preset: .hooks))
+                openMainWindow()
+            }
+            enforcementRow(
+                "Blocks",
+                value: metrics.blocks,
+                detail: blockRateText(blocks: metrics.blocks, hookCalls: metrics.hookCalls),
+                tint: Cisco.red,
+                progress: blockProgress(blocks: metrics.blocks, hookCalls: metrics.hookCalls)
+            ) {
+                appState.openAudit(preset: "blocks")
+                openMainWindow()
+            }
+            enforcementRow(
+                "Findings",
+                value: metrics.findings,
+                detail: "unacknowledged alerts",
+                tint: metrics.findings == 0 ? Cisco.green : Cisco.orange,
+                progress: findingsProgress(metrics.findings)
+            ) {
+                appState.openAlerts(filter: .all)
+                openMainWindow()
+            }
         }
         .padding(.vertical, 2)
     }
 
-    private func enforcementRow(_ title: String, value: Int, tint: Color, maxValue: Int) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack {
-                Text(title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("\(value)")
-                    .font(.caption.monospacedDigit().weight(.semibold))
-                    .foregroundStyle(value == 0 ? Color.secondary : tint)
-            }
-            GeometryReader { proxy in
-                let width = value == 0
-                    ? CGFloat.zero
-                    : max(CGFloat(2), proxy.size.width * CGFloat(value) / CGFloat(maxValue))
-                ZStack(alignment: .leading) {
-                    Capsule().fill(.secondary.opacity(0.14))
-                    Capsule().fill(tint).frame(width: width)
+    private func enforcementRow(
+        _ title: String,
+        value: Int,
+        detail: String,
+        tint: Color,
+        progress: Double,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(title)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text(detail)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Spacer()
+                    Text("\(value)")
+                        .font(.caption.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(value == 0 ? Color.secondary : tint)
                 }
+                GeometryReader { proxy in
+                    let clamped = min(max(progress, 0), 1)
+                    let width = value == 0
+                        ? CGFloat.zero
+                        : max(CGFloat(3), proxy.size.width * CGFloat(clamped))
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(.secondary.opacity(0.14))
+                        Capsule().fill(tint).frame(width: width)
+                    }
+                }
+                .frame(height: 4)
             }
-            .frame(height: 4)
         }
+        .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title) \(value)")
+        .accessibilityLabel("\(title) \(value), \(detail)")
+    }
+
+    private func activityProgress(_ value: Int) -> Double {
+        guard value > 0 else { return 0 }
+        return Double(value) / Double(value + 250)
+    }
+
+    private func blockProgress(blocks: Int, hookCalls: Int) -> Double {
+        guard blocks > 0 else { return 0 }
+        if hookCalls <= 0 { return min(Double(blocks) / 10, 1) }
+        return min(max((Double(blocks) / Double(hookCalls)) * 8, 0.06), 1)
+    }
+
+    private func findingsProgress(_ findings: Int) -> Double {
+        guard findings > 0 else { return 0 }
+        return Double(findings) / Double(findings + 10)
+    }
+
+    private func blockRateText(blocks: Int, hookCalls: Int) -> String {
+        guard hookCalls > 0 else { return "recent block decisions" }
+        guard blocks > 0 else { return "0% block rate" }
+        let rate = Double(blocks) * 100 / Double(hookCalls)
+        if rate < 1 { return String(format: "%.1f%% block rate", rate) }
+        return "\(Int(rate.rounded()))% block rate"
+    }
+
+    private func openMainWindow() {
+        AppDelegate.openMainWindow()
+        openWindow(id: "main")
     }
 
     @ViewBuilder
@@ -113,8 +184,7 @@ struct MenuBarPopover: View {
             ForEach(top) { row in
                 Button {
                     appState.selectedPanel = .alerts
-                    AppDelegate.openMainWindow()
-                    openWindow(id: "main")
+                    openMainWindow()
                 } label: {
                     HStack(spacing: 6) {
                         Circle().fill(Cisco.severityColor(row.severity)).frame(width: 7, height: 7)
@@ -146,8 +216,7 @@ struct MenuBarPopover: View {
     private var footerButtons: some View {
         HStack {
             Button("Open DefenseClaw") {
-                AppDelegate.openMainWindow()
-                openWindow(id: "main")
+                openMainWindow()
             }
             .controlSize(.small)
             Button("Ack All") {
