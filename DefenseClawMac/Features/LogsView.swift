@@ -15,6 +15,8 @@ struct LogsView: View {
     /// Cached filter output. Filtering up to 20k rows inside `body` stalls the
     /// main thread during trackpad scrolling — recompute only when inputs change.
     @State private var filtered: [LogRow] = []
+    @State private var displayRows: [DisplayLogRow] = []
+    @State private var selectedRowID: String?
     @State private var autoScroll = true
     /// True while the last row is on screen; auto-scroll only then, so live
     /// tail updates never yank the view away from what the user is reading.
@@ -35,13 +37,17 @@ struct LogsView: View {
                !row.rawJSON.lowercased().contains(query) { return false }
             return true
         }
+        displayRows = collapseAdjacentRows(filtered)
+        if let selectedRowID, !displayRows.contains(where: { $0.id == selectedRowID }) {
+            self.selectedRowID = nil
+        }
     }
 
     var body: some View {
         VStack(spacing: 0) {
             filterBar
             Divider()
-            if filtered.isEmpty {
+            if displayRows.isEmpty {
                 DCEmptyState(
                     title: "No log lines",
                     message: rows.isEmpty
@@ -52,6 +58,12 @@ struct LogsView: View {
                 .frame(maxHeight: .infinity)
             } else {
                 logList
+            }
+        }
+        .inspector(isPresented: inspectorPresented) {
+            if let selectedDisplayRow {
+                logInspector(selectedDisplayRow)
+                    .inspectorColumnWidth(min: 300, ideal: 380)
             }
         }
         .searchable(text: $search, placement: .toolbar, prompt: "Search log lines")
@@ -92,24 +104,24 @@ struct LogsView: View {
     private var filterBar: some View {
         @Bindable var state = appState
         return VStack(alignment: .leading, spacing: 6) {
-            Picker("Stream", selection: $stream) {
-                ForEach(LogStream.allCases) { s in Text(s.title).tag(s) }
-            }
-            .pickerStyle(.segmented)
-            .onChange(of: stream) { _, _ in Task { await load(force: true) } }
-
-            if appState.activeConnectorNames.count > 1 {
+            HStack(spacing: 12) {
+                Picker("Stream", selection: $stream) {
+                    ForEach(LogStream.allCases) { s in Text(s.title).tag(s) }
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 440)
+                .onChange(of: stream) { _, _ in Task { await load(force: true) } }
+                Spacer()
                 ConnectorFilterChip(names: appState.activeConnectorNames, selection: $state.connectorFilter)
             }
 
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 FilterChipRow(
+                    "Preset",
                     options: [("Preset: all", LogPreset.all)] +
                         LogPreset.allCases.dropFirst().map { ($0.rawValue, $0) },
                     selection: $preset
                 )
-            }
-            HStack(spacing: 10) {
                 Picker("Severity ≥", selection: $severityFloor) {
                     Text("Any severity").tag(Optional<Severity>.none)
                     ForEach([Severity.critical, .high, .medium, .low], id: \.self) {
@@ -126,7 +138,7 @@ struct LogsView: View {
                 }
                 .frame(width: 120)
                 Spacer()
-                Text("\(filtered.count) / \(rows.count) lines")
+                Text("\(displayRows.count) shown · \(filtered.count) matching · \(rows.count) total")
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -136,46 +148,56 @@ struct LogsView: View {
 
     private var logList: some View {
         ScrollViewReader { proxy in
-            List(filtered) { row in
+            List(displayRows, selection: $selectedRowID) { item in
+                let row = item.row
                 HStack(alignment: .top, spacing: 8) {
                     RoundedRectangle(cornerRadius: 1.5)
                         .fill(Cisco.severityColor(row.severity))
                         .frame(width: 3)
-                    if isPlainFileRow(row) {
-                        Text(row.message)
-                            .font(.system(.caption, design: .monospaced))
-                            .lineLimit(2)
+                    Text(row.timestamp, format: .dateTime.hour().minute().second())
+                        .font(.system(.callout, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 7) {
+                            Text(eventLabel(row))
+                                .font(.system(.callout, design: .monospaced).weight(.semibold))
+                                .foregroundStyle(Cisco.blue)
+                            if item.count > 1 {
+                                Text("Repeated \(item.count) times")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(.secondary.opacity(0.12), in: Capsule())
+                            }
+                            Spacer()
+                        }
+                        Text(item.message)
+                            .font(.system(.callout, design: .monospaced))
+                            .lineLimit(3)
                             .textSelection(.enabled)
-                    } else {
-                        Text(row.timestamp, format: .dateTime.hour().minute().second())
-                            .font(.system(.caption2, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                        Text(row.stream.rawValue.uppercased())
-                            .font(.system(.caption2, design: .monospaced).weight(.semibold))
-                            .foregroundStyle(Cisco.blue)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(row.message)
+                        if !row.connector.isEmpty,
+                           !item.message.localizedCaseInsensitiveContains(row.connector) {
+                            Text(row.connector)
                                 .font(.caption)
-                                .lineLimit(2)
-                                .textSelection(.enabled)
-                            logMetadata(row)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
-                .id(row.id)
+                .id(item.id)
                 .listRowSeparator(.hidden)
-                .onAppear { if row.id == filtered.last?.id { isAtBottom = true } }
-                .onDisappear { if row.id == filtered.last?.id { isAtBottom = false } }
+                .onAppear { if item.id == displayRows.last?.id { isAtBottom = true } }
+                .onDisappear { if item.id == displayRows.last?.id { isAtBottom = false } }
                 .contextMenu {
-                    Button("Copy Line") { copyToPasteboard(row.message) }
+                    Button("Copy Summary") { copyToPasteboard(item.message) }
                     Button("Copy JSON") { copyToPasteboard(row.rawJSON) }
                 }
             }
             .listStyle(.plain)
-            .onChange(of: filtered.count) { _, _ in
+            .onChange(of: displayRows.count) { _, _ in
                 // Follow the tail only while the user is already at the bottom —
                 // never steal the scroll position mid-read.
-                if autoScroll, isAtBottom, let last = filtered.last {
+                if autoScroll, isAtBottom, let last = displayRows.last {
                     var transaction = Transaction()
                     transaction.disablesAnimations = true
                     withTransaction(transaction) {
@@ -184,10 +206,6 @@ struct LogsView: View {
                 }
             }
         }
-    }
-
-    private func isPlainFileRow(_ row: LogRow) -> Bool {
-        row.rawJSON == row.message && (row.stream == .gateway || row.stream == .watchdog)
     }
 
     private func sourceFilename(for stream: LogStream) -> String {
@@ -201,25 +219,103 @@ struct LogsView: View {
         }
     }
 
-    private func logMetadata(_ row: LogRow) -> some View {
-        let parts = [
-            row.connector.isEmpty ? "" : row.connector,
-            row.eventType.isEmpty ? "" : row.eventType,
-            row.action.isEmpty ? "" : row.action,
-        ].filter { !$0.isEmpty }
+    private func eventLabel(_ row: LogRow) -> String {
+        let parts = [row.eventType, row.action].filter { !$0.isEmpty && $0 != "event" }
+        return parts.isEmpty ? row.stream.title : "[\(parts.joined(separator: ":"))]"
+    }
 
-        return HStack(spacing: 6) {
-            ForEach(Array(parts.prefix(4).enumerated()), id: \.offset) { _, part in
-                Text(part)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(.secondary.opacity(0.12), in: Capsule())
+    private func collapseAdjacentRows(_ rows: [LogRow]) -> [DisplayLogRow] {
+        var result: [DisplayLogRow] = []
+        for row in rows {
+            let message = humanMessage(row.message)
+            if message.count <= 2, preset != .all { continue }
+            let displayMessage = message.isEmpty ? "Redacted event payload" : message
+            if var previous = result.last,
+               previous.message == displayMessage,
+               previous.row.eventType == row.eventType,
+               previous.row.action == row.action,
+               previous.row.connector == row.connector,
+               previous.row.severity == row.severity {
+                previous.count += 1
+                previous.lastTimestamp = row.timestamp
+                result[result.count - 1] = previous
+            } else {
+                result.append(DisplayLogRow(
+                    row: row,
+                    message: displayMessage,
+                    count: 1,
+                    lastTimestamp: row.timestamp
+                ))
             }
         }
+        return result
+    }
+
+    private func humanMessage(_ source: String) -> String {
+        let patterns = [
+            #"^\s*[-–—]?\s*\d{1,2}:\d{2}:\d{2}(?:\.\d+)?\s+"#,
+            #"<redacted(?:\s+[^>]*)?>"#,
+            #"\b(?:call_id|session|run_id|audit_id|content_hash|payload_hmac|sha(?:256)?|len|body_bytes|request_bytes|response_bytes)=[^\s]+"#,
+            #"\b(?:sha|a)=[A-Fa-f0-9]{8,}>"#,
+            #"\s+(?:cause|msg)=\s*$"#,
+        ]
+        let range = { (value: String) in NSRange(value.startIndex..., in: value) }
+        var result = source
+        for pattern in patterns {
+            guard let expression = try? NSRegularExpression(pattern: pattern) else { continue }
+            result = expression.stringByReplacingMatches(in: result, range: range(result), withTemplate: "")
+        }
+        result = result.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return result
+    }
+
+    private var selectedDisplayRow: DisplayLogRow? {
+        guard let selectedRowID else { return nil }
+        return displayRows.first { $0.id == selectedRowID }
+    }
+
+    private var inspectorPresented: Binding<Bool> {
+        Binding(
+            get: { selectedDisplayRow != nil },
+            set: { if !$0 { selectedRowID = nil } }
+        )
+    }
+
+    private func logInspector(_ item: DisplayLogRow) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Event Details").font(.headline)
+                Spacer()
+                Button { selectedRowID = nil } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.borderless)
+                .help("Close Inspector")
+            }
+            Text(item.message)
+                .font(.system(.callout, design: .monospaced))
+                .textSelection(.enabled)
+            KeyValueGrid(pairs: [
+                ("First", item.row.timestamp.formatted(date: .abbreviated, time: .standard)),
+                ("Last", item.lastTimestamp.formatted(date: .abbreviated, time: .standard)),
+                ("Stream", item.row.stream.title),
+                ("Event", item.row.eventType),
+                ("Action", item.row.action),
+                ("Severity", item.row.severity.rawValue),
+                ("Connector", item.row.connector),
+                ("Occurrences", "\(item.count)"),
+            ].filter { !$0.1.isEmpty })
+            Divider()
+            Text("Raw Event").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            ScrollView {
+                Text(item.row.rawJSON)
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(12)
     }
 
     /// Refreshes from the stream buffer, but only publishes when the tail
@@ -250,4 +346,12 @@ struct LogsView: View {
         autoScroll = true
         return true
     }
+}
+
+private struct DisplayLogRow: Identifiable {
+    let row: LogRow
+    let message: String
+    var count: Int
+    var lastTimestamp: Date
+    var id: String { row.id }
 }

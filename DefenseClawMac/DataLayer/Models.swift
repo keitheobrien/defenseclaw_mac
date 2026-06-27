@@ -112,6 +112,7 @@ struct OverviewEnforcementMetrics: Sendable, Equatable {
     var hookCalls: Int = 0
     var blocks: Int = 0
     var findings: Int = 0
+    var updatedAt: Date = .distantPast
 }
 
 /// One label/value row of the Overview CONFIGURATION box (parity with the
@@ -669,6 +670,7 @@ enum DCDates {
 
     static func relative(_ date: Date?) -> String {
         guard let date else { return "never" }
+        if abs(date.timeIntervalSinceNow) < 2 { return "just now" }
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .abbreviated
         return f.localizedString(for: date, relativeTo: Date())

@@ -9,20 +9,20 @@ import ServiceManagement
 struct DefenseClawApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var appState = AppState()
-    @AppStorage("showDockIcon") private var showDockIcon = true
 
     var body: some Scene {
-        Window("DefenseClaw", id: "main") {
+        WindowGroup("DefenseClaw", id: "main") {
             MainWindow()
                 .environment(appState)
                 .frame(minWidth: 980, minHeight: 640)
-                .preferredColorScheme(.dark)
                 .onAppear { appState.start() }
         }
         .defaultSize(width: 1180, height: 760)
         .commands {
-            // Standard macOS placement: app menu, right under "About".
-            CommandGroup(after: .appInfo) {
+            // DefenseClaw has one primary dashboard; WindowGroup gives the menu
+            // bar a reliable recreation target without exposing duplicate windows.
+            CommandGroup(replacing: .newItem) { }
+            CommandGroup(after: .appSettings) {
                 Button("Check for Updates…") {
                     Task { await appState.checkForUpdates(force: true) }
                     // Surface the result where the versions live: Settings ▸ General.
@@ -36,6 +36,24 @@ struct DefenseClawApp: App {
                     NotificationCenter.default.post(name: .dcRefreshPanel, object: nil)
                 }
                 .keyboardShortcut("r", modifiers: .command)
+            }
+            CommandMenu("Monitor") {
+                Button("Run Health Check") {
+                    appState.selectedPanel = .overview
+                    DispatchQueue.main.async {
+                        NotificationCenter.default.post(name: .dcRunHealthCheck, object: nil)
+                    }
+                }
+                .keyboardShortcut("h", modifiers: [.command, .shift])
+
+                Button("Scan AI Components") {
+                    appState.selectedPanel = .aiDiscovery
+                    DispatchQueue.main.async {
+                        NotificationCenter.default.post(name: .dcScanAIDiscovery, object: nil)
+                    }
+                }
+                .keyboardShortcut("a", modifiers: [.command, .shift])
+                .disabled(!appState.gatewayReachable || appState.scanInFlight)
             }
             CommandMenu("Go") {
                 ForEach(Array(PanelID.allCases.enumerated()), id: \.element) { index, panel in
@@ -60,7 +78,6 @@ struct DefenseClawApp: App {
         MenuBarExtra {
             MenuBarPopover()
                 .environment(appState)
-                .preferredColorScheme(.dark)
         } label: {
             MenuBarIcon()
                 .environment(appState)
@@ -70,7 +87,6 @@ struct DefenseClawApp: App {
         Settings {
             AppSettingsView()
                 .environment(appState)
-                .preferredColorScheme(.dark)
         }
     }
 }
@@ -105,26 +121,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var miniaturizeObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // The Cisco palette is designed for a dark surface (the adaptive tokens'
-        // dark variants), so pin the whole app to dark aqua regardless of the
-        // system's light/dark setting. This forces every window, popover, and
-        // the Settings panel to dark and resolves all Color.adaptive(...) tokens
-        // to their dark values. (The menu-bar status item template still tints
-        // itself to the real menu bar, which is what we want.)
-        NSApp.appearance = NSAppearance(named: .darkAqua)
-
-        // Window state restoration replays a stale sidebar selection through the
-        // List binding, desyncing highlight from content — start fresh instead.
-        UserDefaults.standard.register(defaults: ["NSQuitAlwaysKeepsWindows": false])
         applyActivationPolicy()
 
-        // Hide-on-minimize: clicking the yellow button hides the app entirely —
-        // no Dock icon, no minimized-window tile — leaving only the menu bar
-        // shield running. Reopen via the menu bar's "Open DefenseClaw".
+        // Optional hide-instead-of-minimize behavior. Standard macOS minimize is
+        // the default; people can opt into a menu-bar-only transition in Settings.
         miniaturizeObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didMiniaturizeNotification, object: nil, queue: .main
         ) { notification in
-            guard UserDefaults.standard.object(forKey: "hideOnMinimize") as? Bool ?? true,
+            guard UserDefaults.standard.object(forKey: "hideOnMinimize") as? Bool ?? false,
                   let window = notification.object as? NSWindow,
                   !(window is NSPanel)
             else { return }
@@ -182,4 +186,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 extension Notification.Name {
     static let dcRefreshPanel = Notification.Name("dcRefreshPanel")
+    static let dcRunHealthCheck = Notification.Name("dcRunHealthCheck")
+    static let dcScanAIDiscovery = Notification.Name("dcScanAIDiscovery")
 }

@@ -227,19 +227,7 @@ final class AppState {
         // Tail the JSONL stream and refresh the alert set.
         _ = await stream.poll()
         await refreshAlerts()
-        await refreshOverviewEnforcementMetrics()
         await checkForUpdates() // no-op unless 6h have passed
-    }
-
-    func refreshOverviewEnforcementMetrics() async {
-        let next = OverviewEnforcementMetrics(
-            hookCalls: await audit.overviewHookCallCount(),
-            blocks: await audit.overviewBlockCount(),
-            findings: unackedAlerts.filter { $0.severity > .info }.count
-        )
-        if overviewEnforcementMetrics != next {
-            overviewEnforcementMetrics = next
-        }
     }
 
     func refreshAlerts() async {
@@ -273,11 +261,22 @@ final class AppState {
             }
         }
         if newest > highWater { seenAlertHighWater = newest.timeIntervalSince1970 }
-        // Publish only on real change — replacing the array every 5s pulse
-        // makes Table re-diff mid-gesture and disturbs trackpad scrolling.
+        // Gather every count before publishing so Overview, the sidebar, Alerts,
+        // and the menu bar advance as one coherent security snapshot.
+        let nextMetrics = OverviewEnforcementMetrics(
+            hookCalls: await audit.overviewHookCallCount(),
+            blocks: await audit.overviewBlockCount(),
+            findings: fresh.filter { $0.severity > .info }.count,
+            updatedAt: Date()
+        )
+
+        // Publish only on real row changes so Table does not re-diff mid-gesture.
+        // These adjacent assignments contain no suspension point, preventing a
+        // frame where the badge and the detailed alert list disagree.
         if fresh.map(\.id) != unackedAlerts.map(\.id) {
             unackedAlerts = fresh
         }
+        overviewEnforcementMetrics = nextMetrics
     }
 
     // MARK: - Actions

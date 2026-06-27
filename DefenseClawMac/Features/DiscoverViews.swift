@@ -283,6 +283,10 @@ struct AIDiscoveryView: View {
         }
         .task { await load() }
         .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in Task { await load() } }
+        .onReceive(NotificationCenter.default.publisher(for: .dcScanAIDiscovery)) { _ in
+            guard !scanning, appState.gatewayReachable else { return }
+            scan()
+        }
     }
 
     private var rowSelection: Binding<String?> {

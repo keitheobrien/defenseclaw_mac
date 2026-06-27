@@ -104,66 +104,80 @@ struct DCCard<Content: View>: View {
     }
 }
 
-/// Connector filter — segmented "All · conn0 · conn1 …" chip shared by
-/// Alerts/Audit/Logs/Activity (TUI connector-filter chip). Renders nothing
-/// on single-connector installs, exactly like the TUI hides it for ≤1.
+/// Shared connector filter. A menu remains compact as connector counts grow
+/// and exposes one native selected value to keyboard and assistive technology.
 struct ConnectorFilterChip: View {
     let names: [String]
     @Binding var selection: String   // "" = All
 
     var body: some View {
         if names.count > 1 {
-            HStack(spacing: 6) {
-                Image(systemName: "cable.connector")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                chip("All", value: "")
-                ForEach(names, id: \.self) { name in chip(name, value: name) }
+            Picker("Connector", selection: $selection) {
+                Text("All Connectors").tag("")
+                ForEach(names, id: \.self) { name in
+                    Text(name).tag(name)
+                }
             }
+            .pickerStyle(.menu)
+            .fixedSize()
         }
-    }
-
-    private func chip(_ label: String, value: String) -> some View {
-        let isOn = selection == value
-        return Button {
-            selection = value
-        } label: {
-            Text(label)
-                .font(.caption.weight(isOn ? .semibold : .regular))
-                .padding(.horizontal, 9)
-                .padding(.vertical, 3)
-                .background(isOn ? Cisco.blue : Color.secondary.opacity(0.12))
-                .foregroundStyle(isOn ? Color.white : Color.primary)
-                .clipShape(Capsule())
-        }
-        .buttonStyle(.plain)
     }
 }
 
-/// Single-select chip row — native port of the TUI's cycling filter chips.
+/// A native single-select control: segmented for short sets, menu for long sets.
 struct FilterChipRow<T: Hashable>: View {
+    let label: String
     let options: [(label: String, value: T)]
     @Binding var selection: T
 
+    init(_ label: String, options: [(label: String, value: T)], selection: Binding<T>) {
+        self.label = label
+        self.options = options
+        self._selection = selection
+    }
+
+    @ViewBuilder
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(options, id: \.value) { option in
-                    let isOn = option.value == selection
-                    Button {
-                        selection = option.value
-                    } label: {
-                        Text(option.label)
-                            .font(.caption.weight(isOn ? .semibold : .regular))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
-                            .background(isOn ? Cisco.blue : Color.secondary.opacity(0.12))
-                            .foregroundStyle(isOn ? Color.white : Color.primary)
-                            .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                }
+        if options.count <= 6 {
+            picker.pickerStyle(.segmented)
+        } else {
+            picker
+                .pickerStyle(.menu)
+                .fixedSize()
+        }
+    }
+
+    private var picker: some View {
+        Picker(label, selection: $selection) {
+            ForEach(options, id: \.value) { option in
+                Text(option.label).tag(option.value)
             }
+        }
+    }
+}
+
+/// Gives dashboard navigation cards a visible boundary and hover/press state.
+struct InteractiveCardButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> Body {
+        Body(configuration: configuration)
+    }
+
+    struct Body: View {
+        let configuration: Configuration
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .contentShape(RoundedRectangle(cornerRadius: 10))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(
+                            Cisco.blue.opacity(hovering || configuration.isPressed ? 0.75 : 0.22),
+                            lineWidth: hovering || configuration.isPressed ? 1.5 : 1
+                        )
+                }
+                .opacity(configuration.isPressed ? 0.82 : 1)
+                .onHover { hovering = $0 }
         }
     }
 }

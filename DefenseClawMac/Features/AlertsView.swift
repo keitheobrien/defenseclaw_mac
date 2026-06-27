@@ -79,11 +79,11 @@ struct AlertsView: View {
                             .map { "\($0.timestamp) [\($0.severity.rawValue)] \($0.action) \($0.target) — \($0.details)" }
                         copyToPasteboard(texts.joined(separator: "\n"))
                     }
-                    Button("Acknowledge") {
+                    Button("Acknowledge Selection…") {
                         selection = ids
                         confirmAck = true
                     }
-                    Button("Dismiss (local)") {
+                    Button("Hide Until Relaunch") {
                         appState.dismiss(rows.filter { ids.contains($0.id) })
                     }
                 }
@@ -95,7 +95,7 @@ struct AlertsView: View {
                 Button {
                     confirmAck = true
                 } label: {
-                    Label("Acknowledge", systemImage: "checkmark.circle")
+                    Label("Acknowledge Selection", systemImage: "checkmark.circle")
                 }
                 .disabled(selectedRows.isEmpty)
                 Button {
@@ -114,17 +114,17 @@ struct AlertsView: View {
         // than the TUI, spec §15.5); scan/egress rows live in gateway.jsonl and
         // fall through to a local hide (same as Dismiss).
         .confirmationDialog(
-            "Acknowledge \(selectedRows.count) alert(s)?",
+            acknowledgmentTitle,
             isPresented: $confirmAck, titleVisibility: .visible
         ) {
-            Button("Acknowledge", role: .destructive) {
+            Button(acknowledgmentButtonTitle, role: selectedAuditSeverities.isEmpty ? nil : .destructive) {
                 Task {
                     await appState.acknowledge(selectedRows)
                     selection = []
                 }
             }
         } message: {
-            Text("Audit rows run `defenseclaw alerts acknowledge --severity <S>` (downgrades the whole severity class in the audit DB). Scan and egress rows are hidden locally — they live in gateway.jsonl and reappear on next launch.")
+            Text(acknowledgmentMessage)
         }
     }
 
@@ -141,6 +141,7 @@ struct AlertsView: View {
             ConnectorFilterChip(names: appState.activeConnectorNames, selection: $state.connectorFilter)
             HStack {
                 FilterChipRow(
+                    "Severity",
                     options: [("All", Optional<Severity>.none)] +
                         [Severity.critical, .high, .medium, .low].map { ($0.rawValue, Optional($0)) },
                     selection: $severityFilter
@@ -164,6 +165,46 @@ struct AlertsView: View {
         let hay = "\(row.action) \(row.details)".lowercased()
         return hay.contains("block") || hay.contains("reject")
             || hay.contains("deny") || hay.contains("quarantine")
+    }
+
+    private var selectedAuditSeverities: [Severity] {
+        Array(Set(selectedRows.compactMap { row in
+            if case .audit = row { return row.severity }
+            return nil
+        })).sorted(by: >)
+    }
+
+    private var selectedLocalOnlyCount: Int {
+        selectedRows.filter { row in
+            if case .audit = row { return false }
+            return true
+        }.count
+    }
+
+    private var severityNames: String {
+        selectedAuditSeverities.map(\.rawValue).joined(separator: ", ")
+    }
+
+    private var acknowledgmentTitle: String {
+        if !selectedAuditSeverities.isEmpty {
+            return "Acknowledge all \(severityNames) audit findings?"
+        }
+        return "Hide \(selectedLocalOnlyCount) finding(s) until relaunch?"
+    }
+
+    private var acknowledgmentButtonTitle: String {
+        selectedAuditSeverities.isEmpty ? "Hide Until Relaunch" : "Acknowledge \(severityNames)"
+    }
+
+    private var acknowledgmentMessage: String {
+        var parts: [String] = []
+        if !selectedAuditSeverities.isEmpty {
+            parts.append("DefenseClaw acknowledges entire severity classes in the audit database, not only the selected rows.")
+        }
+        if selectedLocalOnlyCount > 0 {
+            parts.append("\(selectedLocalOnlyCount) scan or egress finding(s) will be hidden locally and can reappear after the app relaunches.")
+        }
+        return parts.joined(separator: " ")
     }
 
     private func applyPendingPanelRequest() {

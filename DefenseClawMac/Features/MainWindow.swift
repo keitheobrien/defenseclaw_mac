@@ -4,6 +4,7 @@ import SwiftUI
 
 struct MainWindow: View {
     @Environment(AppState.self) private var appState
+    @SceneStorage("main.selectedPanel") private var selectedPanelRaw = PanelID.overview.rawValue
 
     private let groups: [(String, [PanelID])] = [
         ("Monitor", [.overview, .alerts, .logs, .audit, .activity]),
@@ -13,9 +14,8 @@ struct MainWindow: View {
     ]
 
     var body: some View {
-        @Bindable var state = appState
         NavigationSplitView {
-            List(selection: $state.selectedPanel) {
+            List(selection: selectedPanelBinding) {
                 ForEach(groups, id: \.0) { group in
                     Section(group.0) {
                         ForEach(group.1) { panel in
@@ -34,10 +34,9 @@ struct MainWindow: View {
                 }
             }
             .navigationSplitViewColumnWidth(min: 190, ideal: 210)
-            .tint(Cisco.blue)
         } detail: {
-            panelView
-                .navigationTitle(appState.selectedPanel.title)
+            panelView(selectedPanel)
+                .navigationTitle(selectedPanel.title)
         }
         .overlay(alignment: .top) {
             VStack(spacing: 6) {
@@ -56,6 +55,28 @@ struct MainWindow: View {
             FirstRunView()
                 .environment(appState)
         }
+        .onAppear {
+            appState.selectedPanel = selectedPanel
+        }
+        .onChange(of: appState.selectedPanel) { _, panel in
+            if panel != selectedPanel {
+                selectedPanelRaw = panel.rawValue
+            }
+        }
+    }
+
+    private var selectedPanel: PanelID {
+        PanelID(rawValue: selectedPanelRaw) ?? .overview
+    }
+
+    private var selectedPanelBinding: Binding<PanelID> {
+        Binding(
+            get: { selectedPanel },
+            set: { panel in
+                selectedPanelRaw = panel.rawValue
+                appState.selectedPanel = panel
+            }
+        )
     }
 
     @ViewBuilder
@@ -82,8 +103,8 @@ struct MainWindow: View {
     }
 
     @ViewBuilder
-    private var panelView: some View {
-        switch appState.selectedPanel {
+    private func panelView(_ panel: PanelID) -> some View {
+        switch panel {
         case .overview: OverviewView()
         case .alerts: AlertsView()
         case .logs: LogsView()

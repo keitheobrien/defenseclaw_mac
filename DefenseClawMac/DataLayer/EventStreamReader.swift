@@ -511,16 +511,21 @@ actor EventStreamReader {
             let subject = [row.subsystem, row.transition].filter { !$0.isEmpty }.joined(separator: " ")
             return joinedWords("LIFECYCLE", subject.uppercased(), renderInlineDetails(row.lifecycleDetails, limit: 3))
         case "error":
-            let message = truncateLogText(row.errorMessage, limit: 120)
+            let message = truncateLogText(sanitizeLogDetails(row.errorMessage), limit: 120)
+            let cause = truncateLogText(sanitizeLogDetails(row.errorCause), limit: 80)
             return joinedWords(
                 "ERROR",
                 row.errorSubsystem.uppercased(),
                 row.errorCode.isEmpty ? "" : "code=\(row.errorCode)",
                 message.isEmpty ? "" : "msg=\(message)",
-                row.errorCause.isEmpty ? "" : "cause=\(row.errorCause)"
+                cause.isEmpty ? "" : "cause=\(cause)"
             )
         case "diagnostic":
-            return joinedWords("DIAG", row.diagnosticComponent.uppercased(), truncateLogText(row.diagnosticMessage, limit: 120))
+            return joinedWords(
+                "DIAG",
+                row.diagnosticComponent.uppercased(),
+                truncateLogText(sanitizeLogDetails(row.diagnosticMessage), limit: 120)
+            )
         case "scan":
             let findingText = row.findingCount.map { "\($0) finding\($0 == 1 ? "" : "s")" } ?? ""
             return joinedWords(
@@ -559,7 +564,6 @@ actor EventStreamReader {
         let decision = parsed["action"] ?? parsed["decision"] ?? ""
         let decisionSeverity = parsed["severity"] ?? ""
         let mode = parsed["mode"] ?? ""
-        let elapsed = parsed["elapsed"] ?? parsed["duration_ms"] ?? ""
         let head = truncateLogText(joinedWords(connector, row.target), limit: 36)
         var pieces: [String] = []
         if !decision.isEmpty { pieces.append(decision) }
@@ -567,7 +571,6 @@ actor EventStreamReader {
             pieces.append(decisionSeverity.uppercased())
         }
         if !mode.isEmpty, mode != "observe" { pieces.append(mode) }
-        if !elapsed.isEmpty { pieces.append(elapsed) }
         return joinedWords("HOOK", severity.rawValue.uppercased(), nonEmpty(head, "-"), pieces.joined(separator: " · "))
     }
 
@@ -626,8 +629,9 @@ actor EventStreamReader {
 
     private func renderInlineDetails(_ details: [String: String], limit: Int) -> String {
         guard limit > 0, !details.isEmpty else { return "" }
-        return details.keys.sorted().prefix(limit)
-            .map { "\($0)=\(details[$0] ?? "")" }
+        return details.keys.sorted()
+            .compactMap { key in humanLogDetailToken("\(key)=\(details[key] ?? "")") }
+            .prefix(limit)
             .joined(separator: " ")
     }
 
@@ -740,6 +744,9 @@ actor EventStreamReader {
             return isLikelyHashValue(lower)
         }
         if key.contains("hash") || key.contains("hmac") || key.contains("checksum") || key.contains("digest") {
+            return true
+        }
+        if key == "id" || key.hasSuffix("_id") || key == "session" || key == "call" {
             return true
         }
         if key == "connector" || key == "severity" || key == "raw_origin" || key.hasPrefix("raw_") {

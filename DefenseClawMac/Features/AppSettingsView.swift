@@ -7,24 +7,25 @@ struct AppSettingsView: View {
     var body: some View {
         TabView {
             GeneralSettings()
+                .frame(width: 560, height: 620)
                 .tabItem { Label("General", systemImage: "gearshape") }
             MonitoringSettings()
+                .frame(width: 560, height: 350)
                 .tabItem { Label("Monitoring", systemImage: "waveform.path.ecg") }
             NotificationSettings()
+                .frame(width: 560, height: 300)
                 .tabItem { Label("Notifications", systemImage: "bell.badge") }
             ConnectionSettings()
+                .frame(width: 560, height: 420)
                 .tabItem { Label("Connection", systemImage: "network") }
         }
-        // Tall enough for the General tab's grouped sections so nothing
-        // scrolls; wide enough that Connection's file paths aren't clipped.
-        .frame(width: 560, height: 720)
     }
 }
 
 private struct GeneralSettings: View {
     @Environment(AppState.self) private var appState
     @AppStorage("showDockIcon") private var showDockIcon = true
-    @AppStorage("hideOnMinimize") private var hideOnMinimize = true
+    @AppStorage("hideOnMinimize") private var hideOnMinimize = false
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     var body: some View {
@@ -35,8 +36,15 @@ private struct GeneralSettings: View {
                         UserDefaults.standard.set(newValue, forKey: "showDockIconResolved")
                         NSApp.setActivationPolicy(newValue ? .regular : .accessory)
                         if newValue { NSApp.activate(ignoringOtherApps: true) }
+                        if !newValue { hideOnMinimize = false }
                     }
-                Toggle("Hide to menu bar when minimized (removes Dock icon until reopened)", isOn: $hideOnMinimize)
+                Toggle("Hide instead of minimize", isOn: $hideOnMinimize)
+                    .disabled(!showDockIcon)
+                Text(showDockIcon
+                     ? "When enabled, the yellow window button temporarily removes the Dock icon. Reopen from the menu bar shield."
+                     : "The app is already menu-bar-only while the Dock icon is hidden.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Toggle("Launch at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, newValue in
                         do {
@@ -80,10 +88,7 @@ private struct GeneralSettings: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
-                    LabeledContent("Status",
-                                   value: appState.runtimeUpdateCheckFailed
-                                       ? "Could not check (offline or GitHub rate-limited)"
-                                       : "Up to date")
+                    LabeledContent("Status", value: runtimeStatusSummary)
                 }
             }
 
@@ -99,7 +104,7 @@ private struct GeneralSettings: View {
                     }
                     .disabled(runtimeActionDisabled)
 
-                    Button("Upgrade Both") {
+                    Button(bothButtonTitle) {
                         appState.performBothUpgrades()
                     }
                     .disabled(macAppActionDisabled || runtimeActionDisabled)
@@ -150,7 +155,7 @@ private struct GeneralSettings: View {
         case .checking: "Checking App…"
         case .downloading: "Downloading App…"
         case .installing: "Installing App…"
-        default: "Upgrade Mac App"
+        default: appState.availableUpdate == nil ? "Check Mac App" : "Install & Restart"
         }
     }
 
@@ -158,8 +163,25 @@ private struct GeneralSettings: View {
         switch appState.runtimeUpgradeState {
         case .checking: "Checking Runtime…"
         case .downloading, .installing: "Upgrading Runtime…"
-        default: "Upgrade Runtime"
+        default: appState.availableRuntimeUpdate == nil ? "Check Runtime" : "Upgrade Runtime"
         }
+    }
+
+    private var bothButtonTitle: String {
+        if appState.availableUpdate != nil || appState.availableRuntimeUpdate != nil {
+            return "Install Available Updates"
+        }
+        return "Check Both"
+    }
+
+    private var runtimeStatusSummary: String {
+        if appState.runtimeUpdateCheckFailed {
+            return "Could not check (offline or GitHub rate-limited)"
+        }
+        if appState.installedRuntimeVersion == nil {
+            return "Runtime version unavailable"
+        }
+        return "Up to date"
     }
 
     private var macAppActionDisabled: Bool {

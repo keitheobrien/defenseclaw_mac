@@ -26,14 +26,15 @@ enum Cisco {
     // Brand
     static let blue = Color.adaptive(light: 0x049FD9, dark: 0x04AEED)
     static let midnight = Color(hex: 0x0D274D)
-    static let sky = Color(hex: 0x64BBE3)
+    static let sky = Color(nsColor: .systemCyan)
 
-    // Status (Cisco UI Kit)
-    static let green = Color(hex: 0x6ABF4B)
-    static let red = Color(hex: 0xE2231A)
-    static let orange = Color(hex: 0xFBAB18)
-    static let yellow = Color(hex: 0xEED202)
-    static let magenta = Color(hex: 0xBF4B8B)
+    // System status colors preserve the Cisco semantics while adapting to
+    // appearance and Increase Contrast preferences.
+    static let green = Color(nsColor: .systemGreen)
+    static let red = Color(nsColor: .systemRed)
+    static let orange = Color(nsColor: .systemOrange)
+    static let yellow = Color(nsColor: .systemYellow)
+    static let magenta = Color(nsColor: .systemPurple)
 
     // Surfaces
     static let surfacePanel = Color.adaptive(light: 0xF5F7FA, dark: 0x111B2C)

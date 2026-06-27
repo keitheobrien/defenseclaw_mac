@@ -6,6 +6,7 @@ import SwiftUI
 struct MenuBarPopover: View {
     @Environment(AppState.self) private var appState
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -22,7 +23,6 @@ struct MenuBarPopover: View {
         .frame(width: 360)
         .task {
             await appState.refreshAlerts()
-            await appState.refreshOverviewEnforcementMetrics()
         }
     }
 
@@ -72,7 +72,7 @@ struct MenuBarPopover: View {
             enforcementRow(
                 "Hook Calls",
                 value: metrics.hookCalls,
-                detail: "recent connector hooks",
+                detail: "latest 500 audit events",
                 tint: Cisco.blue,
                 progress: activityProgress(metrics.hookCalls)
             ) {
@@ -82,7 +82,7 @@ struct MenuBarPopover: View {
             enforcementRow(
                 "Blocks",
                 value: metrics.blocks,
-                detail: blockRateText(blocks: metrics.blocks, hookCalls: metrics.hookCalls),
+                detail: "latest 500 decisions · \(blockRateText(blocks: metrics.blocks, hookCalls: metrics.hookCalls))",
                 tint: Cisco.red,
                 progress: blockProgress(blocks: metrics.blocks, hookCalls: metrics.hookCalls)
             ) {
@@ -92,12 +92,17 @@ struct MenuBarPopover: View {
             enforcementRow(
                 "Findings",
                 value: metrics.findings,
-                detail: "unacknowledged alerts",
+                detail: "unacknowledged",
                 tint: metrics.findings == 0 ? Cisco.green : Cisco.orange,
                 progress: findingsProgress(metrics.findings)
             ) {
                 appState.openAlerts(filter: .all)
                 openMainWindow()
+            }
+            if metrics.updatedAt != .distantPast {
+                Text("Updated \(DCDates.relative(metrics.updatedAt))")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
         }
         .padding(.vertical, 2)
@@ -219,6 +224,13 @@ struct MenuBarPopover: View {
                 openMainWindow()
             }
             .controlSize(.small)
+            Button {
+                openSettings()
+            } label: {
+                Image(systemName: "gearshape")
+            }
+            .controlSize(.small)
+            .help("Settings")
             Button("Ack All") {
                 Task { await appState.acknowledge(appState.unackedAlerts) }
             }
@@ -233,4 +245,5 @@ struct MenuBarPopover: View {
                 .controlSize(.small)
         }
     }
+
 }

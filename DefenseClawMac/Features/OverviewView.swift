@@ -13,6 +13,7 @@ struct OverviewView: View {
     @State private var doctorOutput = ""
     @State private var showDoctorSheet = false
     @State private var aiSnapshot = AIUsageSnapshot()
+    @State private var configurationExpanded = false
 
     struct HourlyPoint: Identifiable {
         let hour: Date
@@ -66,6 +67,7 @@ struct OverviewView: View {
         .task { refresh() }
         .task(id: appState.health.fetchedAt) { await loadData() } // pulse-fed
         .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: .dcRunHealthCheck)) { _ in runDoctor() }
         .sheet(isPresented: $showDoctorSheet) {
             VStack(alignment: .leading, spacing: 10) {
                 Text("defenseclaw doctor").font(.headline)
@@ -97,14 +99,14 @@ struct OverviewView: View {
                         HStack(spacing: 8) {
                             serviceBullet(svc.state)
                             Text(svc.name)
-                                .font(.caption.weight(.medium))
+                                .font(.callout.weight(.medium))
                                 .frame(width: 92, alignment: .leading)
                             Text(svc.state)
                                 .font(.caption.monospaced())
                                 .foregroundStyle(Cisco.stateColor(raw: svc.state))
                                 .frame(width: 66, alignment: .leading)
                             Text(svc.detail)
-                                .font(.caption)
+                                .font(.callout)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                                 .truncationMode(.tail)
@@ -155,7 +157,9 @@ struct OverviewView: View {
     private var configurationCard: some View {
         DCCard("Configuration", systemImage: "slider.horizontal.3") {
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(appState.configurationRows.enumerated()), id: \.element.id) { index, row in
+                ForEach(Array(appState.configurationRows
+                    .prefix(configurationExpanded ? appState.configurationRows.count : 4)
+                    .enumerated()), id: \.element.id) { index, row in
                     HStack(alignment: .top, spacing: 12) {
                         Text(row.label)
                             .font(.body)
@@ -177,6 +181,19 @@ struct OverviewView: View {
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 6))
+            if appState.configurationRows.count > 4 {
+                Button {
+                    withAnimation(.snappy) { configurationExpanded.toggle() }
+                } label: {
+                    Label(
+                        configurationExpanded
+                            ? "Show Less"
+                            : "Show \(appState.configurationRows.count - 4) More Settings",
+                        systemImage: configurationExpanded ? "chevron.up" : "chevron.down"
+                    )
+                }
+                .buttonStyle(.link)
+            }
         }
     }
 
@@ -220,27 +237,36 @@ struct OverviewView: View {
                     StatCard(
                         title: "Hook Calls (\(max(appState.health.connectors.count, 1)) connectors)",
                         value: "\(heroHookCalls)", tint: Cisco.blue
-                    )
+                    ) {
+                        metricDetail("Latest 500 audit events")
+                    }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(InteractiveCardButtonStyle())
                 .help("Open hook logs")
+                .accessibilityHint("Opens Logs filtered to hook calls")
 
                 Button {
                     appState.openAudit(preset: "blocks")
                 } label: {
                     StatCard(title: "Blocks", value: "\(heroBlocks)",
-                             tint: heroBlocks > 0 ? Cisco.red : .secondary)
+                             tint: heroBlocks > 0 ? Cisco.red : .secondary) {
+                        metricDetail("Latest 500 decisions")
+                    }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(InteractiveCardButtonStyle())
                 .help("Open blocked audit events")
+                .accessibilityHint("Opens Audit filtered to blocked decisions")
 
                 Button {
                     appState.openAlerts(filter: .all)
                 } label: {
-                    StatCard(title: "Findings", value: "\(findingsCount)", tint: Cisco.orange)
+                    StatCard(title: "Findings", value: "\(findingsCount)", tint: Cisco.orange) {
+                        metricDetail("Unacknowledged")
+                    }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(InteractiveCardButtonStyle())
                 .help("Open all alerts")
+                .accessibilityHint("Opens all unacknowledged alerts")
 
                 Button {
                     appState.openLogs(.init(preset: .guardrail))
@@ -249,12 +275,31 @@ struct OverviewView: View {
                         title: guardrailTileTitle,
                         value: appState.config.guardrailEnabled ? "ON" : "OFF",
                         tint: appState.config.guardrailEnabled ? Cisco.green : .secondary
-                    )
+                    ) {
+                        metricDetail("Current configuration")
+                    }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(InteractiveCardButtonStyle())
                 .help("Open guardrail logs")
+                .accessibilityHint("Opens Logs filtered to guardrail events")
+            }
+            if appState.overviewEnforcementMetrics.updatedAt != .distantPast {
+                Text("Updated \(DCDates.relative(appState.overviewEnforcementMetrics.updatedAt))")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
         }
+    }
+
+    private func metricDetail(_ scope: String) -> some View {
+        HStack(spacing: 4) {
+            Text(scope)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            Image(systemName: "chevron.right")
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
     }
 
     private var guardrailTileTitle: String {
@@ -272,10 +317,10 @@ struct OverviewView: View {
                     HStack(spacing: 6) {
                         Circle().fill(scannerColor(s.level)).frame(width: 7, height: 7)
                         Text(s.name)
-                            .font(.caption.weight(.medium))
+                            .font(.callout.weight(.medium))
                         Spacer(minLength: 8)
                         Text(s.detail)
-                            .font(.caption)
+                            .font(.callout)
                             .foregroundStyle(scannerColor(s.level))
                             .lineLimit(1)
                             .truncationMode(.tail)

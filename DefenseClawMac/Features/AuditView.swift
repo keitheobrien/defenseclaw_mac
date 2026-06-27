@@ -30,7 +30,7 @@ struct AuditView: View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    FilterChipRow(options: Self.presets, selection: $preset)
+                    FilterChipRow("Audit View", options: Self.presets, selection: $preset)
                     Spacer()
                     Text("\(visibleEvents.count) events loaded")
                         .font(.caption2.monospacedDigit())
