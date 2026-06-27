@@ -566,22 +566,60 @@ struct InventoryItem: Identifiable, Sendable {
 
 // MARK: - Registries
 
-struct RegistrySource: Identifiable, Sendable {
-    var url: String
+struct RegistrySource: Identifiable, Sendable, Hashable {
+    var id: String
     var kind: String
+    var content: String
+    var url: String
+    var authEnv: String
     var enabled: Bool
-    var lastSync: Date?
-    var modelCount: Int
-    var error: String?
-    var id: String { url }
+    var autoSync: Bool
+    var syncIntervalHours: Int
+    var lastSync: String
+    var lastStatus: String
+    var fetchedAt: String = ""
+    var publisher: String = ""
+    var entryCount: Int = 0
+    var cleanCount: Int = 0
+    var warningCount: Int = 0
+    var blockedCount: Int = 0
+    var errorCount: Int = 0
+    var indexError: String?
 }
 
-struct RegistryModel: Identifiable, Sendable {
-    var name: String
-    var provider: String
+struct RegistryEntry: Identifiable, Sendable, Hashable {
+    var sourceID: String
     var type: String
-    var capabilities: [String]
-    var id: String { "\(provider)/\(name)" }
+    var name: String
+    var status: String
+    var severity: String
+    var findings: Int
+    var approved: Bool
+    var rejected: Bool
+    var transport: String
+    var command: String
+    var arguments: [String]
+    var url: String
+    var sourceURL: String
+
+    var id: String { "\(sourceID)/\(type)/\(name)/\(location)" }
+
+    var approvalMarker: String {
+        if approved { return "Approved" }
+        if rejected { return "Rejected" }
+        return "Unreviewed"
+    }
+
+    var location: String {
+        if !url.isEmpty { return url }
+        if !command.isEmpty { return command }
+        return sourceURL
+    }
+}
+
+struct RegistrySnapshot: Sendable {
+    var sources: [RegistrySource] = []
+    var entries: [RegistryEntry] = []
 }
 
 // MARK: - Doctor

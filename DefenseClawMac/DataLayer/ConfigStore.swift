@@ -29,12 +29,20 @@ struct DefenseClawConfig: Sendable {
     var llmModel: String?                    // llm.model (→ inspect_llm.model)
     var aiDefenseEndpoint: String?           // cisco_ai_defense.endpoint
     var registrySources: [RegistrySourceConfig] = []
+    var registryRequiredByType: [String: Bool] = [:]
     var raw: YAMLNode = .mapping([:])
 
     struct RegistrySourceConfig: Sendable {
-        var url: String
+        var id: String
         var kind: String
+        var content: String
+        var url: String
+        var authEnv: String
         var enabled: Bool
+        var autoSync: Bool
+        var syncIntervalHours: Int
+        var lastSync: String
+        var lastStatus: String
     }
 
     var baseURL: URL {
@@ -284,19 +292,26 @@ actor ConfigStore {
         }
         if let sources = root["registries.sources"]?.sequence ?? root["registries"]?.sequence {
             c.registrySources = sources.compactMap { node in
-                guard let m = node.mapping else {
-                    if let url = node.string {
-                        return .init(url: url, kind: "http", enabled: true)
-                    }
-                    return nil
-                }
-                guard let url = m["url"]?.string ?? m["source"]?.string else { return nil }
+                guard let m = node.mapping,
+                      let id = m["id"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !id.isEmpty
+                else { return nil }
                 return .init(
-                    url: url,
-                    kind: m["kind"]?.string ?? m["type"]?.string ?? "http",
-                    enabled: m["enabled"]?.bool ?? true
+                    id: id,
+                    kind: m["kind"]?.string ?? "http_yaml",
+                    content: m["content"]?.string ?? "skill",
+                    url: m["url"]?.string ?? "",
+                    authEnv: m["auth_env"]?.string ?? "",
+                    enabled: m["enabled"]?.bool ?? true,
+                    autoSync: m["auto_sync"]?.bool ?? false,
+                    syncIntervalHours: m["sync_interval_hours"]?.int ?? 24,
+                    lastSync: m["last_sync"]?.string ?? "",
+                    lastStatus: m["last_status"]?.string ?? ""
                 )
             }
+        }
+        for type in ["skill", "mcp", "plugin"] {
+            c.registryRequiredByType[type] = root["asset_policy.\(type).registry_required"]?.bool ?? false
         }
         // Loopback only — refuse non-local gateway hosts (spec §11).
         if !["127.0.0.1", "localhost", "::1"].contains(c.gatewayHost) {
