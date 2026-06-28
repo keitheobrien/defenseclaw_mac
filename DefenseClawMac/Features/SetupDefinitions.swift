@@ -19,6 +19,7 @@ enum TUIWizards {
     static let all: [WizardDefinition] = [
         connector,
         credentials,
+        aiDefense,
         llm,
         localObservability,
         tokenRotation,
@@ -70,6 +71,57 @@ enum TUIWizards {
             WizardField(key: "secret", label: "Secret value", kind: .secure(placeholder: "Written through hidden stdin"),
                         visibleWhen: (key: "action", equals: ["set"]),
                         help: "The value is never placed in argv or the command preview."),
+        ]
+    )
+
+    private static let aiDefense = WizardDefinition(
+        id: "ai-defense", title: "Cisco AI Defense", icon: "shield.lefthalf.filled",
+        blurb: "Configure the cloud inspection endpoint, credential, scanner mode, and connectivity verification.",
+        baseArgs: ["setup", "guardrail"],
+        commandBuilder: aiDefenseCommands,
+        secretInputField: "secret",
+        fields: [
+            WizardField(
+                key: "endpoint",
+                label: "Endpoint",
+                kind: .text(placeholder: "https://us.api.inspect.aidefense.security.cisco.com"),
+                defaultValue: "https://us.api.inspect.aidefense.security.cisco.com",
+                help: "Use the regional endpoint associated with your Cisco AI Defense tenant."
+            ),
+            WizardField(
+                key: "api-key-env",
+                label: "API key environment variable",
+                kind: .text(placeholder: "CISCO_AI_DEFENSE_API_KEY"),
+                defaultValue: "CISCO_AI_DEFENSE_API_KEY",
+                help: "Only this variable name is stored in config.yaml."
+            ),
+            WizardField(
+                key: "secret",
+                label: "API key",
+                kind: .secure(placeholder: "Leave blank to keep the existing key"),
+                help: "When supplied, the key is written to ~/.defenseclaw/.env through hidden stdin and never placed in argv."
+            ),
+            WizardField(
+                key: "scanner-mode",
+                label: "Guardrail scanner mode",
+                kind: .choice(options: ["remote", "both"]),
+                defaultValue: "both",
+                help: "Remote uses Cisco AI Defense; both also retains local scanning."
+            ),
+            WizardField(
+                key: "timeout-ms",
+                label: "Request timeout (ms)",
+                kind: .text(placeholder: "3000"),
+                defaultValue: "3000"
+            ),
+            WizardField(
+                key: "skill-scanner",
+                label: "Use Cisco AI Defense for skill scans",
+                kind: .flagOnly,
+                defaultValue: "no"
+            ),
+            WizardField(key: "restart", label: "Restart gateway", kind: .bool, defaultValue: "yes"),
+            WizardField(key: "verify", label: "Verify connectivity", kind: .bool, defaultValue: "yes"),
         ]
     )
 
@@ -380,6 +432,33 @@ enum TUIWizards {
         case "set": [["keys", "set", value(v, "env")]]
         default: [["keys", "list", "--json"]]
         }
+    }
+
+    private static func aiDefenseCommands(_ v: [String: String], _ mask: Bool) -> [[String]] {
+        let keyEnv = value(v, "api-key-env", "CISCO_AI_DEFENSE_API_KEY")
+        var commands: [[String]] = []
+        if !value(v, "secret").isEmpty {
+            commands.append(["keys", "set", keyEnv])
+        }
+
+        var guardrail = ["setup", "guardrail"]
+        append(v, "endpoint", flag: "--cisco-endpoint", to: &guardrail)
+        guardrail += ["--cisco-api-key-env", keyEnv]
+        append(v, "timeout-ms", flag: "--cisco-timeout-ms", to: &guardrail)
+        append(v, "scanner-mode", flag: "--scanner-mode", to: &guardrail)
+        guardrail.append(yes(v, "restart") ? "--restart" : "--no-restart")
+        guardrail.append(yes(v, "verify") ? "--verify" : "--no-verify")
+        guardrail.append("--non-interactive")
+        commands.append(guardrail)
+
+        if yes(v, "skill-scanner") {
+            commands.append([
+                "setup", "skill-scanner", "--use-aidefense",
+                yes(v, "verify") ? "--verify" : "--no-verify",
+                "--non-interactive",
+            ])
+        }
+        return commands
     }
 
     private static func localObservabilityCommands(_ v: [String: String], _ mask: Bool) -> [[String]] {

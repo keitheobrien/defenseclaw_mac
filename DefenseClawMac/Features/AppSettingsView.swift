@@ -74,7 +74,7 @@ private struct GeneralSettings: View {
             }
 
             Section("Updates — DefenseClaw runtime (CLI + gateway)") {
-                LabeledContent("Installed", value: appState.installedRuntimeVersion ?? "unknown")
+                LabeledContent("Installed", value: runtimeInstalledValue)
                 if let update = appState.availableRuntimeUpdate {
                     LabeledContent("Available", value: update.tag)
                     runtimeStatus
@@ -115,6 +115,9 @@ private struct GeneralSettings: View {
                 .foregroundStyle(.secondary)
         }
         .formStyle(.grouped)
+        .task {
+            await appState.refreshInstalledRuntimeVersion()
+        }
     }
 
     @ViewBuilder
@@ -175,13 +178,29 @@ private struct GeneralSettings: View {
     }
 
     private var runtimeStatusSummary: String {
-        if appState.runtimeUpdateCheckFailed {
-            return "Could not check (offline or GitHub rate-limited)"
+        if appState.runtimeVersionCheckInProgress {
+            return "Detecting installed runtime…"
         }
-        if appState.installedRuntimeVersion == nil {
-            return "Runtime version unavailable"
+        if let error = appState.runtimeVersionError {
+            return error
+        }
+        guard appState.installedRuntimeVersion != nil else {
+            return "Runtime CLI not detected"
+        }
+        if appState.runtimeUpdateCheckFailed {
+            return "Installed; update check unavailable"
+        }
+        if !appState.runtimeReleaseChecked {
+            return "Installed"
         }
         return "Up to date"
+    }
+
+    private var runtimeInstalledValue: String {
+        if let version = appState.installedRuntimeVersion {
+            return version
+        }
+        return appState.runtimeVersionCheckInProgress ? "Detecting…" : "Not detected"
     }
 
     private var macAppActionDisabled: Bool {
@@ -192,7 +211,8 @@ private struct GeneralSettings: View {
     }
 
     private var runtimeActionDisabled: Bool {
-        switch appState.runtimeUpgradeState {
+        if appState.runtimeVersionCheckInProgress { return true }
+        return switch appState.runtimeUpgradeState {
         case .checking, .downloading, .installing: true
         default: false
         }

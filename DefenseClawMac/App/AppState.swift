@@ -90,6 +90,9 @@ final class AppState {
 
     // DefenseClaw runtime (CLI + gateway) update state
     var installedRuntimeVersion: String?
+    var runtimeVersionCheckInProgress = false
+    var runtimeVersionError: String?
+    var runtimeReleaseChecked = false
     var availableRuntimeUpdate: ReleaseInfo?
     var runtimeUpgradeState: UpgradeState = .idle
     var runtimeBannerDismissed = false
@@ -168,6 +171,9 @@ final class AppState {
             installDetected = await configStore.installPresent
             await gateway.update(config: cfg)
             startPulse()
+            // Local runtime detection is independent of the throttled GitHub
+            // release lookup so every launch can report the installed CLI.
+            await refreshInstalledRuntimeVersion()
             // Respect the persisted 6h check window — relaunches must not
             // burn the unauthenticated GitHub API quota (60/hr per IP).
             await checkForUpdates()
@@ -434,10 +440,13 @@ final class AppState {
 
     /// Check only the underlying DefenseClaw runtime.
     func checkForRuntimeUpdate(force: Bool = false) async {
+        // Always refresh the local version. Only the network release lookup is
+        // subject to the six-hour throttle.
+        await refreshInstalledRuntimeVersion()
         guard force || Date().timeIntervalSince1970 - lastRuntimeUpdateCheckTime > 6 * 3600 else { return }
         lastRuntimeUpdateCheckTime = Date().timeIntervalSince1970
 
-        _ = await refreshRuntimeUpdate()
+        _ = await refreshRuntimeUpdate(refreshInstalledVersion: false)
         lastCheckFailed = appUpdateCheckFailed || runtimeUpdateCheckFailed
     }
 
@@ -464,7 +473,33 @@ final class AppState {
         return appRelease
     }
 
-    private func refreshRuntimeUpdate() async -> ReleaseInfo? {
+    /// Detect the locally installed CLI without contacting GitHub. Settings
+    /// calls this when opened, and startup calls it even when release checks
+    /// are still inside their persisted throttle window.
+    func refreshInstalledRuntimeVersion() async {
+        guard !runtimeVersionCheckInProgress else { return }
+        runtimeVersionCheckInProgress = true
+        defer { runtimeVersionCheckInProgress = false }
+
+        guard await cli.locateBinary() != nil else {
+            installedRuntimeVersion = nil
+            runtimeVersionError = "DefenseClaw CLI not found. Set its path in Connection."
+            return
+        }
+
+        let result = await cli.run(arguments: ["--version"])
+        if let version = UpdateChecker.parseVersion(result.output) {
+            installedRuntimeVersion = version
+            runtimeVersionError = nil
+        } else {
+            installedRuntimeVersion = nil
+            runtimeVersionError = result.succeeded
+                ? "Could not read the installed runtime version."
+                : "Runtime version check failed (exit \(result.exitCode))."
+        }
+    }
+
+    private func refreshRuntimeUpdate(refreshInstalledVersion: Bool = true) async -> ReleaseInfo? {
         runtimeUpgradeState = .checking
         defer {
             if runtimeUpgradeState == .checking { runtimeUpgradeState = .idle }
@@ -472,9 +507,11 @@ final class AppState {
 
         // DefenseClaw runtime: installed via `defenseclaw --version`,
         // latest from the upstream repo's releases.
-        let versionResult = await cli.run(arguments: ["--version"])
-        installedRuntimeVersion = UpdateChecker.parseVersion(versionResult.output)
+        if refreshInstalledVersion {
+            await refreshInstalledRuntimeVersion()
+        }
         let runtimeRelease = await updater.latestRuntimeRelease()
+        runtimeReleaseChecked = true
         runtimeUpdateCheckFailed = runtimeRelease == nil
         if let installed = installedRuntimeVersion, let latest = runtimeRelease {
             if UpdateChecker.isNewer(latest.version, than: installed) {
@@ -483,6 +520,8 @@ final class AppState {
             } else {
                 availableRuntimeUpdate = nil
             }
+        } else if installedRuntimeVersion == nil {
+            availableRuntimeUpdate = nil
         }
         return runtimeRelease
     }
