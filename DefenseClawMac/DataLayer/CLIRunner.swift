@@ -1,12 +1,13 @@
-// Runs the `defenseclaw` CLI for the operations the TUI shells out for:
-// Setup wizard "Apply" (defenseclaw setup … --yes) and the doctor deep-dive.
-// Direct argv execution — no shell interpolation.
+// Direct argv execution for DefenseClaw commands. Catalog actions, setup,
+// diagnostics, and the command palette all share this runner so arguments are
+// never interpolated through a shell.
 
 import Foundation
 
 struct CLIResult: Sendable {
     var exitCode: Int32
     var output: String
+    var cancelled: Bool = false
     var succeeded: Bool { exitCode == 0 }
 }
 
@@ -14,30 +15,36 @@ actor CLIRunner {
     /// User override (App Settings ▸ Connection) wins; otherwise search standard locations.
     static let pathOverrideKey = "defenseclawBinaryPath"
 
-    private var cachedPath: String?
+    private var cachedPaths: [String: String] = [:]
+    private var runningProcesses: [UUID: Process] = [:]
+    private var cancellationRequests = Set<UUID>()
 
     func locateBinary() -> String? {
-        if let cached = cachedPath, FileManager.default.isExecutableFile(atPath: cached) {
+        locateBinary(named: "defenseclaw")
+    }
+
+    func locateBinary(named name: String) -> String? {
+        if let cached = cachedPaths[name], FileManager.default.isExecutableFile(atPath: cached) {
             return cached
         }
-        if let override = UserDefaults.standard.string(forKey: Self.pathOverrideKey),
+        if name == "defenseclaw",
+           let override = UserDefaults.standard.string(forKey: Self.pathOverrideKey),
            FileManager.default.isExecutableFile(atPath: override) {
-            cachedPath = override
+            cachedPaths[name] = override
             return override
         }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let candidates = [
-            "\(home)/.local/bin/defenseclaw",
-            "/opt/homebrew/bin/defenseclaw",
-            "/usr/local/bin/defenseclaw",
+            "\(home)/.local/bin/\(name)",
+            "/opt/homebrew/bin/\(name)",
+            "/usr/local/bin/\(name)",
         ]
         for candidate in candidates where FileManager.default.isExecutableFile(atPath: candidate) {
-            cachedPath = candidate
+            cachedPaths[name] = candidate
             return candidate
         }
-        // Last resort: consult login-shell PATH.
-        if let found = which("defenseclaw") {
-            cachedPath = found
+        if let found = which(name) {
+            cachedPaths[name] = found
             return found
         }
         return nil
@@ -45,8 +52,8 @@ actor CLIRunner {
 
     private func which(_ name: String) -> String? {
         let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        proc.arguments = ["zsh", "-lc", "command -v \(name)"]
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+        proc.arguments = [name]
         let pipe = Pipe()
         proc.standardOutput = pipe
         proc.standardError = Pipe()
@@ -58,9 +65,27 @@ actor CLIRunner {
     }
 
     /// Runs `defenseclaw <args>`, streaming combined output lines to `onLine`.
-    func run(arguments: [String], onLine: (@Sendable (String) -> Void)? = nil) async -> CLIResult {
-        guard let binary = locateBinary() else {
-            return CLIResult(exitCode: 127, output: "defenseclaw binary not found. Set its path in Settings ▸ Connection.")
+    func run(
+        arguments: [String],
+        runID: UUID? = nil,
+        onLine: (@Sendable (String) -> Void)? = nil
+    ) async -> CLIResult {
+        await run(binary: "defenseclaw", arguments: arguments, runID: runID, onLine: onLine)
+    }
+
+    /// Runs a DefenseClaw executable with optional stdin. `standardInput` is
+    /// used for hidden-prompt flows such as `keys set`, keeping secrets out of
+    /// argv and process listings.
+    func run(
+        binary binaryName: String,
+        arguments: [String],
+        standardInput: String? = nil,
+        runID: UUID? = nil,
+        onLine: (@Sendable (String) -> Void)? = nil
+    ) async -> CLIResult {
+        guard let binary = locateBinary(named: binaryName) else {
+            let setting = binaryName == "defenseclaw" ? " Set its path in Settings ▸ Connection." : ""
+            return CLIResult(exitCode: 127, output: "\(binaryName) binary not found.\(setting)")
         }
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: binary)
@@ -72,12 +97,20 @@ actor CLIRunner {
         let pipe = Pipe()
         proc.standardOutput = pipe
         proc.standardError = pipe
+        let inputPipe = standardInput == nil ? nil : Pipe()
+        proc.standardInput = inputPipe
 
         var collected = ""
         do {
             try proc.run()
         } catch {
             return CLIResult(exitCode: 126, output: "Failed to launch \(binary): \(error.localizedDescription)")
+        }
+        if let runID { runningProcesses[runID] = proc }
+
+        if let standardInput, let inputPipe {
+            inputPipe.fileHandleForWriting.write(Data((standardInput + "\n").utf8))
+            try? inputPipe.fileHandleForWriting.close()
         }
 
         do {
@@ -89,7 +122,17 @@ actor CLIRunner {
             collected += "\n[output stream error: \(error.localizedDescription)]\n"
         }
         proc.waitUntilExit()
-        return CLIResult(exitCode: proc.terminationStatus, output: collected)
+        let cancelled = runID.map { cancellationRequests.remove($0) != nil } ?? false
+        if let runID { runningProcesses[runID] = nil }
+        return CLIResult(exitCode: proc.terminationStatus, output: collected, cancelled: cancelled)
+    }
+
+    /// Interrupt an Activity-owned process. The process remains registered
+    /// until its output stream closes, so the final exit status is retained.
+    func cancel(runID: UUID) {
+        guard let process = runningProcesses[runID], process.isRunning else { return }
+        cancellationRequests.insert(runID)
+        process.interrupt()
     }
 
     /// Lightweight doctor probe (TUI Shift+D) — parsed into check rows.

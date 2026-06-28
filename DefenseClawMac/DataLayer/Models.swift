@@ -130,6 +130,19 @@ extension String {
 
 // MARK: - Catalog items (skills / MCPs / plugins / tools)
 
+struct CatalogScanState: Sendable {
+    var clean: Bool = true
+    var maxSeverity: String = ""
+    var totalFindings: Int = 0
+    var target: String = ""
+
+    var summary: String {
+        guard totalFindings > 0 else { return clean ? "Clean" : "Not scanned" }
+        let severity = maxSeverity.isEmpty ? "finding" : maxSeverity.uppercased()
+        return "\(totalFindings) \(severity) finding\(totalFindings == 1 ? "" : "s")"
+    }
+}
+
 struct SkillItem: Identifiable, Sendable {
     var key: String
     var name: String
@@ -139,6 +152,9 @@ struct SkillItem: Identifiable, Sendable {
     var skillDescription: String = ""
     var connector: String = ""
     var fromFilesystem: Bool = false  // listed by SkillScanner, read-only
+    var status: String = "inactive"
+    var verdict: String = "-"
+    var scan: CatalogScanState?
     var id: String { key }
 }
 
@@ -151,7 +167,10 @@ struct MCPItem: Identifiable, Sendable {
     var source: String = ""           // registry file the entry came from (filesystem rows)
     var connector: String = ""
     var fromFilesystem: Bool = false  // discovered by MCPScanner, read-only
-    var id: String { fromFilesystem ? "\(connector)/\(name)" : name }
+    var status: String = "active"
+    var verdict: String = "-"
+    var scan: CatalogScanState?
+    var id: String { connector.isEmpty ? name : "\(connector)/\(name)" }
 }
 
 struct PluginItem: Identifiable, Sendable {
@@ -163,7 +182,11 @@ struct PluginItem: Identifiable, Sendable {
     var connector: String = ""
     var fromFilesystem: Bool = false  // discovered by PluginScanner, read-only
     var hasManifest: Bool = true
-    var id: String { fromFilesystem ? "\(connector)/\(name)" : name }
+    var commandID: String = ""
+    var status: String = ""
+    var verdict: String = "-"
+    var scan: CatalogScanState?
+    var id: String { connector.isEmpty ? (commandID.nonEmpty ?? name) : "\(connector)/\(commandID.nonEmpty ?? name)" }
 }
 
 enum ToolState: String, CaseIterable, Identifiable {
@@ -177,7 +200,17 @@ struct ToolItem: Identifiable, Sendable {
     var signature: String
     var state: ToolState
     var usageCount: Int
-    var id: String { name }
+    var connector: String = ""
+    var scope: String = ""
+    var commandTarget: String = ""
+    var status: String {
+        switch state {
+        case .allow: "allowed"
+        case .observe: "active"
+        case .block: "blocked"
+        }
+    }
+    var id: String { connector.isEmpty ? name : "\(connector)/\(name)" }
 }
 
 // MARK: - Audit / alerts
@@ -341,6 +374,34 @@ struct ActivityMutation: Identifiable, Sendable, Hashable {
     var beforeJSON: String
     var afterJSON: String
     var connector: String = ""
+}
+
+enum StructuredDetailParser {
+    static func pairs(_ details: String) -> [(String, String)] {
+        details.split(whereSeparator: \.isWhitespace).compactMap { token in
+            let components = token.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard components.count == 2 else { return nil }
+            let key = String(components[0])
+            let value = String(components[1])
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\"'`"))
+            guard !key.isEmpty, !value.isEmpty else { return nil }
+            return (label(key), value)
+        }
+    }
+
+    static func prettyJSON(_ raw: String) -> String {
+        guard let data = raw.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              JSONSerialization.isValidJSONObject(object),
+              let pretty = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
+              let text = String(data: pretty, encoding: .utf8)
+        else { return raw }
+        return text
+    }
+
+    static func label(_ key: String) -> String {
+        key.split(separator: "_").map { $0.capitalized }.joined(separator: " ")
+    }
 }
 
 // MARK: - Logs
@@ -549,8 +610,14 @@ enum AIDiscoveryGrouping {
 
 enum InventoryCategory: String, CaseIterable, Identifiable {
     case agents = "Agents", mcps = "MCPs", plugins = "Plugins",
-         skills = "Skills", memories = "Memories", providers = "Model Providers"
+         skills = "Skills", tools = "Tools", memories = "Memories", providers = "Models"
     var id: String { rawValue }
+}
+
+struct InventoryField: Identifiable, Sendable, Hashable {
+    var label: String
+    var value: String
+    var id: String { label }
 }
 
 struct InventoryItem: Identifiable, Sendable {
@@ -561,7 +628,23 @@ struct InventoryItem: Identifiable, Sendable {
     var detail: String
     var connector: String = ""
     var verdict: String = ""   // aibom policy_verdict (rejected/approved/unscanned/…)
+    var status: String = ""
+    var fields: [InventoryField] = []
     var id: String { "\(category.rawValue)/\(connector)/\(name)/\(path)" }
+}
+
+struct InventoryConnectorSummary: Identifiable, Sendable {
+    var connector: String
+    var version: String
+    var generatedAt: String
+    var home: String
+    var config: String
+    var live: Bool
+    var errors: Int
+    var counts: [InventoryCategory: Int]
+    var id: String { connector.isEmpty ? "default" : connector }
+
+    var total: Int { counts.values.reduce(0, +) }
 }
 
 // MARK: - Registries

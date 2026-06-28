@@ -55,6 +55,18 @@ struct MainWindow: View {
             FirstRunView()
                 .environment(appState)
         }
+        .sheet(isPresented: commandPaletteBinding) {
+            CommandPaletteView()
+                .environment(appState)
+        }
+        .toolbar {
+            ToolbarItem {
+                Button { appState.commandPalettePresented = true } label: {
+                    Label("Command Palette", systemImage: "command")
+                }
+                .help("Command Palette (Command-Shift-P)")
+            }
+        }
         .onAppear {
             appState.selectedPanel = selectedPanel
         }
@@ -76,6 +88,13 @@ struct MainWindow: View {
                 selectedPanelRaw = panel.rawValue
                 appState.selectedPanel = panel
             }
+        )
+    }
+
+    private var commandPaletteBinding: Binding<Bool> {
+        Binding(
+            get: { appState.commandPalettePresented },
+            set: { appState.commandPalettePresented = $0 }
         )
     }
 

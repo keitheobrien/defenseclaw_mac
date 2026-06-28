@@ -75,7 +75,8 @@ final class AppState {
     let gateway = GatewayClient()
     let audit = AuditStore()
     let stream = EventStreamReader()
-    let cli = CLIRunner()
+    let cli: CLIRunner
+    let activity: CommandActivityStore
     let updater = UpdateChecker()
 
     // Self-update state (this Mac app)
@@ -127,6 +128,7 @@ final class AppState {
     var alertPanelRequest: AlertPanelRequest?
     var auditPresetRequest: String?
     var logPanelRequest: LogPanelRequest?
+    var commandPalettePresented = false
 
     // Settings (mirrored via @AppStorage in views; defaults here)
     @ObservationIgnored @AppStorage("pulseInterval") var pulseInterval: Double = 5
@@ -138,6 +140,12 @@ final class AppState {
 
     private var pulseTask: Task<Void, Never>?
     private var wasReachable: Bool?
+
+    init() {
+        let runner = CLIRunner()
+        cli = runner
+        activity = CommandActivityStore(runner: runner)
+    }
 
     var menuBarState: MenuBarState {
         if monitoringPaused { return .paused }
@@ -281,6 +289,37 @@ final class AppState {
 
     // MARK: - Actions
 
+    @discardableResult
+    func runCommand(
+        runID: UUID = UUID(),
+        title: String,
+        binary: String = "defenseclaw",
+        arguments: [String],
+        standardInput: String? = nil,
+        category: String = "other",
+        origin: String,
+        successEffects: [String] = [],
+        suggestedNextAction: String = "",
+        refreshOnSuccess: Bool = false
+    ) async -> CLIResult {
+        let result = await activity.run(
+            id: runID,
+            title: title,
+            binary: binary,
+            arguments: arguments,
+            standardInput: standardInput,
+            category: category,
+            origin: origin,
+            successEffects: successEffects,
+            suggestedNextAction: suggestedNextAction
+        )
+        if result.succeeded, refreshOnSuccess {
+            NotificationCenter.default.post(name: .dcRefreshPanel, object: nil)
+            reloadConfig()
+        }
+        return result
+    }
+
     /// Mirrors the TUI exactly: `defenseclaw alerts acknowledge --severity <S>`
     /// downgrades that whole severity class to ACK in the audit DB. Audit rows
     /// then drop out of the queue on refresh by themselves. Scan blocks and
@@ -304,7 +343,13 @@ final class AppState {
             }
         }
         for severity in severities {
-            let result = await cli.run(arguments: ["alerts", "acknowledge", "--severity", severity.rawValue])
+            let result = await runCommand(
+                title: "Acknowledge \(severity.rawValue) alerts",
+                arguments: ["alerts", "acknowledge", "--severity", severity.rawValue],
+                category: "alerts",
+                origin: "Alerts",
+                successEffects: ["\(severity.rawValue) alerts acknowledged"]
+            )
             if !result.succeeded {
                 ackError = "alerts acknowledge \(severity.rawValue) failed (exit \(result.exitCode))"
             }
@@ -314,7 +359,13 @@ final class AppState {
 
     /// `defenseclaw alerts dismiss --severity <S|all>` — same DB semantics as the TUI.
     func dismissViaCLI(severity: Severity?) async {
-        _ = await cli.run(arguments: ["alerts", "dismiss", "--severity", severity?.rawValue ?? "all"])
+        _ = await runCommand(
+            title: "Dismiss alerts",
+            arguments: ["alerts", "dismiss", "--severity", severity?.rawValue ?? "all"],
+            category: "alerts",
+            origin: "Alerts",
+            successEffects: ["Alert queue updated"]
+        )
         await refreshAlerts()
     }
 

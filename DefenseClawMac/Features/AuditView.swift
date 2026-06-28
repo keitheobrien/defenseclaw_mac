@@ -13,6 +13,10 @@ struct AuditView: View {
     @State private var page = 0
     @State private var exporterPresented = false
     @State private var exportDocument: AuditExportDocument?
+    @State private var correlationTarget = ""
+    @State private var correlationRunID = ""
+    @State private var relatedEvents: [AuditEvent] = []
+    @State private var relatedFindings: [ScanFindingEvent] = []
 
     private static let pageSize = 200
     private static let presets: [(String, String)] = [
@@ -22,7 +26,16 @@ struct AuditView: View {
 
     /// Loaded rows narrowed by the shared connector filter.
     private var visibleEvents: [AuditEvent] {
-        events.filter { appState.connectorFilterAllows($0.connector) }
+        events.filter { event in
+            guard appState.connectorFilterAllows(event.connector) else { return false }
+            if !correlationTarget.isEmpty, event.target != correlationTarget { return false }
+            if !correlationRunID.isEmpty, event.runID != correlationRunID { return false }
+            return true
+        }
+    }
+
+    private var selectedEvent: AuditEvent? {
+        visibleEvents.first { selection.contains($0.id) }
     }
 
     var body: some View {
@@ -39,6 +52,21 @@ struct AuditView: View {
                 if appState.activeConnectorNames.count > 1 {
                     ConnectorFilterChip(names: appState.activeConnectorNames, selection: $state.connectorFilter)
                 }
+                if !correlationTarget.isEmpty || !correlationRunID.isEmpty {
+                    HStack(spacing: 8) {
+                        Label(
+                            !correlationTarget.isEmpty ? "Same target: \(correlationTarget)" : "Same run: \(correlationRunID)",
+                            systemImage: "line.3.horizontal.decrease.circle.fill"
+                        )
+                        .font(.caption).foregroundStyle(Cisco.blue).lineLimit(1)
+                        Button("Clear Correlation") {
+                            correlationTarget = ""
+                            correlationRunID = ""
+                            selection = []
+                        }
+                        .controlSize(.small)
+                    }
+                }
             }
             .padding(10)
             Divider()
@@ -51,6 +79,15 @@ struct AuditView: View {
                 .frame(maxHeight: .infinity)
             } else {
                 table
+            }
+        }
+        .inspector(isPresented: Binding(
+            get: { selectedEvent != nil },
+            set: { if !$0 { selection = [] } }
+        )) {
+            if let event = selectedEvent {
+                auditInspector(event)
+                    .inspectorColumnWidth(min: 360, ideal: 480)
             }
         }
         .searchable(text: $search, placement: .toolbar, prompt: "Search action, target, details")
@@ -79,6 +116,7 @@ struct AuditView: View {
         .onChange(of: appState.auditPresetRequest) { _, _ in
             _ = applyPendingPanelRequest()
         }
+        .onChange(of: selection) { _, _ in loadSelectedDetails() }
         .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in load(reset: true) }
         .fileExporter(
             isPresented: $exporterPresented,
@@ -123,6 +161,16 @@ struct AuditView: View {
                 let texts = visibleEvents.filter { ids.contains($0.id) }.map(\.structuredJSON)
                 copyToPasteboard(texts.joined(separator: "\n"))
             }
+            Divider()
+            Button("Show Same Target") {
+                guard let event = visibleEvents.first(where: { ids.contains($0.id) }) else { return }
+                filterSameTarget(event)
+            }
+            Button("Show Same Run") {
+                guard let event = visibleEvents.first(where: { ids.contains($0.id) }) else { return }
+                filterSameRun(event)
+            }
+            .disabled(!visibleEvents.contains { ids.contains($0.id) && !$0.runID.isEmpty })
         } primaryAction: { _ in }
         .safeAreaInset(edge: .bottom) {
             HStack {
@@ -136,6 +184,131 @@ struct AuditView: View {
             }
             .padding(6)
             .background(.bar)
+        }
+    }
+
+    private func auditInspector(_ event: AuditEvent) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(event.action).font(.headline)
+                    HStack(spacing: 6) {
+                        SeverityBadge(severity: event.severity)
+                        Text(event.eventType).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                Button { selection = [] } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.borderless)
+            }
+            HStack {
+                Button {
+                    filterSameTarget(event)
+                } label: { Label("Same Target", systemImage: "scope") }
+                .disabled(event.target.isEmpty)
+                Button {
+                    filterSameRun(event)
+                } label: { Label("Same Run", systemImage: "point.3.connected.trianglepath.dotted") }
+                .disabled(event.runID.isEmpty)
+            }
+            .controlSize(.small)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    KeyValueGrid(pairs: [
+                        ("Time", event.timestamp.formatted()),
+                        ("Event ID", event.id),
+                        ("Target", event.target),
+                        ("Actor", event.actor),
+                        ("Connector", event.connector),
+                        ("Run ID", event.runID),
+                    ].filter { !$0.1.isEmpty })
+
+                    let detailPairs = StructuredDetailParser.pairs(event.details)
+                    if !detailPairs.isEmpty {
+                        Divider()
+                        Text("Structured Details").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        KeyValueGrid(pairs: detailPairs)
+                    } else if !event.details.isEmpty {
+                        Text(event.details).font(.caption).textSelection(.enabled)
+                    }
+
+                    if !relatedFindings.isEmpty {
+                        Divider()
+                        Text("Findings in This Run").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        ForEach(relatedFindings.prefix(10)) { finding in
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack {
+                                    SeverityBadge(severity: finding.severity)
+                                    Text(finding.title).font(.caption.weight(.medium))
+                                }
+                                if !finding.location.isEmpty {
+                                    Text(finding.location).font(.caption2.monospaced()).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+
+                    if !relatedEvents.isEmpty {
+                        Divider()
+                        Text("Related Events").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        ForEach(relatedEvents.filter { $0.id != event.id }.prefix(8)) { related in
+                            HStack {
+                                Text(related.timestamp, format: .dateTime.hour().minute().second())
+                                    .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                                Text(related.action).font(.caption).lineLimit(1)
+                                Spacer()
+                                SeverityBadge(severity: related.severity)
+                            }
+                        }
+                    }
+
+                    if !event.structuredJSON.isEmpty {
+                        DisclosureGroup("Structured JSON") {
+                            Text(StructuredDetailParser.prettyJSON(event.structuredJSON))
+                                .font(.caption.monospaced())
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+            }
+            Spacer()
+        }
+        .padding(12)
+    }
+
+    private func filterSameTarget(_ event: AuditEvent) {
+        guard !event.target.isEmpty else { return }
+        correlationTarget = event.target
+        correlationRunID = ""
+        selection = []
+    }
+
+    private func filterSameRun(_ event: AuditEvent) {
+        guard !event.runID.isEmpty else { return }
+        correlationRunID = event.runID
+        correlationTarget = ""
+        selection = []
+    }
+
+    private func loadSelectedDetails() {
+        guard let event = selectedEvent else {
+            relatedEvents = []
+            relatedFindings = []
+            return
+        }
+        Task {
+            relatedEvents = await appState.audit.relatedEvents(
+                target: event.runID.isEmpty ? event.target : nil,
+                runID: event.runID.nonEmpty,
+                limit: 12
+            )
+            relatedFindings = await appState.audit.scanFindings(
+                runID: event.runID.nonEmpty,
+                target: event.target.nonEmpty,
+                limit: 10
+            )
         }
     }
 
@@ -187,6 +360,8 @@ struct AuditView: View {
         guard let requested = appState.consumeAuditPresetRequest() else { return false }
         selection = []
         search = ""
+        correlationTarget = ""
+        correlationRunID = ""
         if preset == requested {
             load(reset: true)
         } else {

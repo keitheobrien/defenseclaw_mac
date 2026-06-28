@@ -51,244 +51,13 @@ struct WizardDefinition: Identifiable {
     /// each non-empty field becomes PATCH /config/patch on
     /// "<prefix>.<field key>" — mirroring the TUI's config-editor sections.
     var configPatchPrefix: String? = nil
+    /// Optional exact argv builder for setup areas whose command shape is
+    /// conditional or emits follow-up commands. The Bool requests masked
+    /// secret values for review display.
+    var commandBuilder: (([String: String], Bool) -> [[String]])? = nil
+    /// Field delivered through stdin instead of argv (currently `keys set`).
+    var secretInputField: String? = nil
     let fields: [WizardField]
-}
-
-enum Wizards {
-    /// TUI connector order (cli_choices.py CONNECTORS): proxies first, hooks after.
-    static let connectors = ["openclaw", "zeptoclaw", "codex", "claudecode", "hermes",
-                             "cursor", "windsurf", "geminicli", "copilot", "openhands", "antigravity"]
-    /// Proxy connectors that take --scanner-mode (cli_choices.GUARDRAIL_CONNECTORS).
-    static let proxyConnectors = ["openclaw", "zeptoclaw"]
-    /// Hook-bus connectors that take --restart/--no-restart.
-    static let hookConnectors = ["codex", "claudecode", "hermes", "cursor", "windsurf",
-                                 "geminicli", "copilot", "openhands", "antigravity"]
-    /// LLM providers from `defenseclaw setup llm --provider` choices.
-    static let llmProviders = ["anthropic", "openai", "openrouter", "azure", "gemini",
-                               "gemini-openai", "groq", "mistral", "cohere", "deepseek",
-                               "xai", "bedrock", "vertex_ai", "fireworks_ai", "perplexity",
-                               "huggingface", "replicate", "together_ai", "cerebras",
-                               "ollama", "vllm", "lm_studio", "custom"]
-    static let needsBaseURL = ["azure", "ollama", "vllm", "lm_studio", "custom", "openrouter"]
-
-    static let all: [WizardDefinition] = [
-        WizardDefinition(
-            id: "connector", title: "Connector", icon: "cable.connector",
-            blurb: "Configure the agent framework DefenseClaw governs. Each connector is its own `defenseclaw setup <connector>` subcommand.",
-            baseArgs: ["setup"],
-            commandField: "connector",
-            commandMap: ["claudecode": "claude-code"],
-            appendYes: true,
-            fields: [
-                WizardField(key: "connector", label: "Framework",
-                            kind: .choice(options: connectors), defaultValue: "claudecode",
-                            help: "openclaw/zeptoclaw use the guardrail proxy path; the rest hook the agent's event bus."),
-                WizardField(key: "mode", label: "Mode",
-                            kind: .choice(options: ["observe", "action"]), defaultValue: "observe",
-                            help: "observe records findings only; action enforces (deny verdicts / blocks) per policy."),
-                WizardField(key: "scanner-mode", label: "Scanner mode",
-                            kind: .choice(options: ["local", "remote", "both"]), defaultValue: "local",
-                            visibleWhen: (key: "connector", equals: proxyConnectors)),
-                WizardField(key: "rule-pack", label: "Rule pack",
-                            kind: .choice(options: ["default", "strict", "permissive"]), defaultValue: "default"),
-                WizardField(key: "restart", label: "Restart gateway after apply", kind: .bool, defaultValue: "yes",
-                            visibleWhen: (key: "connector", equals: hookConnectors)),
-            ]
-        ),
-        WizardDefinition(
-            id: "llm", title: "LLM", icon: "brain",
-            blurb: "Configure the unified top-level llm: block (judge/analyzer model).",
-            baseArgs: ["setup", "llm"],
-            appendNonInteractive: true,
-            fields: [
-                WizardField(key: "provider", label: "Provider",
-                            kind: .choice(options: llmProviders), defaultValue: "anthropic"),
-                WizardField(key: "model", label: "Model", kind: .text(placeholder: "e.g. claude-sonnet-4-6")),
-                WizardField(key: "role", label: "Role",
-                            kind: .choice(options: ["unified", "agent", "judge"]), defaultValue: "unified",
-                            help: "Where the settings are written: unified llm: block, agent-only, or judge-only."),
-                WizardField(key: "api-key", label: "API key", kind: .secure(placeholder: "persisted via --api-key")),
-                WizardField(key: "api-key-env", label: "API key env var", kind: .text(placeholder: "e.g. ANTHROPIC_API_KEY"),
-                            help: "Alternative to a literal key: name of the env var holding it."),
-                WizardField(key: "base-url", label: "Base URL", kind: .text(placeholder: "https://…"),
-                            visibleWhen: (key: "provider", equals: needsBaseURL)),
-                WizardField(key: "bedrock-region", label: "AWS region", kind: .text(placeholder: "us-east-1"),
-                            visibleWhen: (key: "provider", equals: ["bedrock"])),
-                WizardField(key: "bedrock-auth-mode", label: "Bedrock auth",
-                            kind: .choice(options: ["api_key", "iam_credentials", "profile", "instance_role"]),
-                            defaultValue: "profile",
-                            visibleWhen: (key: "provider", equals: ["bedrock"])),
-            ]
-        ),
-        WizardDefinition(
-            id: "guardrail", title: "Guardrail", icon: "shield.checkered",
-            blurb: "Configure the LLM guardrail: mode, scanners, detection strategy, judge.",
-            baseArgs: ["setup", "guardrail"],
-            appendNonInteractive: true,
-            fields: [
-                WizardField(key: "connector", label: "Connector",
-                            kind: .choice(options: connectors), defaultValue: "claudecode",
-                            help: "Scopes the guardrail settings to one configured connector."),
-                WizardField(key: "mode", label: "Mode",
-                            kind: .choice(options: ["observe", "action"]), defaultValue: "observe"),
-                WizardField(key: "scanner-mode", label: "Scanner mode",
-                            kind: .choice(options: ["local", "remote", "both"]), defaultValue: "local"),
-                WizardField(key: "detection-strategy", label: "Detection strategy",
-                            kind: .choice(options: ["regex_only", "regex_judge", "judge_first"]),
-                            defaultValue: "regex_only"),
-                WizardField(key: "rule-pack", label: "Rule pack",
-                            kind: .choice(options: ["default", "strict", "permissive"]), defaultValue: "default"),
-                WizardField(key: "judge-model", label: "Judge model", kind: .text(placeholder: "e.g. anthropic/claude-sonnet-4-6"),
-                            visibleWhen: (key: "detection-strategy", equals: ["regex_judge", "judge_first"])),
-                WizardField(key: "block-message", label: "Block message", kind: .text(placeholder: "optional custom message")),
-            ]
-        ),
-        WizardDefinition(
-            id: "ai-defense", title: "AI Defense", icon: "cloud.fill",
-            blurb: "Connect the guardrail to Cisco AI Defense cloud inspection: endpoint, API key, timeout, and rules (config block: cisco_ai_defense).",
-            baseArgs: [],
-            configPatchPrefix: "cisco_ai_defense",
-            fields: [
-                WizardField(key: "endpoint", label: "Endpoint",
-                            kind: .text(placeholder: "https://… (Cisco AI Defense API endpoint)")),
-                WizardField(key: "api_key", label: "API key", kind: .secure(placeholder: "inspection API key"),
-                            help: "Stored inline in config.yaml (the TUI's Cisco section does the same). Prefer the env-var option below where possible."),
-                WizardField(key: "api_key_env", label: "API key env var", kind: .text(placeholder: "e.g. CISCO_AI_DEFENSE_API_KEY"),
-                            help: "Alternative to an inline key: the NAME of an env var (e.g. set in ~/.defenseclaw/.env) holding the key."),
-                WizardField(key: "timeout_ms", label: "Timeout (ms)", kind: .text(placeholder: "e.g. 5000")),
-                WizardField(key: "enabled_rules", label: "Enabled rules", kind: .text(placeholder: "CSV of cloud rules (optional)")),
-            ]
-        ),
-        WizardDefinition(
-            id: "notifications", title: "Notifications", icon: "bell.badge",
-            blurb: "Toggle desktop notifications for findings (per-source tuning via `setup notifications-set`).",
-            baseArgs: ["setup", "notifications"],
-            appendYes: true,
-            fields: [
-                WizardField(key: "restart", label: "Restart gateway after toggling", kind: .bool, defaultValue: "yes"),
-            ]
-        ),
-        WizardDefinition(
-            id: "webhook", title: "Webhooks", icon: "link.badge.plus",
-            blurb: "Create a webhook notifier — Slack, PagerDuty, Webex, or generic HMAC-signed — for the runtime alert dispatcher (top-level webhooks: list).",
-            baseArgs: ["setup", "webhook", "add"],
-            commandField: "type",
-            appendNonInteractive: true,
-            fields: [
-                WizardField(key: "type", label: "Type",
-                            kind: .choice(options: ["slack", "pagerduty", "webex", "generic"]),
-                            defaultValue: "slack"),
-                WizardField(key: "url", label: "Webhook URL", kind: .text(placeholder: "https://hooks.slack.com/… / events.pagerduty.com/… / webexapis.com/v1/messages")),
-                WizardField(key: "secret-env", label: "Secret env var", kind: .text(placeholder: "e.g. DEFENSECLAW_PD_KEY"),
-                            visibleWhen: (key: "type", equals: ["pagerduty", "webex", "generic"]),
-                            help: "NAME of the env var holding the routing key / bot token / HMAC secret. Slack URLs carry their own secret."),
-                WizardField(key: "room-id", label: "Webex room ID", kind: .text(placeholder: "Y2lzY29z…"),
-                            visibleWhen: (key: "type", equals: ["webex"])),
-                WizardField(key: "min-severity", label: "Minimum severity",
-                            kind: .choice(options: ["critical", "high", "medium", "low", "info"]),
-                            defaultValue: "high"),
-                WizardField(key: "events", label: "Event categories", kind: .text(placeholder: "block,scan,guardrail,drift,health — empty = all"),
-                            help: "Comma-separated; allowed: block, scan, guardrail, drift, health."),
-                WizardField(key: "timeout-seconds", label: "Delivery timeout (s)", kind: .text(placeholder: "10")),
-                WizardField(key: "name", label: "Destination name", kind: .text(placeholder: "optional — derived from type+host")),
-            ]
-        ),
-        WizardDefinition(
-            id: "provider", title: "Custom Providers", icon: "point.3.connected.trianglepath.dotted",
-            blurb: "Add a custom/self-hosted LLM endpoint to the provider overlay (~/.defenseclaw/custom-providers.json) so the guardrail treats it as a known LLM.",
-            // No --non-interactive flag here: with --name supplied and no TTY
-            // attached (our case), `provider add` never prompts.
-            baseArgs: ["setup", "provider", "add"],
-            fields: [
-                WizardField(key: "name", label: "Provider name", kind: .text(placeholder: "e.g. internal-llm"),
-                            help: "Required. Repeated adds with the same name union domains/env keys (idempotent)."),
-                WizardField(key: "base-provider-type", label: "Provider family",
-                            kind: .choice(options: ["openai", "anthropic", "bedrock", "azure", "vertex_ai",
-                                                    "gemini", "gemini-openai", "groq", "mistral", "cohere",
-                                                    "deepseek", "xai", "fireworks_ai", "perplexity",
-                                                    "huggingface", "replicate", "openrouter", "together_ai",
-                                                    "cerebras", "ollama", "vllm", "lm_studio"]),
-                            defaultValue: "openai",
-                            help: "Upstream API family this endpoint speaks — routes the gateway to the matching adapter."),
-                WizardField(key: "base-url", label: "Base URL", kind: .text(placeholder: "https://llm.internal:8443")),
-                WizardField(key: "domain", label: "Domain", kind: .text(placeholder: "optional when Base URL is set"),
-                            help: "Domain to recognise as LLM traffic; scheme/path are stripped."),
-                WizardField(key: "env-key", label: "API key env var", kind: .text(placeholder: "e.g. INTERNAL_LLM_API_KEY"),
-                            help: "Name of the env var holding this provider's key (optional)."),
-                WizardField(key: "available-model", label: "Model id", kind: .text(placeholder: "model served by this endpoint (optional)")),
-                WizardField(key: "ollama-port", label: "Ollama port", kind: .text(placeholder: "additional loopback port"),
-                            visibleWhen: (key: "base-provider-type", equals: ["ollama"])),
-                WizardField(key: "bedrock-region", label: "AWS region", kind: .text(placeholder: "us-east-1"),
-                            visibleWhen: (key: "base-provider-type", equals: ["bedrock"])),
-                WizardField(key: "bedrock-auth-mode", label: "Bedrock auth",
-                            kind: .choice(options: ["api_key", "iam_credentials", "profile", "instance_role"]),
-                            defaultValue: "profile",
-                            visibleWhen: (key: "base-provider-type", equals: ["bedrock"])),
-                WizardField(key: "insecure-skip-verify", label: "Skip TLS verification (trusted labs only)",
-                            kind: .flagOnly, defaultValue: "no"),
-            ]
-        ),
-        WizardDefinition(
-            id: "ai-discovery", title: "AI Discovery", icon: "sparkle.magnifyingglass",
-            blurb: "Enable or disable the sidecar AI discovery service (detailed settings: `defenseclaw agent discovery setup`).",
-            baseArgs: ["agent", "discovery"],
-            commandField: "action",
-            appendYes: true,
-            fields: [
-                WizardField(key: "action", label: "Action",
-                            kind: .choice(options: ["enable", "disable"]), defaultValue: "enable"),
-            ]
-        ),
-        WizardDefinition(
-            id: "observability", title: "Observability", icon: "chart.xyaxis.line",
-            blurb: "Add a telemetry destination (OTel exporter or audit sink): Splunk, Datadog, Honeycomb, New Relic, Grafana Cloud, generic OTLP, or webhook.",
-            baseArgs: ["setup", "observability", "add"],
-            commandField: "preset",
-            appendNonInteractive: true,
-            fields: [
-                WizardField(key: "preset", label: "Destination",
-                            kind: .choice(options: ["local-otlp", "otlp", "splunk-o11y", "splunk-hec",
-                                                    "splunk-enterprise", "datadog", "honeycomb",
-                                                    "newrelic", "grafana-cloud", "webhook"]),
-                            defaultValue: "local-otlp"),
-                // Per-preset inputs (mirror observability.presets prompts).
-                WizardField(key: "realm", label: "Splunk O11y realm", kind: .text(placeholder: "us1, us0, eu0…"),
-                            visibleWhen: (key: "preset", equals: ["splunk-o11y"])),
-                WizardField(key: "host", label: "Splunk host", kind: .text(placeholder: "name or IP, no scheme"),
-                            visibleWhen: (key: "preset", equals: ["splunk-hec"])),
-                WizardField(key: "port", label: "HEC port", kind: .text(placeholder: "8088"),
-                            visibleWhen: (key: "preset", equals: ["splunk-hec"])),
-                WizardField(key: "endpoint", label: "Endpoint", kind: .text(placeholder: "host:port or URL"),
-                            visibleWhen: (key: "preset", equals: ["splunk-enterprise", "local-otlp", "otlp"])),
-                WizardField(key: "protocol", label: "OTLP protocol",
-                            kind: .choice(options: ["grpc", "http"]), defaultValue: "grpc",
-                            visibleWhen: (key: "preset", equals: ["otlp"])),
-                WizardField(key: "index", label: "HEC index", kind: .text(placeholder: "defenseclaw"),
-                            visibleWhen: (key: "preset", equals: ["splunk-hec", "splunk-enterprise"])),
-                WizardField(key: "source", label: "HEC source", kind: .text(placeholder: "defenseclaw"),
-                            visibleWhen: (key: "preset", equals: ["splunk-hec", "splunk-enterprise"])),
-                WizardField(key: "sourcetype", label: "HEC sourcetype", kind: .text(placeholder: "_json"),
-                            visibleWhen: (key: "preset", equals: ["splunk-hec", "splunk-enterprise"])),
-                WizardField(key: "site", label: "Datadog site", kind: .text(placeholder: "us1, us3, us5, eu…"),
-                            visibleWhen: (key: "preset", equals: ["datadog"])),
-                WizardField(key: "dataset", label: "Honeycomb dataset", kind: .text(placeholder: "defenseclaw"),
-                            visibleWhen: (key: "preset", equals: ["honeycomb"])),
-                WizardField(key: "region", label: "Region", kind: .text(placeholder: "us / eu / prod-us-east-0"),
-                            visibleWhen: (key: "preset", equals: ["newrelic", "grafana-cloud"])),
-                WizardField(key: "url", label: "Webhook URL", kind: .text(placeholder: "https://…"),
-                            visibleWhen: (key: "preset", equals: ["webhook"])),
-                WizardField(key: "method", label: "HTTP method",
-                            kind: .choice(options: ["POST", "PUT"]), defaultValue: "POST",
-                            visibleWhen: (key: "preset", equals: ["webhook"])),
-                // Common options.
-                WizardField(key: "token", label: "Token / API key", kind: .secure(placeholder: "stored in ~/.defenseclaw/.env"),
-                            help: "Persisted under the preset's token env var. Leave empty for tokenless destinations (e.g. local OTLP)."),
-                WizardField(key: "signals", label: "Signals", kind: .text(placeholder: "traces,metrics,logs"),
-                            help: "Comma-separated OTel signals; empty = preset default."),
-                WizardField(key: "name", label: "Destination name", kind: .text(placeholder: "optional — derived from preset")),
-            ]
-        ),
-    ]
 }
 
 // MARK: - Setup panel
@@ -296,14 +65,13 @@ enum Wizards {
 struct SetupView: View {
     @Environment(AppState.self) private var appState
     @State private var activeWizard: WizardDefinition?
-    @State private var editorShown = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Wizards").font(.title3.weight(.semibold))
+                Text("Setup Areas").font(.title3.weight(.semibold))
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 230), spacing: 12)], spacing: 12) {
-                    ForEach(Wizards.all) { wizard in
+                    ForEach(TUIWizards.all) { wizard in
                         Button {
                             activeWizard = wizard
                         } label: {
@@ -399,7 +167,14 @@ struct WizardSheet: View {
         return args
     }
 
-    private var cliArguments: [String] { buildArguments(maskSecrets: false) }
+    private func buildCommands(maskSecrets: Bool) -> [[String]] {
+        if let commandBuilder = wizard.commandBuilder {
+            return commandBuilder(values, maskSecrets)
+        }
+        return [buildArguments(maskSecrets: maskSecrets)]
+    }
+
+    private var cliCommands: [[String]] { buildCommands(maskSecrets: false) }
 
     /// Gateway-applied wizards: one PATCH /config/patch per non-empty field.
     private var patchOperations: [(path: String, value: String, secure: Bool)] {
@@ -421,7 +196,11 @@ struct WizardSheet: View {
                 .map { "PATCH /config/patch  \($0.path) = \($0.secure ? "••••••" : $0.value)" }
                 .joined(separator: "\n")
         }
-        return (["defenseclaw"] + buildArguments(maskSecrets: true)).joined(separator: " ")
+        let commands = buildCommands(maskSecrets: true)
+        guard !commands.isEmpty else { return "(no changes selected — nothing to apply)" }
+        return commands
+            .map { (["defenseclaw"] + $0).joined(separator: " ") }
+            .joined(separator: "\n")
     }
 
     var body: some View {
@@ -542,7 +321,8 @@ struct WizardSheet: View {
                 Button("Cancel") { dismiss() }
                 if wizard.interactiveOnly {
                     Button("Copy Command") {
-                        copyToPasteboard((["defenseclaw"] + cliArguments).joined(separator: " "))
+                        let command = buildCommands(maskSecrets: false).first ?? wizard.baseArgs
+                        copyToPasteboard((["defenseclaw"] + command).joined(separator: " "))
                         dismiss()
                     }
                     .keyboardShortcut(.defaultAction)
@@ -603,11 +383,36 @@ struct WizardSheet: View {
             return
         }
         Task {
-            let result = await appState.cli.run(arguments: cliArguments) { line in
-                Task { @MainActor in output += line + "\n" }
+            let commands = cliCommands
+            guard !commands.isEmpty else {
+                output = "Nothing to apply."
+                exitCode = 0
+                phase = .done
+                return
             }
-            exitCode = result.exitCode
-            if output.isEmpty { output = result.output }
+            var finalCode: Int32 = 0
+            for (index, arguments) in commands.enumerated() {
+                if commands.count > 1 {
+                    output += "$ defenseclaw \(arguments.joined(separator: " "))\n"
+                }
+                let secret = index == 0 ? wizard.secretInputField.flatMap { values[$0] } : nil
+                let result = await appState.runCommand(
+                    title: wizard.title,
+                    binary: "defenseclaw",
+                    arguments: arguments,
+                    standardInput: secret,
+                    category: "setup",
+                    origin: "Setup",
+                    refreshOnSuccess: true
+                )
+                if let entry = appState.activity.entries.first(where: { $0.id == appState.activity.selectedID }) {
+                    output += entry.output
+                }
+                if output.isEmpty { output = result.output }
+                finalCode = result.exitCode
+                if !result.succeeded { break }
+            }
+            exitCode = finalCode
             phase = .done
         }
     }
@@ -737,4 +542,3 @@ fileprivate func dcCoerceConfigValue(_ raw: String, forPath path: String) -> Any
     default: return raw
     }
 }
-

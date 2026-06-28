@@ -38,6 +38,7 @@ struct OverviewView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .fixedSize(horizontal: false, vertical: true)
+                quickActionsCard
                 configurationCard
                 if !appState.health.connectors.isEmpty { connectorCard }
                 activityCard
@@ -86,6 +87,67 @@ struct OverviewView: View {
     }
 
     // MARK: Cards
+
+    private var quickActionsCard: some View {
+        DCCard("Quick Actions", systemImage: "bolt") {
+            HStack(spacing: 8) {
+                Button {
+                    runOverviewCommand(
+                        title: "Scan all skills",
+                        arguments: ["skill", "scan", "--all"],
+                        category: "scan",
+                        effects: ["Skill scan results refreshed"]
+                    )
+                } label: {
+                    Label("Scan Skills", systemImage: "wand.and.rays")
+                }
+                Button {
+                    appState.selectedPanel = .inventory
+                } label: {
+                    Label("Open Inventory", systemImage: "shippingbox")
+                }
+                Button {
+                    let action = appState.gatewayReachable ? "restart" : "start"
+                    runOverviewCommand(
+                        title: "\(action.capitalized) gateway",
+                        binary: "defenseclaw-gateway",
+                        arguments: [action],
+                        category: "daemon",
+                        effects: [appState.gatewayReachable ? "Gateway restarted" : "Gateway started"]
+                    )
+                } label: {
+                    Label(appState.gatewayReachable ? "Restart Gateway" : "Start Gateway",
+                          systemImage: appState.gatewayReachable ? "arrow.clockwise.circle" : "play.circle")
+                }
+                Button {
+                    runDoctor()
+                } label: {
+                    Label("Run Doctor", systemImage: "stethoscope")
+                }
+                .disabled(doctorRunning)
+                Menu {
+                    Button("Validate Configuration") {
+                        runOverviewCommand(title: "Validate configuration", arguments: ["config", "validate"], category: "info")
+                    }
+                    Button("Check Credentials") {
+                        runOverviewCommand(title: "Check credentials", arguments: ["keys", "check"], category: "info")
+                    }
+                    Button("Gateway Status") {
+                        runOverviewCommand(title: "Gateway status", binary: "defenseclaw-gateway", arguments: ["status"], category: "info")
+                    }
+                    Button("Show Provenance") {
+                        runOverviewCommand(title: "Show gateway provenance", binary: "defenseclaw-gateway", arguments: ["provenance", "show"], category: "info")
+                    }
+                    Divider()
+                    Button("Open Command Palette") { appState.commandPalettePresented = true }
+                } label: {
+                    Label("Diagnostics", systemImage: "ellipsis.circle")
+                }
+                Spacer()
+            }
+            .controlSize(.small)
+        }
+    }
 
     /// Hero left: the TUI's SERVICES box — the nine subsystems (Gateway, Agent,
     /// Watchdog, Guardrail, API, Sinks, Telemetry, AI Discovery, Sandbox), each
@@ -462,16 +524,65 @@ struct OverviewView: View {
         doctorRunning = true
         doctorOutput = ""
         Task {
-            let result = await appState.cli.run(arguments: ["doctor"]) { line in
-                Task { @MainActor in doctorOutput += line + "\n" }
-            }
-            doctorChecks = await appState.cli.doctor()
+            let result = await appState.runCommand(
+                title: "DefenseClaw Doctor",
+                arguments: ["doctor"],
+                category: "info",
+                origin: "Overview",
+                successEffects: ["Diagnostic results refreshed"]
+            )
+            doctorOutput = result.output
+            doctorChecks = parseDoctorChecks(result.output)
             if doctorChecks.isEmpty {
                 doctorChecks = [DoctorCheck(name: "doctor exited \(result.exitCode)",
                                             result: result.succeeded ? .pass : .fail,
                                             detail: result.output)]
             }
             doctorRunning = false
+        }
+    }
+
+    private func runOverviewCommand(
+        title: String,
+        binary: String = "defenseclaw",
+        arguments: [String],
+        category: String,
+        effects: [String] = []
+    ) {
+        appState.selectedPanel = .activity
+        Task {
+            _ = await appState.runCommand(
+                title: title,
+                binary: binary,
+                arguments: arguments,
+                category: category,
+                origin: "Overview",
+                successEffects: effects,
+                refreshOnSuccess: true
+            )
+        }
+    }
+
+    private func parseDoctorChecks(_ output: String) -> [DoctorCheck] {
+        output.split(separator: "\n").compactMap { raw in
+            let line = String(raw)
+            let lower = line.lowercased()
+            let result: DoctorCheck.Result
+            if lower.contains("pass") || lower.contains("✓") || lower.contains(" ok") {
+                result = .pass
+            } else if lower.contains("warn") || lower.contains("⚠") {
+                result = .warn
+            } else if lower.contains("fail") || lower.contains("✗") || lower.contains("error") {
+                result = .fail
+            } else {
+                return nil
+            }
+            let name = line
+                .replacingOccurrences(of: "✓", with: "")
+                .replacingOccurrences(of: "⚠", with: "")
+                .replacingOccurrences(of: "✗", with: "")
+                .trimmingCharacters(in: .whitespaces)
+            return DoctorCheck(name: String(name.prefix(80)), result: result, detail: line)
         }
     }
 

@@ -55,6 +55,12 @@ struct DefenseClawApp: App {
                 .keyboardShortcut("a", modifiers: [.command, .shift])
                 .disabled(!appState.gatewayReachable || appState.scanInFlight)
             }
+            CommandMenu("Commands") {
+                Button("Command Palette…") {
+                    appState.commandPalettePresented = true
+                }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
+            }
             CommandMenu("Go") {
                 ForEach(Array(PanelID.allCases.enumerated()), id: \.element) { index, panel in
                     if index < 9 {

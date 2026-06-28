@@ -7,29 +7,61 @@ import Charts
 
 struct InventoryView: View {
     @Environment(AppState.self) private var appState
-    @State private var category: InventoryCategory = .skills
+    @State private var tab = "Summary"
     @State private var items: [InventoryItem] = []
+    @State private var summaries: [InventoryConnectorSummary] = []
     @State private var search = ""
+    @State private var statusFilter = "all"
+    @State private var selectedID: String?
     @State private var scanning = false
     @State private var error: String?
     @State private var lastScan: Date?
 
+    private var category: InventoryCategory? {
+        InventoryCategory.allCases.first { $0.rawValue == tab }
+    }
+
     private var filtered: [InventoryItem] {
-        let inCategory = items.filter { $0.category == category }
-        guard !search.isEmpty else { return inCategory }
-        return inCategory.filter { $0.name.lowercased().contains(search.lowercased()) }
+        guard let category else { return [] }
+        return items.filter { item in
+            guard item.category == category else { return false }
+            let state = "\(item.status) \(item.verdict) \(item.detail)".lowercased()
+            if statusFilter != "all", !state.contains(statusFilter) { return false }
+            guard !search.isEmpty else { return true }
+            let fields = item.fields.map { "\($0.label) \($0.value)" }.joined(separator: " ")
+            return "\(item.name) \(item.path) \(item.connector) \(fields)"
+                .localizedCaseInsensitiveContains(search)
+        }
+    }
+
+    private var selectedItem: InventoryItem? {
+        guard let selectedID else { return nil }
+        return items.first { $0.id == selectedID }
+    }
+
+    private var statusOptions: [(String, String)] {
+        switch category {
+        case .skills: [("All", "all"), ("Eligible", "eligible"), ("Warning", "warning"), ("Blocked", "blocked")]
+        case .plugins: [("All", "all"), ("Loaded", "loaded"), ("Disabled", "disabled"), ("Blocked", "blocked")]
+        default: [("All", "all")]
+        }
     }
 
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: 8) {
-                Picker("Category", selection: $category) {
-                    ForEach(InventoryCategory.allCases) { c in
-                        Text("\(c.rawValue) (\(items.filter { $0.category == c }.count))").tag(c)
+                Picker("View", selection: $tab) {
+                    Text("Summary").tag("Summary")
+                    ForEach(InventoryCategory.allCases) { category in
+                        Text("\(category.rawValue) (\(items.filter { $0.category == category }.count))")
+                            .tag(category.rawValue)
                     }
                 }
                 .pickerStyle(.segmented)
                 HStack {
+                    if category != nil, statusOptions.count > 1 {
+                        FilterChipRow("Status", options: statusOptions, selection: $statusFilter)
+                    }
                     if let lastScan {
                         Text("Last scan: \(DCDates.relative(lastScan))")
                             .font(.caption2)
@@ -48,17 +80,19 @@ struct InventoryView: View {
                     .foregroundStyle(Cisco.red)
                     .padding(6)
             }
-            if filtered.isEmpty {
+            if tab == "Summary" {
+                summaryView
+            } else if filtered.isEmpty {
                 DCEmptyState(
-                    title: scanning ? "Scanning…" : "No \(category.rawValue.lowercased()) inventoried",
+                    title: scanning ? "Scanning..." : "No \(tab.lowercased()) inventoried",
                     message: scanning
                         ? "Running `defenseclaw aibom scan` across every active connector."
-                        : "Inventory comes from `defenseclaw aibom scan --json` — the same per-connector bill of materials the TUI shows. Use Rescan to run it.",
+                        : "Inventory comes from `defenseclaw aibom scan --json`, the same per-connector bill of materials the TUI shows. Use Rescan to run it.",
                     systemImage: "shippingbox"
                 )
                 .frame(maxHeight: .infinity)
             } else {
-                Table(filtered) {
+                Table(filtered, selection: $selectedID) {
                     TableColumn("Name", value: \.name)
                     TableColumn("Version", value: \.version).width(70)
                     TableColumn("Connector") { item in
@@ -77,6 +111,11 @@ struct InventoryView: View {
                         }
                     }
                     .width(100)
+                    TableColumn("Status") { item in
+                        Text(item.status.isEmpty ? "—" : item.status)
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .width(86)
                     TableColumn("Path / Source") { item in
                         Text(item.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
                             .font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
@@ -85,6 +124,15 @@ struct InventoryView: View {
                         Text(item.detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
                 }
+            }
+        }
+        .inspector(isPresented: Binding(
+            get: { selectedItem != nil },
+            set: { if !$0 { selectedID = nil } }
+        )) {
+            if let item = selectedItem {
+                inventoryInspector(item)
+                    .inspectorColumnWidth(min: 320, ideal: 400)
             }
         }
         .searchable(text: $search, placement: .toolbar, prompt: "Search inventory")
@@ -99,7 +147,75 @@ struct InventoryView: View {
             }
         }
         .task { if items.isEmpty { scan() } }
+        .onChange(of: tab) {
+            statusFilter = "all"
+            selectedID = nil
+        }
         .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in scan() }
+    }
+
+    private var summaryView: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                StatCard(title: "Total Items", value: "\(items.count)", tint: Cisco.blue)
+                StatCard(title: "Tools", value: "\(items.filter { $0.category == .tools }.count)", tint: Cisco.green)
+                StatCard(title: "Connectors", value: "\(summaries.count)", tint: .secondary)
+                StatCard(title: "Errors", value: "\(summaries.reduce(0) { $0 + $1.errors })",
+                         tint: summaries.contains { $0.errors > 0 } ? Cisco.red : .secondary)
+            }
+            if summaries.isEmpty {
+                DCEmptyState(
+                    title: scanning ? "Scanning inventory..." : "No inventory snapshot",
+                    message: "Run Rescan All to collect the per-connector AIBOM summary.",
+                    systemImage: "shippingbox"
+                )
+            } else {
+                Table(summaries) {
+                    TableColumn("Connector", value: \.connector)
+                    TableColumn("Total") { Text("\($0.total)") }.width(55)
+                    TableColumn("Skills") { Text("\($0.counts[.skills, default: 0])") }.width(55)
+                    TableColumn("Plugins") { Text("\($0.counts[.plugins, default: 0])") }.width(58)
+                    TableColumn("MCPs") { Text("\($0.counts[.mcps, default: 0])") }.width(50)
+                    TableColumn("Agents") { Text("\($0.counts[.agents, default: 0])") }.width(55)
+                    TableColumn("Tools") { Text("\($0.counts[.tools, default: 0])") }.width(50)
+                    TableColumn("Models") { Text("\($0.counts[.providers, default: 0])") }.width(55)
+                    TableColumn("Memory") { Text("\($0.counts[.memories, default: 0])") }.width(55)
+                    TableColumn("Source") { summary in
+                        Text(summary.home.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                            .font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+            }
+        }
+        .padding(12)
+    }
+
+    private func inventoryInspector(_ item: InventoryItem) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.name).font(.headline)
+                    Text(item.category.rawValue).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button { selectedID = nil } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.borderless)
+            }
+            KeyValueGrid(pairs: [
+                ("Connector", item.connector),
+                ("Status", item.status),
+                ("Verdict", item.verdict),
+                ("Version", item.version),
+                ("Source", item.path),
+            ].filter { !$0.1.isEmpty })
+            Divider()
+            Text("Inventory Fields").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            ScrollView {
+                KeyValueGrid(pairs: item.fields.map { ($0.label, $0.value) }.filter { !$0.1.isEmpty })
+            }
+            Spacer()
+        }
+        .padding(12)
     }
 
     /// The TUI's Inventory data source: `defenseclaw aibom scan --json` emits
@@ -111,7 +227,13 @@ struct InventoryView: View {
         appState.scanInFlight = true
         error = nil
         Task {
-            let result = await appState.cli.run(arguments: ["aibom", "scan", "--json"])
+            let result = await appState.runCommand(
+                title: "Scan inventory",
+                arguments: ["aibom", "scan", "--json"],
+                category: "scan",
+                origin: "Inventory",
+                successEffects: ["Inventory snapshot refreshed"]
+            )
             defer {
                 scanning = false
                 appState.scanInFlight = false
@@ -127,6 +249,7 @@ struct InventoryView: View {
                 return
             }
             items = docs.flatMap(Self.rows(from:))
+            summaries = docs.map(Self.summary(from:))
             lastScan = Date()
         }
     }
@@ -144,6 +267,12 @@ struct InventoryView: View {
         func verdict(_ r: [String: Any]) -> (verdict: String, detail: String) {
             (str(r, "policy_verdict"), str(r, "policy_detail"))
         }
+        func fields(_ r: [String: Any]) -> [InventoryField] {
+            r.keys.sorted().compactMap { key in
+                guard let value = r[key], !(value is NSNull) else { return nil }
+                return InventoryField(label: Self.fieldLabel(key), value: Self.displayValue(value))
+            }
+        }
         func rows(_ key: String, _ category: InventoryCategory,
                   _ map: ([String: Any]) -> InventoryItem) -> [InventoryItem] {
             ((doc[key] as? [[String: Any]]) ?? []).map(map)
@@ -157,7 +286,7 @@ struct InventoryView: View {
                 category: .skills, name: str(r, "id", "name"), version: str(r, "version"),
                 path: str(r, "path", "source"),
                 detail: (flags.filter { !$0.isEmpty } + [v.detail]).filter { !$0.isEmpty }.joined(separator: " · "),
-                connector: connector, verdict: v.verdict
+                connector: connector, verdict: v.verdict, status: str(r, "status"), fields: fields(r)
             )
         }
         + rows("plugins", .plugins) { r in
@@ -166,7 +295,7 @@ struct InventoryView: View {
                 category: .plugins, name: str(r, "name", "id"), version: str(r, "version"),
                 path: str(r, "path", "origin"),
                 detail: [str(r, "status"), v.detail].filter { !$0.isEmpty }.joined(separator: " · "),
-                connector: connector, verdict: v.verdict
+                connector: connector, verdict: v.verdict, status: str(r, "status"), fields: fields(r)
             )
         }
         + rows("mcp", .mcps) { r in
@@ -175,7 +304,7 @@ struct InventoryView: View {
                 category: .mcps, name: str(r, "id", "name"), version: "",
                 path: str(r, "command", "url"),
                 detail: [str(r, "source"), v.detail].filter { !$0.isEmpty }.joined(separator: " · "),
-                connector: connector, verdict: v.verdict
+                connector: connector, verdict: v.verdict, status: str(r, "status"), fields: fields(r)
             )
         }
         + rows("agents", .agents) { r in
@@ -184,7 +313,15 @@ struct InventoryView: View {
                 category: .agents, name: str(r, "id", "name"), version: str(r, "version"),
                 path: str(r, "path", "source"),
                 detail: [str(r, "description"), v.detail].filter { !$0.isEmpty }.joined(separator: " · "),
-                connector: connector, verdict: v.verdict
+                connector: connector, verdict: v.verdict, status: str(r, "status"), fields: fields(r)
+            )
+        }
+        + rows("tools", .tools) { r in
+            let v = verdict(r)
+            return InventoryItem(
+                category: .tools, name: str(r, "name", "id"), version: str(r, "version"),
+                path: str(r, "source", "command"), detail: str(r, "description", "signature"),
+                connector: connector, verdict: v.verdict, status: str(r, "status"), fields: fields(r)
             )
         }
         + rows("model_providers", .providers) { r in
@@ -194,7 +331,7 @@ struct InventoryView: View {
                 detail: [str(r, "source"),
                          (r["api_key_present"] as? Bool) == true ? "key present" : "no key"]
                     .filter { !$0.isEmpty }.joined(separator: " · "),
-                connector: connector
+                connector: connector, status: str(r, "status"), fields: fields(r)
             )
         }
         + rows("memory", .memories) { r in
@@ -202,9 +339,49 @@ struct InventoryView: View {
                 category: .memories, name: str(r, "id", "name"), version: "",
                 path: str(r, "path", "source"),
                 detail: str(r, "description", "detail", "kind"),
-                connector: connector
+                connector: connector, status: str(r, "status"), fields: fields(r)
             )
         }
+    }
+
+    private static func summary(from doc: [String: Any]) -> InventoryConnectorSummary {
+        func arrayCount(_ key: String) -> Int { (doc[key] as? [Any])?.count ?? 0 }
+        let summary = doc["summary"] as? [String: Any]
+        let errors: Int = {
+            if let value = summary?["errors"] as? Int { return value }
+            return (doc["errors"] as? [Any])?.count ?? 0
+        }()
+        let connector = (doc["connector"] as? String) ?? (doc["claw_mode"] as? String) ?? "default"
+        let configFiles = doc["connector_config_files"] as? [String]
+        return InventoryConnectorSummary(
+            connector: connector,
+            version: (doc["version"] as? String) ?? "",
+            generatedAt: (doc["generated_at"] as? String) ?? "",
+            home: (doc["connector_home"] as? String) ?? (doc["claw_home"] as? String) ?? "",
+            config: configFiles?.first ?? (doc["openclaw_config"] as? String) ?? "",
+            live: (doc["live"] as? Bool) ?? false,
+            errors: errors,
+            counts: [
+                .skills: arrayCount("skills"), .plugins: arrayCount("plugins"), .mcps: arrayCount("mcp"),
+                .agents: arrayCount("agents"), .tools: arrayCount("tools"),
+                .providers: arrayCount("model_providers"), .memories: arrayCount("memory"),
+            ]
+        )
+    }
+
+    private static func fieldLabel(_ key: String) -> String {
+        key.split(separator: "_").map { $0.capitalized }.joined(separator: " ")
+    }
+
+    private static func displayValue(_ value: Any) -> String {
+        if let text = value as? String { return text }
+        if let number = value as? NSNumber { return number.stringValue }
+        if JSONSerialization.isValidJSONObject(value),
+           let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
+           let text = String(data: data, encoding: .utf8) {
+            return text
+        }
+        return String(describing: value)
     }
 }
 
@@ -860,7 +1037,13 @@ struct RegistriesView: View {
         error = nil
         status = nil
         Task {
-            let result = await appState.cli.run(arguments: arguments)
+            let result = await appState.runCommand(
+                title: arguments.prefix(3).joined(separator: " "),
+                arguments: arguments,
+                category: "registry",
+                origin: "Registries",
+                refreshOnSuccess: true
+            )
             if result.succeeded {
                 status = successMessage
                 appState.reloadConfig()

@@ -145,6 +145,71 @@ actor AuditStore {
         recentEvents(limit: limit, actionLike: ["block", "reject", "quarantine", "enforce"])
     }
 
+    func relatedEvents(target: String? = nil, runID: String? = nil, limit: Int = 20) -> [AuditEvent] {
+        guard tableExists("audit_events") else { return [] }
+        var conditions: [String] = []
+        var binds: [Any] = []
+        if let target, !target.isEmpty {
+            conditions.append("target = ?")
+            binds.append(target)
+        }
+        if let runID, !runID.isEmpty {
+            conditions.append("run_id = ?")
+            binds.append(runID)
+        }
+        guard !conditions.isEmpty else { return [] }
+        binds.append(limit)
+        return query(
+            "SELECT * FROM audit_events WHERE \(conditions.joined(separator: " AND ")) ORDER BY timestamp DESC LIMIT ?",
+            binds: binds
+        ).map(decodeAuditEvent)
+    }
+
+    func scanFindings(runID: String? = nil, target: String? = nil, limit: Int = 20) -> [ScanFindingEvent] {
+        guard tableExists("scan_results") else { return [] }
+        var conditions = ["raw_json IS NOT NULL", "raw_json != ''"]
+        var binds: [Any] = []
+        if let runID, !runID.isEmpty {
+            conditions.append("run_id = ?")
+            binds.append(runID)
+        } else if let target, !target.isEmpty {
+            conditions.append("target = ?")
+            binds.append(target)
+        }
+        binds.append(limit)
+        let rows = query(
+            "SELECT * FROM scan_results WHERE \(conditions.joined(separator: " AND ")) ORDER BY timestamp DESC LIMIT ?",
+            binds: binds
+        )
+        return rows.flatMap { row -> [ScanFindingEvent] in
+            guard let raw = row["raw_json"] as? String,
+                  let data = raw.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let findings = object["findings"] as? [[String: Any]]
+            else { return [] }
+            let scanID = (row["id"] as? String) ?? UUID().uuidString
+            let timestamp = DCDates.parse(row["timestamp"]) ?? .distantPast
+            let scanner = (row["scanner"] as? String) ?? ""
+            let scanTarget = (row["target"] as? String) ?? ""
+            let eventRunID = (row["run_id"] as? String) ?? ""
+            return findings.enumerated().map { index, finding in
+                ScanFindingEvent(
+                    id: "\(scanID)-\((finding["id"] as? String) ?? String(index))",
+                    timestamp: timestamp,
+                    scanner: (finding["scanner"] as? String) ?? scanner,
+                    target: scanTarget,
+                    title: (finding["title"] as? String) ?? "Finding \(index + 1)",
+                    detail: (finding["description"] as? String) ?? "",
+                    location: (finding["location"] as? String) ?? "",
+                    remediation: (finding["remediation"] as? String) ?? "",
+                    severity: Severity.parse(finding["severity"] as? String),
+                    runID: eventRunID,
+                    connector: (object["connector"] as? String) ?? ""
+                )
+            }
+        }
+    }
+
     /// The TUI's alert queue: db.py::list_alerts(500) loads the last 500
     /// non-ACK rows of ANY listed severity, and the panel then counts only
     /// the CRITICAL/HIGH/MEDIUM/LOW buckets in memory. Older severity-bearing
