@@ -1,4 +1,4 @@
-// Setup panel (spec §9.13): the 7 TUI wizards as data-driven native forms,
+// Setup panel (spec §9.13): TUI setup workflows as data-driven native forms,
 // each ending in a review step that shows the exact `defenseclaw setup …`
 // command before applying via CLIRunner. Plus a config editor for direct
 // PATCH /config/patch edits.
@@ -57,6 +57,9 @@ struct WizardDefinition: Identifiable {
     var commandBuilder: (([String: String], Bool) -> [[String]])? = nil
     /// Field delivered through stdin instead of argv (currently `keys set`).
     var secretInputField: String? = nil
+    /// Optional form validation. Returning a message keeps Review disabled and
+    /// surfaces the same requirement before invoking the CLI.
+    var validation: (([String: String]) -> String?)? = nil
     let fields: [WizardField]
 }
 
@@ -176,6 +179,10 @@ struct WizardSheet: View {
 
     private var cliCommands: [[String]] { buildCommands(maskSecrets: false) }
 
+    private var validationMessage: String? {
+        wizard.validation?(values)
+    }
+
     /// Gateway-applied wizards: one PATCH /config/patch per non-empty field.
     private var patchOperations: [(path: String, value: String, secure: Bool)] {
         guard let prefix = wizard.configPatchPrefix else { return [] }
@@ -241,6 +248,11 @@ struct WizardSheet: View {
                 }
             }
             .formStyle(.grouped)
+            if let validationMessage {
+                Label(validationMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(Cisco.red)
+            }
             Spacer()
             HStack {
                 Spacer()
@@ -249,6 +261,7 @@ struct WizardSheet: View {
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
                     .tint(Cisco.blue)
+                    .disabled(validationMessage != nil)
             }
         }
     }
@@ -395,7 +408,9 @@ struct WizardSheet: View {
                 if commands.count > 1 {
                     output += "$ defenseclaw \(arguments.joined(separator: " "))\n"
                 }
-                let secret = index == 0 ? wizard.secretInputField.flatMap { values[$0] } : nil
+                let secret = index == 0 ? wizard.secretInputField.flatMap { key in
+                    visibleFields.contains(where: { $0.key == key }) ? values[key] : nil
+                } : nil
                 let result = await appState.runCommand(
                     title: wizard.title,
                     binary: "defenseclaw",

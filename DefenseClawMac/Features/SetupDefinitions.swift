@@ -1,6 +1,6 @@
 import Foundation
 
-/// The twenty setup areas exposed by the DefenseClaw TUI. Definitions stay
+/// Setup areas exposed by the DefenseClaw TUI. Definitions stay
 /// data-driven so the native form, command review, and CLI execution use one
 /// source of truth.
 enum TUIWizards {
@@ -22,6 +22,7 @@ enum TUIWizards {
         aiDefense,
         llm,
         localObservability,
+        galileo,
         tokenRotation,
         customProviders,
         skillScanner,
@@ -163,8 +164,106 @@ enum TUIWizards {
         ]
     )
 
+    private static let galileo = WizardDefinition(
+        id: "galileo", title: "Galileo", icon: "chart.xyaxis.line",
+        blurb: "Send GenAI traces to Galileo Cloud or self-hosted Galileo without replacing local observability.",
+        baseArgs: ["setup", "galileo"],
+        commandBuilder: galileoCommands,
+        secretInputField: "secret",
+        validation: galileoValidation,
+        fields: [
+            WizardField(
+                key: "action",
+                label: "Action",
+                kind: .choice(options: ["cloud", "self-hosted", "status", "test", "enable", "disable", "remove"]),
+                defaultValue: "cloud",
+                help: "Cloud and self-hosted configure the named Galileo destination; other actions manage the existing destination."
+            ),
+            WizardField(
+                key: "project",
+                label: "Project",
+                kind: .text(placeholder: "Galileo project name or ID"),
+                defaultValue: "defenseclaw",
+                visibleWhen: (key: "action", equals: ["cloud", "self-hosted"])
+            ),
+            WizardField(
+                key: "logstream",
+                label: "Log stream",
+                kind: .text(placeholder: "Galileo Log stream name or ID"),
+                defaultValue: "production",
+                visibleWhen: (key: "action", equals: ["cloud", "self-hosted"])
+            ),
+            WizardField(
+                key: "console-url",
+                label: "Console URL",
+                kind: .text(placeholder: "https://console.galileo.example.com"),
+                visibleWhen: (key: "action", equals: ["self-hosted"]),
+                help: "DefenseClaw derives the API hostname and appends /otel/traces."
+            ),
+            WizardField(
+                key: "trace-endpoint",
+                label: "Exact trace endpoint",
+                kind: .text(placeholder: "https://api.example.com/galileo/otel/traces"),
+                visibleWhen: (key: "action", equals: ["self-hosted"]),
+                help: "Optional override for custom self-hosted hostname or path conventions."
+            ),
+            WizardField(
+                key: "secret",
+                label: "API key",
+                kind: .secure(placeholder: "Leave blank to use the existing GALILEO_API_KEY"),
+                visibleWhen: (key: "action", equals: ["cloud", "self-hosted"]),
+                help: "When supplied, the key is saved through hidden stdin and never included in command arguments or config.yaml."
+            ),
+            WizardField(
+                key: "persist-api-key",
+                label: "Persist inherited API key",
+                kind: .flagOnly,
+                defaultValue: "no",
+                visibleWhen: (key: "action", equals: ["cloud", "self-hosted"]),
+                help: "Copies GALILEO_API_KEY from the app environment into the owner-only DefenseClaw .env file."
+            ),
+            WizardField(
+                key: "enabled",
+                label: "Enable destination",
+                kind: .bool,
+                defaultValue: "yes",
+                visibleWhen: (key: "action", equals: ["cloud", "self-hosted"])
+            ),
+            WizardField(
+                key: "test-after",
+                label: "Test after setup",
+                kind: .bool,
+                defaultValue: "yes",
+                visibleWhen: (key: "action", equals: ["cloud", "self-hosted"]),
+                help: "Sends a canonical trace through the running gateway and waits for Galileo's OTLP acknowledgement."
+            ),
+            WizardField(
+                key: "json",
+                label: "JSON output",
+                kind: .flagOnly,
+                defaultValue: "no",
+                visibleWhen: (key: "action", equals: ["status"])
+            ),
+            WizardField(
+                key: "timeout",
+                label: "Test timeout (seconds)",
+                kind: .text(placeholder: "15"),
+                defaultValue: "15",
+                visibleWhen: (key: "action", equals: ["test"])
+            ),
+            WizardField(
+                key: "direct",
+                label: "Test Galileo directly",
+                kind: .flagOnly,
+                defaultValue: "no",
+                visibleWhen: (key: "action", equals: ["test"]),
+                help: "Troubleshooting only: bypasses gateway filtering, batching, and fan-out."
+            ),
+        ]
+    )
+
     private static let tokenRotation = WizardDefinition(
-        id: "token-rotation", title: "Token Rotation", icon: "arrow.triangle.2.circlepath.key",
+        id: "token-rotation", title: "Token Rotation", icon: "arrow.triangle.2.circlepath",
         blurb: "Rotate the gateway token and refresh connector hooks.",
         baseArgs: ["setup", "rotate-token"], commandBuilder: tokenRotationCommands,
         fields: [
@@ -481,6 +580,109 @@ enum TUIWizards {
             args.append("--yes")
         }
         return [args]
+    }
+
+    private static func galileoCommands(_ v: [String: String], _ mask: Bool) -> [[String]] {
+        let action = value(v, "action", "cloud")
+        switch action {
+        case "status":
+            var args = ["setup", "galileo", "status"]
+            flag(v, "json", "--json", to: &args)
+            return [args]
+        case "test":
+            var args = ["setup", "galileo", "test"]
+            append(v, "timeout", flag: "--timeout", to: &args, unless: "15")
+            flag(v, "direct", "--direct", to: &args)
+            return [args]
+        case "enable", "disable":
+            return [["setup", "galileo", action]]
+        case "remove":
+            return [["setup", "galileo", "remove", "--yes"]]
+        default:
+            var commands: [[String]] = []
+            if !value(v, "secret").isEmpty {
+                commands.append(["keys", "set", "GALILEO_API_KEY"])
+            }
+
+            var args = [
+                "setup", "galileo",
+                "--deployment", action,
+                "--project", value(v, "project"),
+                "--logstream", value(v, "logstream"),
+            ]
+            if action == "self-hosted" {
+                append(v, "console-url", flag: "--console-url", to: &args)
+                append(v, "trace-endpoint", flag: "--trace-endpoint", to: &args)
+            }
+            flag(v, "persist-api-key", "--persist-api-key", to: &args)
+            if !yes(v, "enabled") { args.append("--disabled") }
+            args.append("--non-interactive")
+            commands.append(args)
+
+            if yes(v, "enabled") && yes(v, "test-after") {
+                commands.append(["setup", "galileo", "test"])
+            }
+            return commands
+        }
+    }
+
+    private static func galileoValidation(_ v: [String: String]) -> String? {
+        let action = value(v, "action", "cloud")
+        if action == "cloud" || action == "self-hosted" {
+            let project = value(v, "project").trimmingCharacters(in: .whitespacesAndNewlines)
+            let logstream = value(v, "logstream").trimmingCharacters(in: .whitespacesAndNewlines)
+            if project.isEmpty { return "A Galileo project name or ID is required." }
+            if logstream.isEmpty { return "A Galileo Log stream name or ID is required." }
+            if project.count > 512 || logstream.count > 512 {
+                return "Project and Log stream values must be 512 characters or fewer."
+            }
+            let invalidRoutingCharacter: (Unicode.Scalar) -> Bool = {
+                $0.value < 0x20 || $0.value == 0x7F
+            }
+            if project.contains("$") || logstream.contains("$")
+                || project.unicodeScalars.contains(where: invalidRoutingCharacter)
+                || logstream.unicodeScalars.contains(where: invalidRoutingCharacter) {
+                return "Project and Log stream values cannot contain '$' or control characters."
+            }
+            if action == "self-hosted" {
+                let consoleURL = value(v, "console-url")
+                let traceEndpoint = value(v, "trace-endpoint")
+                if consoleURL.isEmpty && traceEndpoint.isEmpty {
+                    return "Enter a self-hosted console URL or an exact trace endpoint."
+                }
+                if !traceEndpoint.isEmpty {
+                    if !isCredentialFreeHTTPSURL(traceEndpoint) {
+                        return "The exact trace endpoint must be credential-free HTTPS without a query or fragment."
+                    }
+                } else {
+                    guard isCredentialFreeHTTPSURL(consoleURL),
+                          let host = URLComponents(string: consoleURL)?.host else {
+                        return "The Galileo console URL must be credential-free HTTPS."
+                    }
+                    if host != "console" && !host.hasPrefix("console.") && !host.hasPrefix("console-") {
+                        return "The console hostname must start with console. or console-; otherwise use an exact trace endpoint."
+                    }
+                }
+            }
+        } else if action == "test" {
+            guard let timeout = Double(value(v, "timeout", "15")), timeout > 0 else {
+                return "Test timeout must be a positive number."
+            }
+        }
+        return nil
+    }
+
+    private static func isCredentialFreeHTTPSURL(_ value: String) -> Bool {
+        guard let components = URLComponents(string: value),
+              components.scheme == "https",
+              components.host?.isEmpty == false,
+              components.user == nil,
+              components.password == nil,
+              components.query == nil,
+              components.fragment == nil else {
+            return false
+        }
+        return true
     }
 
     private static func tokenRotationCommands(_ v: [String: String], _ mask: Bool) -> [[String]] {

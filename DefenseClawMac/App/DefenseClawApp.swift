@@ -79,6 +79,12 @@ struct DefenseClawApp: App {
                     }
                 }
             }
+            CommandGroup(replacing: .help) {
+                Link(
+                    "DefenseClaw Help",
+                    destination: URL(string: "https://cisco-ai-defense.github.io/defenseclaw/docs/")!
+                )
+            }
         }
 
         MenuBarExtra {
