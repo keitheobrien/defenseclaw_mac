@@ -54,6 +54,7 @@ actor CLIRunner {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/which")
         proc.arguments = [name]
+        proc.environment = Self.subprocessEnvironment()
         let pipe = Pipe()
         proc.standardOutput = pipe
         proc.standardError = Pipe()
@@ -62,6 +63,40 @@ actor CLIRunner {
         let out = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return proc.terminationStatus == 0 && !out.isEmpty ? out : nil
+    }
+
+    /// Finder/LaunchServices apps do not inherit the user's interactive shell
+    /// PATH. Preserve any path supplied by the parent process, then add the
+    /// standard macOS package-manager and Docker Desktop locations used by the
+    /// DefenseClaw CLI and its helper tools.
+    static func subprocessEnvironment(
+        inheriting environment: [String: String] = ProcessInfo.processInfo.environment,
+        home: String = FileManager.default.homeDirectoryForCurrentUser.path
+    ) -> [String: String] {
+        var result = environment
+        let inherited = (environment["PATH"] ?? "")
+            .split(separator: ":")
+            .map(String.init)
+        let fallbacks = [
+            "\(home)/.local/bin",
+            "\(home)/bin",
+            "\(home)/.docker/bin",
+            "/opt/homebrew/bin",
+            "/opt/homebrew/sbin",
+            "/usr/local/bin",
+            "/usr/local/sbin",
+            "/Applications/Docker.app/Contents/Resources/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+        ]
+        var seen = Set<String>()
+        let merged = (inherited + fallbacks).filter { directory in
+            !directory.isEmpty && seen.insert(directory).inserted
+        }
+        result["PATH"] = merged.joined(separator: ":")
+        return result
     }
 
     /// Runs `defenseclaw <args>`, streaming combined output lines to `onLine`.
@@ -90,7 +125,7 @@ actor CLIRunner {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: binary)
         proc.arguments = arguments
-        var env = ProcessInfo.processInfo.environment
+        var env = Self.subprocessEnvironment()
         env["NO_COLOR"] = "1"
         proc.environment = env
 
