@@ -491,7 +491,7 @@ enum TUIWizards {
     )
 
     private static let trustedPaths = WizardDefinition(
-        id: "trusted-paths", title: "Trusted Paths", icon: "folder.badge.checkmark",
+        id: "trusted-paths", title: "Trusted Paths", icon: "checkmark.shield",
         blurb: "List, add, or remove trusted connector-binary discovery prefixes.",
         baseArgs: ["setup", "trusted-paths"], commandBuilder: trustedPathCommands,
         fields: [
