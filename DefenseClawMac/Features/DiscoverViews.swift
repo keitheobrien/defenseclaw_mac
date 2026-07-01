@@ -15,6 +15,7 @@ struct InventoryView: View {
     @State private var selectedID: String?
     @State private var scanning = false
     @State private var error: String?
+    @State private var warning: String?
     @State private var lastScan: Date?
 
     private var category: InventoryCategory? {
@@ -78,6 +79,12 @@ struct InventoryView: View {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .font(.caption)
                     .foregroundStyle(Cisco.red)
+                    .padding(6)
+            }
+            if let warning {
+                Label(warning, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(Cisco.orange)
                     .padding(6)
             }
             if tab == "Summary" {
@@ -226,6 +233,7 @@ struct InventoryView: View {
         scanning = true
         appState.scanInFlight = true
         error = nil
+        warning = nil
         Task {
             let result = await appState.runCommand(
                 title: "Scan inventory",
@@ -238,18 +246,17 @@ struct InventoryView: View {
                 scanning = false
                 appState.scanInFlight = false
             }
-            guard result.succeeded,
-                  let jsonStart = result.output.firstIndex(of: "["),
-                  let data = String(result.output[jsonStart...]).data(using: .utf8),
-                  let docs = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
-            else {
-                error = result.succeeded
-                    ? "Could not parse `aibom scan --json` output."
-                    : "aibom scan failed (exit \(result.exitCode)). \(String(result.output.suffix(200)))"
+            guard result.succeeded else {
+                error = "aibom scan failed (exit \(result.exitCode)). \(String(result.output.suffix(200)))"
                 return
             }
-            items = docs.flatMap(Self.rows(from:))
-            summaries = docs.map(Self.summary(from:))
+            guard let parsed = InventoryOutputParser.parse(result.output) else {
+                error = "Could not parse `aibom scan --json` output."
+                return
+            }
+            items = parsed.documents.flatMap(Self.rows(from:))
+            summaries = parsed.documents.map(Self.summary(from:))
+            warning = parsed.diagnostics.nonEmpty
             lastScan = Date()
         }
     }
