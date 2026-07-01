@@ -25,10 +25,40 @@ enum ScannerProbe {
         binDirs.contains { FileManager.default.isExecutableFile(atPath: "\($0)/\(name)") }
     }
 
-    /// Gateway-required credential names the CLI doctor checks. The legacy
-    /// OPENCLAW_GATEWAY_TOKEN is the one `defenseclaw doctor` reports as
-    /// "required by gateway", independent of the connector's own token_env.
-    private static let requiredKeys = ["OPENCLAW_GATEWAY_TOKEN"]
+    private static let openClawGatewayToken = "OPENCLAW_GATEWAY_TOKEN"
+
+    /// Mirrors DefenseClaw credentials._openclaw_gateway_token: the upstream
+    /// OpenClaw token is required only when OpenClaw is configured. Legacy
+    /// configs without connector information retain the historical OpenClaw
+    /// default and therefore still require it.
+    static func requiresOpenClawGatewayToken(config: DefenseClawConfig) -> Bool {
+        if !config.connectors.isEmpty {
+            return config.connectors.contains { normalizedConnector($0) == "openclaw" }
+        }
+
+        if let connector = nonEmpty(config.raw["guardrail.connector"]?.string) {
+            return normalizedConnector(connector) == "openclaw"
+        }
+
+        if let mode = nonEmpty(config.raw["claw.mode"]?.string) {
+            return normalizedConnector(mode) == "openclaw"
+        }
+
+        return true
+    }
+
+    private static func normalizedConnector(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "")
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty
+        else { return nil }
+        return value
+    }
 
     private static func dotEnvNames() -> Set<String> {
         let url = ConfigStore.dataDirectory.appendingPathComponent(".env")
@@ -47,7 +77,10 @@ enum ScannerProbe {
     }
 
     /// Missing required gateway credentials (env or ~/.defenseclaw/.env).
-    static func missingKeys() -> [String] {
+    static func missingKeys(config: DefenseClawConfig) -> [String] {
+        let requiredKeys = requiresOpenClawGatewayToken(config: config)
+            ? [openClawGatewayToken]
+            : []
         let env = ProcessInfo.processInfo.environment
         let dotenv = dotEnvNames()
         return requiredKeys.filter { name in
@@ -82,7 +115,7 @@ enum ScannerProbe {
                           level: running ? .active : .warn))
 
         // keys: required gateway credentials.
-        let missing = missingKeys()
+        let missing = missingKeys(config: config)
         if missing.isEmpty {
             rows.append(.init(name: "keys", detail: "all required set", level: .active))
         } else {
