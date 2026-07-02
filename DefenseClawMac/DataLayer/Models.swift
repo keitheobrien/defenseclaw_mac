@@ -251,13 +251,31 @@ struct ScanFindingEvent: Identifiable, Sendable, Hashable {
 struct EgressEvent: Identifiable, Sendable, Hashable {
     var id: String
     var timestamp: Date
-    var target: String
+    var target: String        // egress.target_host
     var decision: String
     var reason: String
     var looksLikeLLM: Bool
     var branch: String
     var severity: Severity
     var connector: String = ""
+    var targetPath: String = ""   // egress.target_path
+    var bodyShape: String = ""    // egress.body_shape
+    var source: String = ""       // egress.source
+
+    /// The TUI's synthetic egress detail line (alerts.synthetic_egress_event).
+    var detailLine: String {
+        var parts = [
+            "host=\(target.isEmpty ? "(unknown)" : target)",
+            "path=\(targetPath)",
+            "branch=\(branch)",
+            "decision=\(decision)",
+            "shape=\(bodyShape)",
+            "looks_like_llm=\(looksLikeLLM)",
+            "source=\(source)",
+        ]
+        if !reason.isEmpty { parts.append("reason=\(reason)") }
+        return parts.joined(separator: " ")
+    }
 }
 
 /// A scan summary block grouped by scan_id from gateway.jsonl — the unit the
@@ -346,7 +364,7 @@ enum AlertRow: Identifiable, Hashable {
             ([e.scanner, "\(e.findingCount) finding(s)"] + e.findingTitles.prefix(2))
                 .filter { !$0.isEmpty }.joined(separator: " · ")
         case .finding(let e): [e.title, e.detail].filter { !$0.isEmpty }.joined(separator: " — ")
-        case .egress(let e): e.reason
+        case .egress(let e): e.detailLine
         }
     }
     var runID: String {

@@ -18,7 +18,10 @@ enum CatalogCLI {
         return groups.map { group, row in
             let connector = string(row["connector"]).nonEmpty ?? group
             let name = string(row["name"])
-            let status = string(row["status"]).nonEmpty ?? "inactive"
+            let status = effectiveStatus(
+                raw: string(row["status"]).nonEmpty ?? "inactive",
+                actions: stringDict(row["actions"])
+            )
             return SkillItem(
                 key: connector.isEmpty ? name : "\(connector)/\(name)",
                 name: name,
@@ -41,7 +44,12 @@ enum CatalogCLI {
             let endpoint = string(row["server_url"]).nonEmpty
                 ?? string(row["url"]).nonEmpty
                 ?? string(row["command"])
-            let status = string(row["status"]).nonEmpty ?? "active"
+            // `mcp list --json` rows carry NO status field — governance state
+            // lives solely in the actions dict (cmd_mcp._mcp_list_json_items).
+            let status = effectiveStatus(
+                raw: string(row["status"]).nonEmpty ?? "active",
+                actions: stringDict(row["actions"])
+            )
             return MCPItem(
                 name: string(row["name"]),
                 transport: string(row["transport"]).nonEmpty ?? (endpoint.hasPrefix("http") ? "http" : "stdio"),
@@ -162,6 +170,31 @@ enum CatalogCLI {
         case "blocked", "block": .block
         case "allowed", "allow": .allow
         default: .observe
+        }
+    }
+
+    /// Effective governance state for the Status column and action menus,
+    /// mirroring the CLI's `_skill_status_display` precedence: the raw roster
+    /// status (disabled flag / allowlist block) wins, then explicit action
+    /// entries in `compute_verdict` order — quarantine > block > disable >
+    /// allow. Skills' raw status is only disabled/blocked/active/inactive and
+    /// MCP rows have no raw status at all, so quarantined/allowed can ONLY
+    /// come from the actions dict.
+    private static func effectiveStatus(raw: String, actions: [String: String]) -> String {
+        let rawStatus = raw.lowercased()
+        if rawStatus == "disabled" || rawStatus == "blocked" { return rawStatus }
+        if actions["file"] == "quarantine" { return "quarantined" }
+        if actions["install"] == "block" { return "blocked" }
+        if actions["runtime"] == "disable" { return "disabled" }
+        if actions["install"] == "allow" { return "allowed" }
+        return raw
+    }
+
+    private static func stringDict(_ value: Any?) -> [String: String] {
+        guard let value = value as? [String: Any] else { return [:] }
+        return value.reduce(into: [:]) { result, item in
+            let text = string(item.value)
+            if !text.isEmpty { result[item.key] = text }
         }
     }
 }

@@ -22,8 +22,14 @@ struct LogsView: View {
     /// tail updates never yank the view away from what the user is reading.
     @State private var isAtBottom = true
 
-    private static let actionOptions = ["all", "block", "allow", "reject", "scan", "verdict", "hook"]
-    private static let eventTypeOptions = ["all", "lifecycle", "audit", "scan", "hook", "egress", "skill", "mcp", "plugin"]
+    // Superset of the TUI's Verdicts-stream chips (ACTION_FILTERS: block/alert/
+    // confirm/allow; EVENT_TYPE_FILTERS: verdict/judge/lifecycle/error/
+    // diagnostic/scan/scan_finding/activity) plus the hook/audit extras the
+    // Mac's shared filter serves across all four stream tabs.
+    private static let actionOptions = ["all", "block", "alert", "confirm", "allow", "reject", "scan", "hook"]
+    private static let eventTypeOptions = ["all", "verdict", "judge", "lifecycle", "error", "diagnostic",
+                                           "scan", "scan_finding", "activity", "audit", "hook", "egress",
+                                           "skill", "mcp", "plugin"]
 
     private func applyFilter() {
         let query = search.lowercased()
@@ -32,7 +38,13 @@ struct LogsView: View {
             guard preset.matches(row) else { return false }
             if let severityFloor, row.severity < severityFloor { return false }
             if actionFilter != "all", !row.action.lowercased().contains(actionFilter) { return false }
-            if eventTypeFilter != "all", !row.eventType.lowercased().contains(eventTypeFilter) { return false }
+            // "scan" must not swallow "scan_finding" — those are distinct
+            // TUI event-type chips; everything else keeps fuzzy matching.
+            if eventTypeFilter == "scan" {
+                if row.eventType.lowercased() != "scan" { return false }
+            } else if eventTypeFilter != "all", !row.eventType.lowercased().contains(eventTypeFilter) {
+                return false
+            }
             if !query.isEmpty, !row.message.lowercased().contains(query),
                !row.rawJSON.lowercased().contains(query) { return false }
             return true

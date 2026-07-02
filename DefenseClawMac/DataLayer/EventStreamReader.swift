@@ -328,33 +328,56 @@ actor EventStreamReader {
                 connector: connector.isEmpty ? ConnectorAttribution.fromTarget(findingTarget) : connector
             ))
         case "activity":
-            let before = jsonString(obj["before_json"] ?? obj["before"])
-            let after = jsonString(obj["after_json"] ?? obj["after"])
+            // Mutation fields are nested under "activity" (gateway_events.py
+            // load_gateway_activity); top level is a fallback for older rows.
+            let act = (obj["activity"] as? [String: Any]) ?? obj
+            let before = jsonString(act["before_json"] ?? act["before"] ?? obj["before_json"] ?? obj["before"])
+            var after = jsonString(act["after_json"] ?? act["after"] ?? obj["after_json"] ?? obj["after"])
+            if before.isEmpty, after.isEmpty,
+               let diff = act["diff"] as? [[String: Any]], !diff.isEmpty {
+                after = jsonString(diff) // JSON-patch style op/path entries
+            }
             delta.activity.append(ActivityMutation(
                 id: nextID(obj, "activity"),
                 timestamp: ts,
-                actor: (obj["actor"] as? String) ?? "system",
-                action: action.isEmpty ? eventType : action,
-                targetType: (obj["target_type"] as? String) ?? "",
-                targetID: (obj["target_id"] as? String) ?? target,
-                reason: (obj["reason"] as? String) ?? details,
-                versionFrom: String(describing: obj["version_from"] ?? ""),
-                versionTo: String(describing: obj["version_to"] ?? ""),
+                actor: firstString(act["actor"], obj["actor"], "system"),
+                action: firstString(act["action"], action, eventType),
+                targetType: firstString(act["target_type"], obj["target_type"]),
+                targetID: firstString(act["target_id"], obj["target_id"], target),
+                reason: firstString(act["reason"], obj["reason"], details),
+                versionFrom: firstString(act["version_from"], obj["version_from"]),
+                versionTo: firstString(act["version_to"], obj["version_to"]),
                 beforeJSON: before,
                 afterJSON: after,
                 connector: connector
             ))
         case "egress":
+            // Egress fields are nested under "egress"; the TUI's
+            // load_gateway_egress skips rows without that dict, and its
+            // synthetic_egress_event derives severity purely from
+            // decision/branch/shape — the envelope's top-level severity is
+            // deliberately ignored, so ours must be too.
+            guard let egress = obj["egress"] as? [String: Any] else { break }
+            let decision = firstString(egress["decision"])
+            let branch = firstString(egress["branch"])
+            let looksLikeLLM = (egress["looks_like_llm"] as? Bool) ?? false
+            // WARNING (-> MEDIUM bucket) for blocked or LLM-shaped bypass
+            // traffic; everything else INFO.
+            let synthesized: Severity = (decision == "block" || (branch == "shape" && looksLikeLLM))
+                ? .medium : .info
             delta.egress.append(EgressEvent(
                 id: nextID(obj, "egress"),
                 timestamp: ts,
-                target: target.isEmpty ? ((obj["hostname"] as? String) ?? "") : target,
-                decision: (obj["decision"] as? String) ?? action,
-                reason: (obj["reason"] as? String) ?? details,
-                looksLikeLLM: (obj["looks_like_llm"] as? Bool) ?? false,
-                branch: (obj["branch"] as? String) ?? "",
-                severity: severity,
-                connector: connector
+                target: firstString(egress["target_host"]),
+                decision: decision,
+                reason: firstString(egress["reason"]),
+                looksLikeLLM: looksLikeLLM,
+                branch: branch,
+                severity: synthesized,
+                connector: connector,
+                targetPath: firstString(egress["target_path"]),
+                bodyShape: firstString(egress["body_shape"]),
+                source: firstString(egress["source"])
             ))
         default:
             break
@@ -408,6 +431,16 @@ actor EventStreamReader {
         var activityTarget = ""
         var versionFrom = ""
         var versionTo = ""
+        // verdict / judge payloads (gateway_log_views._with_verdict/_with_judge)
+        var stage = ""
+        var direction = ""
+        var model = ""
+        var reason = ""
+        var categories: [String] = []
+        var latencyMs = 0
+        var judgeKind = ""
+        var judgeInputBytes = 0
+        var judgeParseError = ""
     }
 
     private func parseLogFields(_ obj: [String: Any], rowType: String) -> ParsedLogFields {
@@ -420,12 +453,16 @@ actor EventStreamReader {
         let error = obj["error"] as? [String: Any]
         let diagnostic = obj["diagnostic"] as? [String: Any]
         let activity = obj["activity"] as? [String: Any]
+        let verdict = obj["verdict"] as? [String: Any]
+        let judge = obj["judge"] as? [String: Any]
 
         let eventType = firstString(
             obj["event_type"], obj["event"], obj["type"], obj["row_type"], rowType
         )
-        let action = firstString(
+        var action = firstString(
             obj["action"],
+            verdict?["action"],
+            judge?["action"],
             lifecycleDetails?["action"],
             audit?["action"],
             payload?["action"],
@@ -434,6 +471,10 @@ actor EventStreamReader {
             error?["code"],
             activity?["action"]
         )
+        // _with_scan/_with_scan_finding force action="scan"/"finding" so the
+        // Verdicts action filter can select them; finding wins when both exist.
+        if scan != nil { action = "scan" }
+        if finding != nil { action = "finding" }
         let target = firstString(
             obj["target"],
             lifecycleDetails?["target"],
@@ -484,7 +525,7 @@ actor EventStreamReader {
             subsystem: firstString(lifecycle?["subsystem"], obj["subsystem"], payload?["subsystem"]),
             transition: firstString(lifecycle?["transition"], obj["transition"], payload?["transition"]),
             scanner: firstString(scan?["scanner"], finding?["scanner"], obj["scanner"]),
-            verdict: firstString(scan?["verdict"], obj["verdict"], payload?["verdict"]),
+            verdict: firstString(scan?["verdict"], obj["verdict"] as? String, payload?["verdict"]),
             findingTitle: firstString(finding?["title"], obj["title"]),
             findingRuleID: firstString(finding?["rule_id"], obj["rule_id"]),
             findingLocation: firstString(finding?["location"], obj["location"]),
@@ -498,12 +539,55 @@ actor EventStreamReader {
             activityAction: firstString(activity?["action"]),
             activityTarget: activityTarget(activity),
             versionFrom: firstString(activity?["version_from"]),
-            versionTo: firstString(activity?["version_to"])
+            versionTo: firstString(activity?["version_to"]),
+            stage: firstString(verdict?["stage"]),
+            direction: firstString(obj["direction"]),
+            model: firstString(obj["model"]),
+            reason: firstString(verdict?["reason"]),
+            categories: ((verdict?["categories"] as? [Any]) ?? []).map { firstString($0) },
+            latencyMs: firstInt(verdict?["latency_ms"], judge?["latency_ms"], scan?["duration_ms"]) ?? 0,
+            judgeKind: firstString(judge?["kind"]),
+            judgeInputBytes: firstInt(judge?["input_bytes"]) ?? 0,
+            judgeParseError: firstString(judge?["parse_error"])
         )
     }
 
     private func displayMessage(for row: ParsedLogFields, severity: Severity, raw: String) -> String {
         switch row.eventType {
+        case "verdict":
+            // TUI: VERDICT <ACTION> <SEV> <stage> <dir> <model> -- <reason> [cats] (Nms)
+            var suffix = truncateLogText(row.reason, limit: 100)
+            if !row.categories.isEmpty {
+                // trim_categories: first 2, then a "+Nmore" overflow marker.
+                var cats = Array(row.categories.prefix(2))
+                if row.categories.count > 2 { cats.append("+\(row.categories.count - 2)more") }
+                suffix += " [" + cats.joined(separator: ",") + "]"
+            }
+            if row.latencyMs > 0 { suffix += " (\(row.latencyMs)ms)" }
+            return joinedWords(
+                "VERDICT",
+                nonEmpty(row.action, "none").uppercased(),
+                severity.rawValue.uppercased(),
+                nonEmpty(row.stage, "-"),
+                nonEmpty(row.direction, "-"),
+                nonEmpty(row.model, "-"),
+                "--",
+                suffix.trimmingCharacters(in: .whitespaces)
+            )
+        case "judge":
+            // TUI: JUDGE <ACTION> <SEV> kind= dir= model= in=NB Nms parse=error
+            var suffix = ""
+            if row.judgeInputBytes > 0 { suffix += " in=\(row.judgeInputBytes)B" }
+            if row.latencyMs > 0 { suffix += " \(row.latencyMs)ms" }
+            if !row.judgeParseError.isEmpty { suffix += " parse=error" }
+            return joinedWords(
+                "JUDGE",
+                nonEmpty(row.action, "none").uppercased(),
+                severity.rawValue.uppercased(),
+                "kind=\(nonEmpty(row.judgeKind, "-"))",
+                "dir=\(nonEmpty(row.direction, "-"))",
+                "model=\(nonEmpty(row.model, "-"))" + suffix
+            )
         case "lifecycle":
             if row.lifecycleDetails["action"] == "connector-hook" {
                 return renderHookLifecycleLine(row, severity: severity)

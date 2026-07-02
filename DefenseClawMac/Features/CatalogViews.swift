@@ -543,7 +543,13 @@ private struct CatalogStatusLabel: View {
 
     var body: some View {
         let decision = verdict.lowercased()
-        let value = !verdict.isEmpty && verdict != "-" && decision != "clean" ? verdict : (status.nonEmpty ?? "unknown")
+        // Raw roster state outranks the verdict (CLI _skill_status_display):
+        // a disabled/blocked item stays "disabled"/"blocked" even when an
+        // install=allow action would compute an "allowed" verdict.
+        let rawState = status.lowercased()
+        let value = ["disabled", "blocked", "quarantined"].contains(rawState)
+            ? status
+            : (!verdict.isEmpty && verdict != "-" && decision != "clean" ? verdict : (status.nonEmpty ?? "unknown"))
         Label(value.capitalized, systemImage: icon(value))
             .font(.caption)
             .foregroundStyle(color(value))

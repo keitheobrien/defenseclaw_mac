@@ -24,7 +24,9 @@ struct AlertsView: View {
                 return false
             }
             if !search.isEmpty {
-                let hay = "\(row.action) \(row.target) \(row.details)".lowercased()
+                // kind included so "egress"/"scan" find their rows — the TUI's
+                // synthetic events carry the kind in the action field.
+                let hay = "\(row.kind) \(row.action) \(row.target) \(row.details)".lowercased()
                 if !hay.contains(search.lowercased()) { return false }
             }
             return true
