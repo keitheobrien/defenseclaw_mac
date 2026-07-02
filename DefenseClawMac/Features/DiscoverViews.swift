@@ -5,6 +5,16 @@ import Charts
 
 // MARK: - Inventory
 
+/// Toolbar connector-scope picker for the Inventory panel — same shared
+/// filter as the catalogs and signal panels; hidden on single-connector.
+private struct InventoryConnectorChip: View {
+    @Environment(AppState.self) private var appState
+    var body: some View {
+        @Bindable var state = appState
+        ConnectorFilterChip(names: appState.activeConnectorNames, selection: $state.connectorFilter)
+    }
+}
+
 struct InventoryView: View {
     @Environment(AppState.self) private var appState
     @State private var tab = "Summary"
@@ -26,6 +36,7 @@ struct InventoryView: View {
         guard let category else { return [] }
         return items.filter { item in
             guard item.category == category else { return false }
+            guard appState.connectorFilterAllows(item.connector) else { return false }
             let state = "\(item.status) \(item.verdict) \(item.detail)".lowercased()
             if statusFilter != "all", !state.contains(statusFilter) { return false }
             guard !search.isEmpty else { return true }
@@ -33,6 +44,18 @@ struct InventoryView: View {
             return "\(item.name) \(item.path) \(item.connector) \(fields)"
                 .localizedCaseInsensitiveContains(search)
         }
+    }
+
+    /// Summary rows honoring the shared filter — a selected connector shows
+    /// its own snapshot only (TUI _summary_inventory behavior).
+    private var scopedSummaries: [InventoryConnectorSummary] {
+        summaries.filter { appState.connectorFilterAllows($0.connector) }
+    }
+
+    /// Items visible under the shared filter (for the Summary stat cards and
+    /// segmented tab counts).
+    private var scopedItems: [InventoryItem] {
+        items.filter { appState.connectorFilterAllows($0.connector) }
     }
 
     private var selectedItem: InventoryItem? {
@@ -54,7 +77,7 @@ struct InventoryView: View {
                 Picker("View", selection: $tab) {
                     Text("Summary").tag("Summary")
                     ForEach(InventoryCategory.allCases) { category in
-                        Text("\(category.rawValue) (\(items.filter { $0.category == category }.count))")
+                        Text("\(category.rawValue) (\(scopedItems.filter { $0.category == category }.count))")
                             .tag(category.rawValue)
                     }
                 }
@@ -145,6 +168,7 @@ struct InventoryView: View {
         .searchable(text: $search, placement: .toolbar, prompt: "Search inventory")
         .toolbar {
             ToolbarItemGroup {
+                InventoryConnectorChip()
                 Button {
                     scan()
                 } label: {
@@ -164,20 +188,20 @@ struct InventoryView: View {
     private var summaryView: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
-                StatCard(title: "Total Items", value: "\(items.count)", tint: Cisco.blue)
-                StatCard(title: "Tools", value: "\(items.filter { $0.category == .tools }.count)", tint: Cisco.green)
-                StatCard(title: "Connectors", value: "\(summaries.count)", tint: .secondary)
-                StatCard(title: "Errors", value: "\(summaries.reduce(0) { $0 + $1.errors })",
-                         tint: summaries.contains { $0.errors > 0 } ? Cisco.red : .secondary)
+                StatCard(title: "Total Items", value: "\(scopedItems.count)", tint: Cisco.blue)
+                StatCard(title: "Tools", value: "\(scopedItems.filter { $0.category == .tools }.count)", tint: Cisco.green)
+                StatCard(title: "Connectors", value: "\(scopedSummaries.count)", tint: .secondary)
+                StatCard(title: "Errors", value: "\(scopedSummaries.reduce(0) { $0 + $1.errors })",
+                         tint: scopedSummaries.contains { $0.errors > 0 } ? Cisco.red : .secondary)
             }
-            if summaries.isEmpty {
+            if scopedSummaries.isEmpty {
                 DCEmptyState(
                     title: scanning ? "Scanning inventory..." : "No inventory snapshot",
                     message: "Run Rescan All to collect the per-connector AIBOM summary.",
                     systemImage: "shippingbox"
                 )
             } else {
-                Table(summaries) {
+                Table(scopedSummaries) {
                     TableColumn("Connector", value: \.connector)
                     TableColumn("Total") { Text("\($0.total)") }.width(55)
                     TableColumn("Skills") { Text("\($0.counts[.skills, default: 0])") }.width(55)

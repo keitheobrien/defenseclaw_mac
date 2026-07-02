@@ -14,6 +14,9 @@ struct DefenseClawConfig: Sendable {
     var connectors: [String] = []
     var connectorModes: [String: String] = [:]
     var connectorRulePacks: [String: String] = [:]
+    /// Connectors whose guardrail is explicitly killed
+    /// (guardrail.connectors.<name>.enabled: false) — TUI effective_enabled.
+    var connectorDisabled: Set<String> = []
     var guardrailEnabled = false
     var guardrailMode: String?
     var guardrailPort: Int?
@@ -287,6 +290,10 @@ actor ConfigStore {
                 c.connectorModes[name] = fields["mode"]?.string ?? ""
                 if let packDir = fields["rule_pack_dir"]?.string, !packDir.isEmpty {
                     c.connectorRulePacks[name] = (packDir as NSString).lastPathComponent
+                }
+                // Only an explicit false disables (default true).
+                if fields["enabled"]?.bool == false {
+                    c.connectorDisabled.insert(name)
                 }
             }
         }

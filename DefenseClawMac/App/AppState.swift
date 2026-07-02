@@ -128,6 +128,9 @@ final class AppState {
     /// Connector filter shared by Alerts/Audit/Logs/Activity ("" = All),
     /// the multi-connector equivalent of the TUI's connector-filter chip.
     var connectorFilter: String = ""
+    /// Latest audit-derived per-connector stats (pulse-fed) — the fallback
+    /// source for scoped metrics when /health has no row for a connector.
+    var connectorStatsCache: [String: AuditStore.ConnectorStats] = [:]
     var alertPanelRequest: AlertPanelRequest?
     var auditPresetRequest: String?
     var logPanelRequest: LogPanelRequest?
@@ -201,6 +204,7 @@ final class AppState {
             // audit-derived activity (hook connectors deliver calls
             // out-of-band, so /health counters can sit at zero).
             let stats = await audit.connectorStats()
+            connectorStatsCache = stats
             for i in snap.connectors.indices {
                 let name = snap.connectors[i].name
                 snap.connectors[i].mode = config.connectorModes[name]
@@ -214,6 +218,14 @@ final class AppState {
                 }
             }
             health = snap
+            // normalize_filter parity: a torn-down connector or a
+            // single-connector roster silently falls back to All so the app
+            // can never stay trapped in a filter with no chrome to clear it.
+            let names = activeConnectorNames
+            if !connectorFilter.isEmpty,
+               names.count <= 1 || !names.contains(where: { $0.lowercased() == connectorFilter.lowercased() }) {
+                connectorFilter = ""
+            }
             if !gatewayReachable, wasReachable == false, notifyGatewayOffline {
                 notify(title: "DefenseClaw gateway recovered",
                        body: "Gateway is reachable again on port \(config.gatewayPort).", id: "gw-recovered-\(Date().timeIntervalSince1970)")
@@ -708,8 +720,12 @@ final class AppState {
             ServiceStatus(key: "watchdog", name: "Watchdog", state: state("watcher"), detail: watchdogDetail),
             ServiceStatus(key: "guardrail", name: "Guardrail", state: state("guardrail"), detail: guardrailDetail),
             ServiceStatus(key: "api", name: "API", state: state("api"), detail: sub("api")?.details["addr"] ?? ""),
-            ServiceStatus(key: "sinks", name: "Sinks", state: state("sinks"), detail: ""),
-            ServiceStatus(key: "telemetry", name: "Telemetry", state: state("telemetry"), detail: ""),
+            // Deliberate Mac extra: the TUI leaves the Sinks detail empty,
+            // but the /health summary ("1 of 1 enabled") is worth showing.
+            ServiceStatus(key: "sinks", name: "Sinks", state: state("sinks"),
+                          detail: sub("sinks")?.details["summary"] ?? ""),
+            ServiceStatus(key: "telemetry", name: "Telemetry", state: state("telemetry"),
+                          detail: health.telemetryDetail),
             ServiceStatus(key: "ai_discovery", name: "AI Discovery", state: state("ai_discovery"), detail: aiDetail),
             ServiceStatus(key: "sandbox", name: "Sandbox", state: state("sandbox"), detail: ""),
         ]
@@ -722,6 +738,12 @@ final class AppState {
     /// Policy posture / Enforcement / Human approval / Environment / dirs / LLM
     /// / AI Defense).
     var configurationRows: [ConfigurationRow] {
+        // Connector selected via the shared filter: the box narrows to that
+        // connector's rows (TUI _connector_configuration_lines), with the
+        // machine-wide settings suffixed "(global)".
+        if !connectorFilter.isEmpty {
+            return connectorConfigurationRows(connectorFilter)
+        }
         // Roster size: live connector rows first, then the config roster.
         let agentCount = health.connectors.isEmpty ? config.connectors.count : health.connectors.count
         let multiConnector = config.connectorModes.count > 1 || config.connectors.count > 1
@@ -757,6 +779,40 @@ final class AppState {
         }
         if let endpoint = config.aiDefenseEndpoint?.nonEmpty {
             rows.append(.init(label: "AI Defense", value: endpoint))
+        }
+        return rows
+    }
+
+    /// Connector-scoped CONFIGURATION rows (TUI _connector_configuration_lines):
+    /// Connector/Mode/Rule pack/Guardrail/Status/Last activity from the live
+    /// roster row, then the global posture rows tagged "(global)".
+    private func connectorConfigurationRows(_ name: String) -> [ConfigurationRow] {
+        let row = health.connectors.first { $0.name.lowercased() == name.lowercased() }
+        let mode = row?.mode.nonEmpty ?? config.connectorModes[name]?.nonEmpty ?? "?"
+        let rulePack = row?.rulePack.nonEmpty ?? config.connectorRulePacks[name]?.nonEmpty ?? "default"
+        let status = row?.state.nonEmpty ?? "unknown"
+        let lastActivity = row?.lastActivity.map { DCDates.relative($0) } ?? "none"
+        // Per-connector kill switch (guardrail.connectors.<name>.enabled:
+        // false) outranks the global flag, exactly like connector_is_disabled.
+        let guardrail = (config.connectorDisabled.contains(name.lowercased()) || !config.guardrailEnabled)
+            ? "disabled" : "enabled"
+        let redaction = config.redactionEnabled ? "ON (global redacted)" : "OFF (global RAW)"
+        let approval = config.hiltEnabled ? "ON (global min \(config.hiltMinSeverity))" : "OFF (global)"
+
+        // Exactly the TUI's rows: 8 fixed + optional Environment. LLM/AI
+        // Defense rows stay global-view-only.
+        var rows: [ConfigurationRow] = [
+            .init(label: "Connector", value: "\(friendlyConnectorName(name)) (\(name.lowercased()))"),
+            .init(label: "Mode", value: mode),
+            .init(label: "Rule pack", value: rulePack),
+            .init(label: "Guardrail", value: guardrail),
+            .init(label: "Status", value: status),
+            .init(label: "Last activity", value: lastActivity),
+            .init(label: "Redaction", value: redaction),
+            .init(label: "Human approval", value: approval),
+        ]
+        if let env = config.environment?.nonEmpty {
+            rows.append(.init(label: "Environment", value: "\(env) (global)"))
         }
         return rows
     }
@@ -817,6 +873,95 @@ final class AppState {
         let current = connectorFilter.trimmingCharacters(in: .whitespaces).lowercased()
         if current.isEmpty { return true }
         return current == connector.trimmingCharacters(in: .whitespaces).lowercased()
+    }
+
+    /// Enforcement metrics scoped to the active connector filter. All → the
+    /// shared global snapshot; a selected connector reads its enriched
+    /// ConnectorHealth row (live gateway counters with the audit fallback
+    /// already applied in pulse(), same as the TUI's CONNECTORS table source)
+    /// and Findings narrow to alert rows attributed to that connector.
+    var scopedEnforcementMetrics: OverviewEnforcementMetrics {
+        guard !connectorFilter.isEmpty else { return overviewEnforcementMetrics }
+        let row = health.connectors.first { $0.name.lowercased() == connectorFilter.lowercased() }
+        // No live health row (gateway offline / older gateway): fall back to
+        // the pulse-cached audit stats, like the TUI's audit-derived scope
+        // breakdown.
+        let fallback = connectorStatsCache.first { $0.key.lowercased() == connectorFilter.lowercased() }?.value
+        return OverviewEnforcementMetrics(
+            hookCalls: row?.calls ?? fallback?.hookCalls ?? 0,
+            blocks: row?.blocks ?? fallback?.blocks ?? 0,
+            findings: unackedAlerts.filter {
+                $0.severity > .info && connectorFilterAllows($0.connectorName)
+            }.count,
+            updatedAt: overviewEnforcementMetrics.updatedAt
+        )
+    }
+
+    /// The filtered SCANNERS box's "policy" context row: "{mode} · {rule pack}"
+    /// from config only (TUI _connector_policy_label — live-row fallbacks
+    /// would fabricate "observe · default" where the TUI hides the row).
+    var connectorPolicyLabel: String {
+        guard !connectorFilter.isEmpty else { return "" }
+        let mode = config.connectorModes[connectorFilter]?.nonEmpty ?? ""
+        let pack = config.connectorRulePacks[connectorFilter]?.nonEmpty ?? ""
+        return [mode, pack].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    // MARK: - Per-connector aibom coverage (TUI _request_enforcement_inventory)
+
+    /// One snapshot per connector from `aibom scan --json --connector <name>`,
+    /// shared by the filtered Overview boxes. nil entry = not yet loaded
+    /// ("scan pending" in the UI).
+    var enforcementInventory: [String: ConnectorScanMetrics] = [:]
+    @ObservationIgnored private var enforcementInventoryRequested = false
+
+    /// One-shot per app session, multi-connector only — dispatches the same
+    /// per-connector aibom scans the Inventory panel runs and caches the
+    /// coverage counts. Renders keep calling this idempotently.
+    func requestEnforcementInventory() {
+        guard !enforcementInventoryRequested, activeConnectorNames.count > 1 else { return }
+        enforcementInventoryRequested = true
+        Task {
+            for name in activeConnectorNames {
+                let result = await cli.run(arguments: ["aibom", "scan", "--json", "--connector", name])
+                guard result.succeeded,
+                      let parsed = InventoryOutputParser.parse(result.output),
+                      let document = parsed.documents.first
+                else { continue }
+                enforcementInventory[name] = Self.scanMetrics(from: document)
+            }
+        }
+    }
+
+    /// TUI _connector_scan_metrics: verdict sets BLOCK/ALLOW over skills;
+    /// scanned = skills+plugins carrying any scan_* evidence; scannable =
+    /// |skills| + |plugins|; MCPs have no verdicts (count only).
+    private static func scanMetrics(from document: [String: Any]) -> ConnectorScanMetrics {
+        let blockSet: Set<String> = ["block", "blocked", "deny", "denied", "quarantine", "quarantined"]
+        let allowSet: Set<String> = ["allow", "allowed", "clean", "ok", "pass"]
+        let skills = (document["skills"] as? [[String: Any]]) ?? []
+        let plugins = (document["plugins"] as? [[String: Any]]) ?? []
+        let mcps = (document["mcp"] as? [[String: Any]]) ?? []
+
+        func verdict(_ item: [String: Any]) -> String {
+            ((item["policy_verdict"] as? String)?.nonEmpty
+                ?? (item["verdict"] as? String) ?? "").lowercased()
+        }
+        func hasScanEvidence(_ item: [String: Any]) -> Bool {
+            if let target = item["scan_target"] as? String, !target.isEmpty { return true }
+            if let findings = item["scan_findings"] as? Int, findings > 0 { return true }
+            if let severity = item["scan_severity"] as? String, !severity.isEmpty { return true }
+            return false
+        }
+
+        return ConnectorScanMetrics(
+            skills: skills.count,
+            skillsBlocked: skills.filter { blockSet.contains(verdict($0)) }.count,
+            skillsAllowed: skills.filter { allowSet.contains(verdict($0)) }.count,
+            mcps: mcps.count,
+            scanned: (skills + plugins).filter(hasScanEvidence).count,
+            scannable: skills.count + plugins.count
+        )
     }
 
     /// Connector roster for filesystem catalog scans: live health first,

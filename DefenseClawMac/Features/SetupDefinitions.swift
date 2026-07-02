@@ -6,7 +6,7 @@ import Foundation
 enum TUIWizards {
     static let connectors = ["openclaw", "zeptoclaw", "codex", "claudecode", "hermes",
                              "cursor", "windsurf", "geminicli", "copilot", "openhands",
-                             "antigravity", "opencode"]
+                             "antigravity", "opencode", "omnigent"]
     static let proxyConnectors = ["openclaw", "zeptoclaw"]
     static let hookConnectors = connectors.filter { !proxyConnectors.contains($0) }
     static let llmProviders = ["anthropic", "openai", "openrouter", "azure", "gemini",
@@ -41,22 +41,110 @@ enum TUIWizards {
         guardrailActions,
     ]
 
+    /// TUI connector wizard (setup / batch / remove). The argv builder mirrors
+    /// `_build_connector_setup_args` byte-for-byte: `setup <alias> --yes …`,
+    /// bare `setup --yes --connector … [--detected] [--all] …` for batch, and
+    /// `setup remove <name> --yes [--no-restart] [--force]`.
     private static let connector = WizardDefinition(
         id: "connector", title: "Connector Setup", icon: "cable.connector",
-        blurb: "Configure or refresh the agent framework DefenseClaw governs.",
-        baseArgs: ["setup"], commandField: "connector",
-        commandMap: ["claudecode": "claude-code"], appendYes: true,
+        blurb: "Add or re-run a connector, choose the active hook connector set (batch), or remove one.",
+        baseArgs: ["setup"], // unused — commandBuilder supplies the full argv
+
+        commandBuilder: connectorCommands,
+        validation: connectorValidation,
         fields: [
+            WizardField(key: "action", label: "Action", kind: .choice(options: ["setup", "batch", "remove"]),
+                        defaultValue: "setup",
+                        help: "Set up/add one connector, choose the active connector set, or remove one."),
             WizardField(key: "connector", label: "Framework", kind: .choice(options: connectors),
-                        defaultValue: "claudecode"),
+                        defaultValue: "claudecode",
+                        visibleWhen: (key: "action", equals: ["setup", "remove"])),
+            WizardField(key: "connectors-csv", label: "Connectors (CSV)",
+                        kind: .text(placeholder: "codex,hermes,antigravity"),
+                        visibleWhen: (key: "action", equals: ["batch"]),
+                        help: "Batch setup only: comma-separated hook connector names. Batch REPLACES the active hook set."),
+            WizardField(key: "detected", label: "Detected connectors", kind: .bool, defaultValue: "no",
+                        visibleWhen: (key: "action", equals: ["batch"]),
+                        help: "Include every locally detected hook connector."),
+            WizardField(key: "all", label: "All supported connectors", kind: .bool, defaultValue: "no",
+                        visibleWhen: (key: "action", equals: ["batch"]),
+                        help: "Include every supported hook connector."),
             WizardField(key: "mode", label: "Guardrail mode", kind: .choice(options: ["observe", "action"]),
-                        defaultValue: "observe"),
+                        defaultValue: "observe",
+                        visibleWhen: (key: "action", equals: ["setup", "batch"])),
             WizardField(key: "scanner-mode", label: "Scanner mode", kind: .choice(options: ["local", "remote", "both"]),
-                        defaultValue: "local", visibleWhen: (key: "connector", equals: proxyConnectors)),
-            WizardField(key: "restart", label: "Restart gateway", kind: .bool, defaultValue: "yes",
-                        visibleWhen: (key: "connector", equals: hookConnectors)),
+                        defaultValue: "local",
+                        visibleWhen: (key: "action", equals: ["setup"]),
+                        visibleWhen2: (key: "connector", equals: proxyConnectors)),
+            WizardField(key: "verify", label: "Verify after setup", kind: .bool, defaultValue: "yes",
+                        visibleWhen: (key: "action", equals: ["setup"]),
+                        visibleWhen2: (key: "connector", equals: proxyConnectors)),
+            WizardField(key: "replace", label: "Replace existing", kind: .bool, defaultValue: "no",
+                        visibleWhen: (key: "action", equals: ["setup"]),
+                        visibleWhen2: (key: "connector", equals: hookConnectors),
+                        help: "Replace the configured connector set instead of adding this connector as a peer."),
+            WizardField(key: "workspace", label: "Workspace dir", kind: .text(placeholder: "Optional"),
+                        visibleWhen: (key: "action", equals: ["setup"]),
+                        visibleWhen2: (key: "connector", equals: hookConnectors),
+                        help: "Optional workspace-scoped connector config directory."),
+            WizardField(key: "local-stack", label: "Local stack", kind: .bool, defaultValue: "no",
+                        visibleWhen: (key: "action", equals: ["setup"]),
+                        visibleWhen2: (key: "connector", equals: hookConnectors)),
+            WizardField(key: "restart", label: "Restart gateway", kind: .bool, defaultValue: "yes"),
+            WizardField(key: "force", label: "Force last connector removal", kind: .bool, defaultValue: "no",
+                        visibleWhen: (key: "action", equals: ["remove"]),
+                        help: "Allow removing the final connector and fully unconfiguring enforcement."),
         ]
     )
+
+    /// Mirrors the TUI connector-wizard argv builder (`_build_connector_setup_args`).
+    private static func connectorCommands(_ v: [String: String], _ mask: Bool) -> [[String]] {
+        let action = value(v, "action", "setup")
+        let restartOff = value(v, "restart", "yes") == "no"
+
+        if action == "batch" {
+            var args = ["setup", "--yes"]
+            appendCSV(v, "connectors-csv", flag: "--connector", to: &args)
+            flag(v, "detected", "--detected", to: &args)
+            flag(v, "all", "--all", to: &args)
+            append(v, "mode", flag: "--mode", to: &args)
+            if restartOff { args.append("--no-restart") }
+            return [args]
+        }
+
+        let connector = value(v, "connector", "openclaw")
+        if action == "remove" {
+            var args = ["setup", "remove", connector, "--yes"]
+            if restartOff { args.append("--no-restart") }
+            flag(v, "force", "--force", to: &args)
+            return [args]
+        }
+
+        // setup — subcommand alias: claudecode → claude-code, else identity.
+        let alias = connector == "claudecode" ? "claude-code" : connector
+        var args = ["setup", alias, "--yes"]
+        append(v, "mode", flag: "--mode", to: &args)
+        if restartOff { args.append("--no-restart") }
+        if proxyConnectors.contains(connector) {
+            append(v, "scanner-mode", flag: "--scanner-mode", to: &args)
+            if value(v, "verify", "yes") == "no" { args.append("--no-verify") }
+            return [args]
+        }
+        flag(v, "replace", "--replace", to: &args)
+        append(v, "workspace", flag: "--workspace", to: &args)
+        flag(v, "local-stack", "--with-local-stack", to: &args)
+        return [args]
+    }
+
+    /// Batch requires a target set: CSV names, detected, or all (TUI
+    /// missing_required_fields connector branch).
+    private static func connectorValidation(_ v: [String: String]) -> String? {
+        guard value(v, "action", "setup") == "batch" else { return nil }
+        if value(v, "connectors-csv").isEmpty, !yes(v, "detected"), !yes(v, "all") {
+            return "Missing required field(s): Connectors (CSV) or Detected/All"
+        }
+        return nil
+    }
 
     private static let credentials = WizardDefinition(
         id: "credentials", title: "Credentials", icon: "key.horizontal",
@@ -878,7 +966,7 @@ enum TUIWizards {
     }
 
     private static func appendCSV(_ values: [String: String], _ key: String, flag: String, to args: inout [String]) {
-        value(values, key).split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        value(values, key).split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }.forEach { args += [flag, $0] }
     }
 

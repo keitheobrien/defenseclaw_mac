@@ -22,6 +22,13 @@ struct OverviewView: View {
         var id: String { "\(hour.timeIntervalSince1970)-\(klass)" }
     }
 
+    /// The shared connector filter ("" = All) — scopes Configuration,
+    /// Enforcement, Scanners, and highlights the Connectors row (TUI parity).
+    private var scopeConnector: String { appState.connectorFilter }
+
+    /// " · name" suffix for card titles when a connector is selected.
+    private var scopeSuffix: String { scopeConnector.isEmpty ? "" : " · \(scopeConnector.lowercased())" }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 14) {
@@ -41,6 +48,7 @@ struct OverviewView: View {
                 quickActionsCard
                 configurationCard
                 if !appState.health.connectors.isEmpty { connectorCard }
+                observabilityCard
                 activityCard
                 HStack(alignment: .top, spacing: 14) {
                     doctorCard
@@ -51,6 +59,7 @@ struct OverviewView: View {
         }
         .toolbar {
             ToolbarItemGroup {
+                connectorScopeChip
                 StaleBadge(date: appState.health.fetchedAt)
                 Button {
                     runDoctor()
@@ -67,6 +76,12 @@ struct OverviewView: View {
         }
         .task { refresh() }
         .task(id: appState.health.fetchedAt) { await loadData() } // pulse-fed
+        .onChange(of: appState.connectorFilter, initial: true) { _, newValue in
+            // The TUI dispatches the lazy per-connector aibom load whenever
+            // the ENFORCEMENT box renders with a connector selected —
+            // `initial: true` covers a filter set before Overview mounted.
+            if !newValue.isEmpty { appState.requestEnforcementInventory() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in refresh() }
         .onReceive(NotificationCenter.default.publisher(for: .dcRunHealthCheck)) { _ in runDoctor() }
         .sheet(isPresented: $showDoctorSheet) {
@@ -87,6 +102,14 @@ struct OverviewView: View {
     }
 
     // MARK: Cards
+
+    /// Toolbar connector-scope picker (multi-connector only) — the Overview
+    /// equivalent of the TUI's "Connector scope: … (press m to switch)" line.
+    @ViewBuilder
+    private var connectorScopeChip: some View {
+        @Bindable var state = appState
+        ConnectorFilterChip(names: appState.activeConnectorNames, selection: $state.connectorFilter)
+    }
 
     private var quickActionsCard: some View {
         DCCard("Quick Actions", systemImage: "bolt") {
@@ -217,7 +240,7 @@ struct OverviewView: View {
     /// (the exact colors SwiftUI's Table paints in the Connectors box), so the
     /// rows read black/grey over the blue card rather than blue-on-blue.
     private var configurationCard: some View {
-        DCCard("Configuration", systemImage: "slider.horizontal.3") {
+        DCCard("Configuration\(scopeSuffix)", systemImage: "slider.horizontal.3") {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(appState.configurationRows
                     .prefix(configurationExpanded ? appState.configurationRows.count : 4)
@@ -270,11 +293,13 @@ struct OverviewView: View {
 
     private var connectorCard: some View {
         DCCard("Connectors", systemImage: "cable.connector") {
-            Table(appState.health.connectors) {
+            Table(appState.health.connectors, selection: connectorRowSelection) {
                 TableColumn("Connector") { c in
                     HStack {
                         Circle().fill(Cisco.stateColor(raw: c.state)).frame(width: 7, height: 7)
-                        Text(c.name)
+                        Text("\(friendlyConnectorName(c.name)) (\(c.name))")
+                            .fontWeight(isScoped(c.name) ? .semibold : .regular)
+                            .foregroundStyle(isScoped(c.name) ? Cisco.blue : .primary)
                     }
                 }
                 TableColumn("Mode", value: \.mode)
@@ -286,21 +311,64 @@ struct OverviewView: View {
             }
             .frame(height: CGFloat(appState.health.connectors.count) * 28 + 32)
             .scrollDisabled(true)
+            if appState.activeConnectorNames.count > 1 {
+                HStack {
+                    Text(scopeConnector.isEmpty
+                         ? "Select a row to scope the Overview to that connector."
+                         : "Overview scoped to \(friendlyConnectorName(scopeConnector)).")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                    if !scopeConnector.isEmpty {
+                        Button("Open \(friendlyConnectorName(scopeConnector)) Alerts →") {
+                            appState.openAlerts(filter: .all)
+                        }
+                        .controlSize(.small)
+                        .buttonStyle(.link)
+                    }
+                }
+            }
         }
     }
 
-    /// Hero right half: the TUI's four tiles as a 2×2 grid.
+    private func isScoped(_ name: String) -> Bool {
+        scopeConnector.lowercased() == name.lowercased()
+    }
+
+    /// Row selection ↔ shared connector filter (TUI: selecting a CONNECTORS
+    /// row scopes every view; re-selecting All via the chip clears it). The
+    /// setter is a no-op on single-connector installs — the TUI's
+    /// normalize_filter keeps those permanently at All, and every clear
+    /// affordance (chip, ⌃M, caption) is hidden there.
+    private var connectorRowSelection: Binding<String?> {
+        Binding(
+            get: { appState.connectorFilter.isEmpty ? nil : appState.connectorFilter },
+            set: { newValue in
+                guard appState.activeConnectorNames.count > 1 else { return }
+                appState.connectorFilter = newValue ?? ""
+            }
+        )
+    }
+
+    /// Hero right half: the TUI's four tiles as a 2×2 grid. When a connector
+    /// is selected the tiles narrow to that connector (title "(name)", fleet
+    /// caption) and per-connector aibom coverage rows appear (TUI §ENFORCEMENT).
     private var enforcementTilesCard: some View {
-        DCCard("Enforcement", systemImage: "checkmark.shield", fillHeight: true) {
+        let scoped = appState.scopedEnforcementMetrics
+        let fleet = appState.overviewEnforcementMetrics
+        let filtered = !scopeConnector.isEmpty
+        return DCCard("Enforcement\(scopeSuffix)", systemImage: "checkmark.shield", fillHeight: true) {
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 10) {
                 Button {
                     appState.openLogs(.init(stream: .otel, preset: .hooks))
                 } label: {
                     StatCard(
-                        title: "Hook Calls (\(max(appState.health.connectors.count, 1)) connectors)",
-                        value: "\(heroHookCalls)", tint: Cisco.blue
+                        title: filtered
+                            ? "Hook Calls (\(scopeConnector))"
+                            : "Hook Calls (\(max(appState.health.connectors.count, 1)) connectors)",
+                        value: "\(scoped.hookCalls)", tint: Cisco.blue
                     ) {
-                        metricDetail("Latest 500 audit events")
+                        metricDetail(filtered ? "fleet \(fleet.hookCalls)" : "Latest 500 audit events")
                     }
                 }
                 .buttonStyle(InteractiveCardButtonStyle())
@@ -310,9 +378,10 @@ struct OverviewView: View {
                 Button {
                     appState.openAudit(preset: "blocks")
                 } label: {
-                    StatCard(title: "Blocks", value: "\(heroBlocks)",
-                             tint: heroBlocks > 0 ? Cisco.red : .secondary) {
-                        metricDetail("Latest 500 decisions")
+                    StatCard(title: filtered ? "Blocks (\(scopeConnector))" : "Blocks",
+                             value: "\(scoped.blocks)",
+                             tint: scoped.blocks > 0 ? Cisco.red : .secondary) {
+                        metricDetail(filtered ? "fleet \(fleet.blocks)" : "Latest 500 decisions")
                     }
                 }
                 .buttonStyle(InteractiveCardButtonStyle())
@@ -322,8 +391,9 @@ struct OverviewView: View {
                 Button {
                     appState.openAlerts(filter: .all)
                 } label: {
-                    StatCard(title: "Findings", value: "\(findingsCount)", tint: Cisco.orange) {
-                        metricDetail("Unacknowledged")
+                    StatCard(title: filtered ? "Findings (\(scopeConnector))" : "Findings",
+                             value: "\(scoped.findings)", tint: Cisco.orange) {
+                        metricDetail(filtered ? "fleet \(fleet.findings)" : "Unacknowledged")
                     }
                 }
                 .buttonStyle(InteractiveCardButtonStyle())
@@ -345,11 +415,44 @@ struct OverviewView: View {
                 .help("Open guardrail logs")
                 .accessibilityHint("Opens Logs filtered to guardrail events")
             }
+            if filtered { connectorCoverageRows }
             if appState.overviewEnforcementMetrics.updatedAt != .distantPast {
                 Text("Updated \(DCDates.relative(appState.overviewEnforcementMetrics.updatedAt))")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
+        }
+    }
+
+    /// Per-connector aibom coverage (filtered ENFORCEMENT rows): Skills with
+    /// blocked/allowed split, MCPs configured, Scanned x/y assets — or the
+    /// TUI's "scan pending" line until the one-shot inventory load lands.
+    @ViewBuilder
+    private var connectorCoverageRows: some View {
+        Divider()
+        if let metrics = appState.enforcementInventory[scopeConnector] {
+            VStack(alignment: .leading, spacing: 3) {
+                coverageRow("Skills", "\(metrics.skills)   \(metrics.skillsBlocked) blocked   \(metrics.skillsAllowed) allowed")
+                coverageRow("MCPs", "\(metrics.mcps) configured")
+                coverageRow("Scanned", "\(metrics.scanned)/\(metrics.scannable) assets",
+                            tint: metrics.scanned >= metrics.scannable && metrics.scannable > 0 ? Cisco.green : Cisco.orange)
+            }
+        } else {
+            Text("Skills  scan pending — loading inventory…")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func coverageRow(_ label: String, _ value: String, tint: Color = .primary) -> some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .font(.caption.weight(.medium))
+                .frame(width: 64, alignment: .leading)
+            Text(value)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(tint)
+            Spacer(minLength: 0)
         }
     }
 
@@ -372,9 +475,25 @@ struct OverviewView: View {
     }
 
     /// Hero card: scanner/guardrail/keys status, mirroring the TUI's SCANNERS box.
+    /// When a connector is selected, two context rows are prepended: the
+    /// connector's policy ("mode · rule pack") and its scan coverage.
     private var scannersCard: some View {
-        DCCard("Scanners", systemImage: "magnifyingglass.circle", fillHeight: true) {
+        DCCard("Scanners\(scopeSuffix)", systemImage: "magnifyingglass.circle", fillHeight: true) {
             VStack(alignment: .leading, spacing: 6) {
+                if !scopeConnector.isEmpty {
+                    if !appState.connectorPolicyLabel.isEmpty {
+                        scannerContextRow("policy", appState.connectorPolicyLabel, tint: Cisco.blue, filled: true)
+                    }
+                    if let metrics = appState.enforcementInventory[scopeConnector] {
+                        scannerContextRow(
+                            "coverage", "\(metrics.scanned)/\(metrics.scannable) assets",
+                            tint: metrics.scanned >= metrics.scannable && metrics.scannable > 0 ? Cisco.green : Cisco.orange,
+                            filled: metrics.scanned >= metrics.scannable && metrics.scannable > 0
+                        )
+                    } else {
+                        scannerContextRow("coverage", "scan pending", tint: .secondary, filled: false)
+                    }
+                }
                 ForEach(appState.scanners) { s in
                     HStack(spacing: 6) {
                         Circle().fill(scannerColor(s.level)).frame(width: 7, height: 7)
@@ -395,12 +514,90 @@ struct OverviewView: View {
         }
     }
 
+    /// TUI ●/○ context row prepended to the filtered SCANNERS box.
+    private func scannerContextRow(_ name: String, _ detail: String, tint: Color, filled: Bool) -> some View {
+        HStack(spacing: 6) {
+            if filled {
+                Circle().fill(tint).frame(width: 7, height: 7)
+            } else {
+                Circle().strokeBorder(tint, lineWidth: 1).frame(width: 7, height: 7)
+            }
+            Text(name)
+                .font(.callout.weight(.medium))
+            Spacer(minLength: 8)
+            Text(detail)
+                .font(.callout)
+                .foregroundStyle(tint)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+    }
+
     private func scannerColor(_ level: ScannerStatus.Level) -> Color {
         switch level {
         case .active: Cisco.green
         case .builtin: .secondary
         case .warn: Cisco.orange
         case .missing: Cisco.red
+        }
+    }
+
+    /// Full-width OBSERVABILITY DESTINATIONS · RUNTIME box: every
+    /// runtime-loaded OTel destination and audit sink from /health, with
+    /// delivery/eligibility routing labels and redacted endpoints (TUI
+    /// _overview_observability_panel).
+    private var observabilityCard: some View {
+        DCCard("Observability Destinations · Runtime", systemImage: "antenna.radiowaves.left.and.right") {
+            if appState.health.observabilityRows.isEmpty {
+                Text("No runtime-loaded destinations. Configure one in Setup → Observability / Galileo, then restart the gateway.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Table(appState.health.observabilityRows) {
+                    TableColumn("Name") { row in
+                        Text(row.name).fontWeight(.medium)
+                    }
+                    TableColumn("Target", value: \.target).width(78)
+                    TableColumn("Scope") { row in
+                        Text(row.scope).foregroundStyle(.secondary)
+                    }
+                    .width(70)
+                    TableColumn("Kind/Preset") { row in
+                        Text(row.kind).foregroundStyle(.secondary)
+                    }
+                    .width(90)
+                    TableColumn("State") { row in
+                        Text(row.state)
+                            .foregroundStyle(row.state == "enabled" ? Cisco.green : Color.secondary)
+                    }
+                    .width(64)
+                    TableColumn("Signals") { row in
+                        Text(row.signals).foregroundStyle(.secondary)
+                    }
+                    .width(130)
+                    TableColumn("Routing") { row in
+                        Text(row.routing.nonEmpty ?? "—")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(Cisco.sky)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .help(row.routing.nonEmpty ?? "No routing data yet")
+                    }
+                    TableColumn("Endpoint") { row in
+                        Text(row.endpoint)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+                .frame(height: CGFloat(appState.health.observabilityRows.count) * 28 + 32)
+                .scrollDisabled(true)
+                Text("Names are identities: a new name adds a route; the same name updates it. Manage in Setup → Observability / Galileo.")
+                    .font(.caption2)
+                    .italic()
+                    .foregroundStyle(.tertiary)
+            }
         }
     }
 

@@ -22,6 +22,9 @@ struct WizardField: Identifiable {
     var defaultValue: String = ""
     /// Only shown when (other field key, required value) matches — ports _SETUP_DRIVER_FLAGS.
     var visibleWhen: (key: String, equals: [String])? = nil
+    /// Optional second condition, ANDed with visibleWhen (e.g. action==setup
+    /// AND connector is a proxy connector).
+    var visibleWhen2: (key: String, equals: [String])? = nil
     var help: String = ""
 
     var id: String { key }
@@ -103,7 +106,7 @@ struct SetupView: View {
                 Divider().padding(.vertical, 4)
 
                 Text("Config Editor").font(.title3.weight(.semibold))
-                Text("Edit individual config.yaml values directly. Changes apply through the gateway (PATCH /config/patch).")
+                Text("Typed, sectioned config.yaml editor — the TUI's Setup sections. Changes are reviewed as a diff, applied through the gateway (PATCH /config/patch), and queue a gateway restart.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 ConfigEditorView()
@@ -134,11 +137,15 @@ struct WizardSheet: View {
 
     private var visibleFields: [WizardField] {
         wizard.fields.filter { field in
-            guard let condition = field.visibleWhen else { return true }
-            let current = values[condition.key] ?? ""
-            if condition.equals == ["*nonempty*"] { return !current.isEmpty }
-            return condition.equals.contains(current)
+            matches(field.visibleWhen) && matches(field.visibleWhen2)
         }
+    }
+
+    private func matches(_ condition: (key: String, equals: [String])?) -> Bool {
+        guard let condition else { return true }
+        let current = values[condition.key] ?? ""
+        if condition.equals == ["*nonempty*"] { return !current.isEmpty }
+        return condition.equals.contains(current)
     }
 
     /// The exact CLI invocation, shown verbatim in review (parity requirement).
@@ -232,6 +239,14 @@ struct WizardSheet: View {
         .onAppear {
             for field in wizard.fields where values[field.key] == nil {
                 values[field.key] = field.defaultValue
+            }
+            // TUI parity: the connector wizard preselects the configured
+            // claw.mode connector, not a hardcoded default.
+            if wizard.id == "connector",
+               let configured = (appState.config.connectorMode ?? appState.config.connectorName)?
+                   .trimmingCharacters(in: .whitespaces).lowercased(),
+               TUIWizards.connectors.contains(configured) {
+                values["connector"] = configured
             }
             if wizard.interactiveOnly { phase = .review } // nothing to fill in
         }
@@ -461,82 +476,406 @@ struct WizardSheet: View {
 
 // MARK: - Config editor
 
+/// Sectioned typed config editor (TUI Setup config sections parity): a
+/// section list, kind-aware field controls with validation, a diff-review
+/// save sheet with masked secrets, and a queued-gateway-restart banner.
+/// Writes go through PATCH /config/patch per changed key.
 struct ConfigEditorView: View {
     @Environment(AppState.self) private var appState
-    @State private var path = ""
-    @State private var value = ""
+    @State private var selectedSection: String? = "General"
+    @State private var original: [String: String] = [:]
+    @State private var edited: [String: String] = [:]
+    @State private var showDiff = false
     @State private var status: String?
     @State private var statusOK = true
-    @State private var configDump: [(String, String)] = []
+    @State private var restartQueued = false
+    @State private var saving = false
+
+    private var sections: [ConfigEditorSection] {
+        ConfigEditorCatalog.sections(activeConnectors: appState.activeConnectorNames)
+    }
+
+    private var currentSection: ConfigEditorSection? {
+        sections.first { $0.name == selectedSection }
+    }
+
+    /// Every changed key across all sections, in catalog order.
+    private var diffEntries: [ConfigDiffEntry] {
+        sections.flatMap(\.fields).compactMap { field in
+            guard field.interactive, let after = edited[field.key],
+                  after != (original[field.key] ?? "") else { return nil }
+            return ConfigDiffEntry(
+                key: field.key,
+                before: original[field.key] ?? "",
+                after: after,
+                secret: field.secret
+            )
+        }
+    }
+
+    /// First validation error among the changed fields (blocks Review & Save).
+    private var firstValidationError: String? {
+        for field in sections.flatMap(\.fields) where field.interactive {
+            guard let value = edited[field.key], value != (original[field.key] ?? "") else { continue }
+            let result = ConfigFieldValidation.validate(field, value: value)
+            if result.isError { return "\(field.label): \(result.message)" }
+        }
+        return nil
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                TextField("Config path (e.g. guardrail.mode)", text: $path)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.body.monospaced())
-                TextField("Value", text: $value)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.body.monospaced())
-                Button("Apply") { applyPatch() }
-                    .disabled(path.isEmpty || !appState.gatewayReachable)
-                    .buttonStyle(.borderedProminent)
-                    .tint(Cisco.blue)
-            }
-            if let status {
-                Label(status, systemImage: statusOK ? "checkmark.circle" : "exclamationmark.triangle")
-                    .font(.caption)
-                    .foregroundStyle(statusOK ? Cisco.green : Cisco.red)
-            }
-            DCCard("Current configuration (read-only)", systemImage: "doc.text") {
-                if configDump.isEmpty {
-                    Text("config.yaml not found or empty.").font(.caption).foregroundStyle(.secondary)
-                } else {
-                    KeyValueGrid(pairs: configDump)
+            if restartQueued {
+                HStack(spacing: 8) {
+                    Label("Config saved — restart queued. Changes take effect after the gateway restarts.",
+                          systemImage: "clock.arrow.circlepath")
+                        .font(.caption)
+                        .foregroundStyle(Cisco.orange)
+                    Button("Restart Gateway Now") { restartGateway() }
+                        .controlSize(.small)
+                    Button("Dismiss") { restartQueued = false }
+                        .controlSize(.small)
+                        .buttonStyle(.borderless)
+                    Spacer()
                 }
-                Button("Reload") { loadDump() }
-                    .controlSize(.small)
+                .padding(8)
+                .background(Cisco.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+            }
+            HStack(alignment: .top, spacing: 0) {
+                List(sections, selection: $selectedSection) { section in
+                    HStack {
+                        Text(section.name)
+                        Spacer()
+                        if sectionHasEdits(section) {
+                            Circle().fill(Cisco.orange).frame(width: 6, height: 6)
+                        }
+                    }
+                    .tag(section.name)
+                }
+                .listStyle(.sidebar)
+                .frame(width: 190)
+                Divider()
+                sectionForm
+            }
+            // Embedded in the Setup tab's ScrollView, so the sidebar List
+            // needs an explicit height or it collapses to zero.
+            .frame(height: 520)
+            HStack {
+                if let error = firstValidationError {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(Cisco.red)
+                } else if let status {
+                    Label(status, systemImage: statusOK ? "checkmark.circle" : "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(statusOK ? Cisco.green : Cisco.red)
+                }
+                Spacer()
+                Button("Revert") { edited = [:]; status = nil }
+                    .disabled(diffEntries.isEmpty)
+                Button("Review \(diffEntries.count) Change\(diffEntries.count == 1 ? "" : "s")…") {
+                    showDiff = true
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Cisco.blue)
+                .disabled(diffEntries.isEmpty || firstValidationError != nil || saving)
+                .help("Review the pending config changes before saving (writes config.yaml via the DefenseClaw runtime)")
             }
         }
-        .task { loadDump() }
+        .task { loadOriginals() }
+        .sheet(isPresented: $showDiff) {
+            ConfigDiffSheet(entries: diffEntries, saving: saving) { save in
+                if save { applyChanges() } else { showDiff = false }
+            }
+        }
     }
 
-    private func applyPatch() {
+    @ViewBuilder
+    private var sectionForm: some View {
+        if let section = currentSection {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(section.summary).font(.caption).foregroundStyle(.secondary)
+                if !section.help.isEmpty {
+                    Text(section.help).font(.caption2).foregroundStyle(.tertiary)
+                }
+                Divider()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(section.fields) { field in
+                            fieldRow(field)
+                        }
+                    }
+                    .padding(.trailing, 8)
+                }
+            }
+            .padding(.leading, 12)
+        } else {
+            DCEmptyState(title: "Select a section", message: "", systemImage: "slider.horizontal.3")
+        }
+    }
+
+    @ViewBuilder
+    private func fieldRow(_ field: ConfigEditorField) -> some View {
+        if field.kind == .header {
+            HStack {
+                Text(field.label)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Cisco.blue)
+                if !headerDisplayValue(field).isEmpty {
+                    Text(headerDisplayValue(field))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .padding(.top, 6)
+        } else {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(field.label)
+                    .font(.callout)
+                    .frame(width: 210, alignment: .leading)
+                    .help(field.key)
+                fieldControl(field)
+                Spacer(minLength: 0)
+            }
+            .help(field.hint)
+            let value = currentValue(field.key)
+            let validation = ConfigFieldValidation.validate(field, value: value)
+            if !validation.severity.isEmpty, value != (original[field.key] ?? "") {
+                Text(validation.message)
+                    .font(.caption2)
+                    .foregroundStyle(validation.isError ? Cisco.red : Cisco.orange)
+                    .padding(.leading, 220)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func fieldControl(_ field: ConfigEditorField) -> some View {
+        switch field.kind {
+        case .bool:
+            Toggle("", isOn: Binding(
+                get: { currentValue(field.key) == "true" },
+                set: { edited[field.key] = $0 ? "true" : "false" }
+            ))
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .labelsHidden()
+        case .choice:
+            Picker("", selection: Binding(
+                get: { currentValue(field.key) },
+                set: { edited[field.key] = $0 }
+            )) {
+                ForEach(field.options, id: \.self) { option in
+                    Text(option.isEmpty ? "(inherit)" : option).tag(option)
+                }
+                // Keep an off-catalog current value selectable rather than
+                // silently coercing it.
+                if !field.options.contains(currentValue(field.key)) {
+                    Text(currentValue(field.key).isEmpty ? "(unset)" : currentValue(field.key))
+                        .tag(currentValue(field.key))
+                }
+            }
+            .labelsHidden()
+            .frame(maxWidth: 260, alignment: .leading)
+        case .password:
+            SecureField("(unchanged)", text: Binding(
+                get: { edited[field.key] ?? "" },
+                set: { edited[field.key] = $0 }
+            ))
+            .textFieldStyle(.roundedBorder)
+            .frame(maxWidth: 260)
+            .help("Value is write-only here; the stored secret is never displayed.")
+        default:
+            TextField("", text: Binding(
+                get: { currentValue(field.key) },
+                set: { edited[field.key] = $0 }
+            ))
+            .textFieldStyle(.roundedBorder)
+            .font(.callout.monospaced())
+            .frame(maxWidth: 320)
+        }
+    }
+
+    // MARK: Data plumbing
+
+    private func currentValue(_ key: String) -> String {
+        edited[key] ?? original[key] ?? ""
+    }
+
+    private func headerDisplayValue(_ field: ConfigEditorField) -> String {
+        if !field.headerValue.isEmpty { return field.headerValue }
+        guard !field.key.isEmpty else { return "" }
+        let value = original[field.key] ?? ""
+        return value.isEmpty ? "(unset)" : value
+    }
+
+    private func sectionHasEdits(_ section: ConfigEditorSection) -> Bool {
+        section.fields.contains { field in
+            guard field.interactive, let after = edited[field.key] else { return false }
+            return after != (original[field.key] ?? "")
+        }
+    }
+
+    /// Capture the on-disk values for every catalog key. Secrets stay out of
+    /// `original` (write-only fields) so they can never echo into the UI.
+    private func loadOriginals() {
         Task {
-            do {
-                try await appState.gateway.patchConfig(path: path, value: dcCoerceConfigValue(value, forPath: path))
-                status = "Applied \(path) — gateway accepted the change."
+            let cfg = await appState.configStore.reload()
+            var values: [String: String] = [:]
+            for field in sections.flatMap(\.fields) where !field.key.isEmpty {
+                if field.kind == .password { continue }
+                values[field.key] = Self.displayValue(cfg.raw[field.key])
+            }
+            original = values
+            edited = [:]
+        }
+    }
+
+    /// YAML node → editor display string (lists join with ", ", TUI _value()).
+    private static func displayValue(_ node: YAMLNode?) -> String {
+        switch node {
+        case .scalar(let s): return s
+        case .sequence(let items):
+            return items.compactMap(\.string).joined(separator: ", ")
+        default: return ""
+        }
+    }
+
+    /// The TUI's exact save path: apply every changed key through the
+    /// installed runtime's own `apply_config_field` (typed coercion, CSV
+    /// lists, tristates, judge hook-connector list surgery) and `cfg.save()`.
+    /// Changes travel as JSON on stdin — secrets never touch argv. The
+    /// gateway's /config/patch endpoint is NOT used (POST-only legacy RPC
+    /// that fails against real gateways).
+    private static let applyScript = """
+    import json, sys
+    from defenseclaw import config as dc_config
+    from defenseclaw.tui.services.setup_state import apply_config_field
+    changes = json.load(sys.stdin)
+    cfg = dc_config.load()
+    for key, value in changes.items():
+        apply_config_field(cfg, key, str(value))
+    cfg.save()
+    print(f"applied {len(changes)} change(s) to config.yaml")
+    """
+
+    private var runtimePython: String {
+        FileManager.default.homeDirectoryForCurrentUser.path + "/.defenseclaw/.venv/bin/python"
+    }
+
+    private func applyChanges() {
+        let entries = diffEntries
+        guard !entries.isEmpty else { return }
+        guard FileManager.default.isExecutableFile(atPath: runtimePython) else {
+            showDiff = false
+            status = "DefenseClaw runtime not found at ~/.defenseclaw/.venv — cannot write config."
+            statusOK = false
+            return
+        }
+        saving = true
+        let payload = Dictionary(uniqueKeysWithValues: entries.map { ($0.key, $0.after) })
+        guard let json = try? JSONSerialization.data(withJSONObject: payload),
+              let stdin = String(data: json, encoding: .utf8) else {
+            saving = false
+            showDiff = false
+            status = "Could not encode the pending changes."
+            statusOK = false
+            return
+        }
+        Task {
+            let result = await appState.runCommand(
+                title: "Save \(entries.count) config change\(entries.count == 1 ? "" : "s")",
+                binary: runtimePython,
+                arguments: ["-c", Self.applyScript],
+                standardInput: stdin,
+                category: "setup",
+                origin: "Config editor",
+                successEffects: ["config.yaml updated; gateway restart queued"],
+                refreshOnSuccess: true
+            )
+            saving = false
+            showDiff = false
+            if result.succeeded {
+                status = "Saved \(entries.count) change\(entries.count == 1 ? "" : "s"); restart queued."
                 statusOK = true
+                restartQueued = true
                 appState.reloadConfig()
-                loadDump()
-            } catch {
-                status = error.localizedDescription
+                loadOriginals()
+            } else {
+                // cfg.save() runs after all applies, so a failure means
+                // nothing was written.
+                status = "Save failed — no changes were written. \(result.output.suffix(160))"
                 statusOK = false
             }
         }
     }
 
-    private func loadDump() {
+    private func restartGateway() {
         Task {
-            let cfg = await appState.configStore.reload()
-            var pairs: [(String, String)] = []
-            func walk(_ node: YAMLNode, prefix: String) {
-                switch node {
-                case .scalar(let s):
-                    let lower = prefix.lowercased()
-                    let masked = lower.contains("token") || lower.contains("key") || lower.contains("secret")
-                    pairs.append((prefix, masked ? "••••••" : s))
-                case .mapping(let m):
-                    for key in m.keys.sorted() {
-                        walk(m[key]!, prefix: prefix.isEmpty ? key : "\(prefix).\(key)")
-                    }
-                case .sequence(let s):
-                    pairs.append((prefix, "[\(s.count) items]"))
-                }
-            }
-            walk(cfg.raw, prefix: "")
-            configDump = Array(pairs.prefix(60))
+            _ = await appState.runCommand(
+                title: "Restart gateway",
+                binary: "defenseclaw-gateway",
+                arguments: ["restart"],
+                category: "daemon",
+                origin: "Config editor",
+                successEffects: ["Gateway restarted with the saved config"],
+                refreshOnSuccess: true
+            )
+            restartQueued = false
         }
+    }
+}
+
+/// The TUI's "Review Config Changes" modal: every pending key with
+/// before/after (secrets masked), Cancel / Save and queue restart.
+private struct ConfigDiffSheet: View {
+    let entries: [ConfigDiffEntry]
+    let saving: Bool
+    let onDecision: (Bool) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Review Config Changes").font(.headline)
+            if entries.isEmpty {
+                Text("No pending changes.").font(.caption).foregroundStyle(.secondary)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(entries) { entry in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.secret ? "\(entry.key) (masked)" : entry.key)
+                                    .font(.caption.weight(.semibold).monospaced())
+                                Text("before: \(entry.secret ? "••••••" : displayTruncated(entry.before))")
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                Text("after:  \(entry.secret ? "••••••" : displayTruncated(entry.after))")
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(Cisco.green)
+                            }
+                        }
+                    }
+                }
+                .frame(minHeight: 120, maxHeight: 320)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { onDecision(false) }
+                    .keyboardShortcut(.cancelAction)
+                Button(saving ? "Saving…" : "Save and queue restart") { onDecision(true) }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .tint(Cisco.green)
+                    .disabled(entries.isEmpty || saving)
+            }
+        }
+        .padding(16)
+        .frame(width: 560)
+    }
+
+    private func displayTruncated(_ value: String) -> String {
+        let display = value.isEmpty ? "(empty)" : value
+        return display.count <= 72 ? display : String(display.prefix(71)) + "…"
     }
 }
 // MARK: - Shared helpers

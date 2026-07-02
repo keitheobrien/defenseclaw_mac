@@ -66,6 +66,12 @@ struct HealthSnapshot: Sendable {
     var connectors: [ConnectorHealth] = []
     var version: String?
     var fetchedAt: Date = .distantPast
+    /// Runtime-loaded OTel destinations + audit sinks (Overview
+    /// OBSERVABILITY DESTINATIONS · RUNTIME box), otel rows first.
+    var observabilityRows: [ObservabilityDestinationRow] = []
+    /// The SERVICES Telemetry row detail (TUI telemetry_detail()), e.g.
+    /// "1 destination: splunk-o11y (99.9% delivered)".
+    var telemetryDetail: String = ""
 
     struct Subsystem: Identifiable, Sendable {
         var name: String
@@ -92,6 +98,20 @@ struct ServiceStatus: Identifiable, Sendable {
     var state: String
     var detail: String
     var id: String { key }
+}
+
+/// One row of the Overview OBSERVABILITY DESTINATIONS · RUNTIME table —
+/// mirrors the TUI's ObservabilityDestinationRow (overview_state.py).
+struct ObservabilityDestinationRow: Identifiable, Sendable {
+    var name: String
+    var target: String      // "otel" | "audit_sinks"
+    var scope: String
+    var kind: String        // preset or sink kind
+    var state: String       // "enabled" | "disabled"
+    var signals: String
+    var routing: String     // "" renders as "—"
+    var endpoint: String    // pre-redacted for display
+    var id: String { "\(target)/\(name)" }
 }
 
 struct ConnectorHealth: Identifiable, Sendable {
@@ -121,6 +141,41 @@ struct ConfigurationRow: Identifiable, Sendable {
     var label: String
     var value: String
     var id: String { label }
+}
+
+/// Per-connector aibom coverage shown in the filtered ENFORCEMENT/SCANNERS
+/// boxes — computed from `aibom scan --json --connector <name>` exactly like
+/// the TUI's `_connector_scan_metrics`.
+struct ConnectorScanMetrics: Sendable, Equatable {
+    var skills = 0
+    var skillsBlocked = 0
+    var skillsAllowed = 0
+    var mcps = 0
+    var scanned = 0
+    var scannable = 0
+}
+
+/// Display name for a connector wire name, mirroring the TUI's
+/// `friendly_connector_name` (overview_state.py).
+func friendlyConnectorName(_ connector: String) -> String {
+    switch connector.trimmingCharacters(in: .whitespaces).lowercased() {
+    case "openclaw": return "OpenClaw"
+    case "zeptoclaw": return "ZeptoClaw"
+    case "claudecode": return "Claude Code"
+    case "codex": return "Codex"
+    case "hermes": return "Hermes"
+    case "cursor": return "Cursor"
+    case "windsurf": return "Windsurf"
+    case "geminicli": return "Gemini CLI"
+    case "copilot": return "GitHub Copilot CLI"
+    case "openhands": return "OpenHands"
+    case "antigravity": return "Antigravity"
+    case "opencode": return "OpenCode"
+    case "omnigent": return "OmniGent"
+    case let value where !value.isEmpty:
+        return value.prefix(1).uppercased() + value.dropFirst()
+    default: return "No connector"
+    }
 }
 
 extension String {

@@ -12,7 +12,9 @@ struct SkillsView: View {
     @State private var showingInstall = false
 
     private var filtered: [SkillItem] {
-        filter(items) { "\($0.name) \($0.skillDescription) \($0.connector) \($0.status) \($0.verdict)" }
+        filter(items.filter { appState.connectorFilterAllows($0.connector) }) {
+            "\($0.name) \($0.skillDescription) \($0.connector) \($0.status) \($0.verdict)"
+        }
     }
 
     var body: some View {
@@ -38,6 +40,7 @@ struct SkillsView: View {
         }
         .searchable(text: $search, placement: .toolbar, prompt: "Search skills")
         .toolbar {
+            ToolbarItem { CatalogConnectorChip() }
             ToolbarItem {
                 Button { showingInstall = true } label: {
                     Label("Install Skill", systemImage: "square.and.arrow.down")
@@ -86,7 +89,8 @@ struct MCPsView: View {
     @State private var showingSetForm = false
 
     private var filtered: [MCPItem] {
-        search.isEmpty ? items : items.filter {
+        let scoped = items.filter { appState.connectorFilterAllows($0.connector) }
+        return search.isEmpty ? scoped : scoped.filter {
             "\($0.name) \($0.endpoint) \($0.connector) \($0.status) \($0.verdict)"
                 .localizedCaseInsensitiveContains(search)
         }
@@ -115,6 +119,7 @@ struct MCPsView: View {
         }
         .searchable(text: $search, placement: .toolbar, prompt: "Search MCPs")
         .toolbar {
+            ToolbarItem { CatalogConnectorChip() }
             ToolbarItem {
                 Button { showingSetForm = true } label: {
                     Label("Set MCP Server", systemImage: "plus")
@@ -160,7 +165,8 @@ struct PluginsView: View {
     @State private var showingInstall = false
 
     private var filtered: [PluginItem] {
-        search.isEmpty ? items : items.filter {
+        let scoped = items.filter { appState.connectorFilterAllows($0.connector) }
+        return search.isEmpty ? scoped : scoped.filter {
             "\($0.name) \($0.connector) \($0.status) \($0.verdict) \($0.source)"
                 .localizedCaseInsensitiveContains(search)
         }
@@ -188,6 +194,7 @@ struct PluginsView: View {
         }
         .searchable(text: $search, placement: .toolbar, prompt: "Search plugins")
         .toolbar {
+            ToolbarItem { CatalogConnectorChip() }
             ToolbarItem {
                 Button { showingInstall = true } label: {
                     Label("Install Plugin", systemImage: "square.and.arrow.down")
@@ -231,7 +238,14 @@ struct ToolsView: View {
     @State private var invocation: CatalogInvocation?
 
     private var filtered: [ToolItem] {
-        search.isEmpty ? items : items.filter {
+        // Tools special-case (TUI): an untagged override row stays visible
+        // under any connector filter iff its scope is empty (global rows apply
+        // everywhere); source-scoped untagged rows show only under All.
+        let scoped = items.filter { item in
+            if appState.connectorFilterAllows(item.connector) { return true }
+            return item.connector.isEmpty && item.scope.isEmpty
+        }
+        return search.isEmpty ? scoped : scoped.filter {
             "\($0.name) \($0.summary) \($0.connector) \($0.scope) \($0.status)"
                 .localizedCaseInsensitiveContains(search)
         }
@@ -257,7 +271,10 @@ struct ToolsView: View {
             }
         }
         .searchable(text: $search, placement: .toolbar, prompt: "Search tools")
-        .toolbar { RefreshButton { await load() } }
+        .toolbar {
+            ToolbarItem { CatalogConnectorChip() }
+            RefreshButton { await load() }
+        }
         .task { await load() }
         .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in Task { await load() } }
         .sheet(item: $invocation) { command in
@@ -277,6 +294,17 @@ struct ToolsView: View {
             self.error = fallback.isEmpty ? error.localizedDescription : nil
         }
         loaded = true
+    }
+}
+
+/// Toolbar connector-scope picker shared by the four catalog panels — the
+/// same control the signal panels use; hides itself on single-connector
+/// installs like the TUI chip.
+private struct CatalogConnectorChip: View {
+    @Environment(AppState.self) private var appState
+    var body: some View {
+        @Bindable var state = appState
+        ConnectorFilterChip(names: appState.activeConnectorNames, selection: $state.connectorFilter)
     }
 }
 

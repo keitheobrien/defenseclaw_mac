@@ -54,6 +54,14 @@ struct DefenseClawApp: App {
                 }
                 .keyboardShortcut("a", modifiers: [.command, .shift])
                 .disabled(!appState.gatewayReachable || appState.scanInFlight)
+
+                // The TUI's `m` key: step the shared connector filter
+                // All → conn0 → conn1 → … → All across every panel.
+                Button("Cycle Connector Filter") {
+                    appState.cycleConnectorFilter()
+                }
+                .keyboardShortcut("m", modifiers: [.control])
+                .disabled(appState.activeConnectorNames.count <= 1)
             }
             CommandMenu("Commands") {
                 Button("Command Palette…") {

@@ -24,6 +24,10 @@ actor CLIRunner {
     }
 
     func locateBinary(named name: String) -> String? {
+        // Absolute paths (e.g. the DefenseClaw venv python) pass through.
+        if name.hasPrefix("/") {
+            return FileManager.default.isExecutableFile(atPath: name) ? name : nil
+        }
         if let cached = cachedPaths[name], FileManager.default.isExecutableFile(atPath: cached) {
             return cached
         }

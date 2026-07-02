@@ -135,7 +135,170 @@ actor GatewayClient {
                 state: (c["state"] as? String) ?? (c["status"] as? String) ?? "active"
             )
         }
+
+        // Observability destinations: telemetry.details.destinations (OTel)
+        // then sinks.details.sinks (audit) — TUI observability_destination_rows.
+        let telemetryDetails = (dict["telemetry"] as? [String: Any])?["details"] as? [String: Any]
+        let sinkDetails = (dict["sinks"] as? [String: Any])?["details"] as? [String: Any]
+        // Per-item casts so one malformed element can't blank the panel.
+        snap.observabilityRows = Self.observabilityRows(
+            destinations: ((telemetryDetails?["destinations"] as? [Any]) ?? []).compactMap { $0 as? [String: Any] },
+            sinks: ((sinkDetails?["sinks"] as? [Any]) ?? []).compactMap { $0 as? [String: Any] }
+        )
+        snap.telemetryDetail = Self.telemetrySummary(telemetryDetails)
         return snap
+    }
+
+    // MARK: - Observability destinations (TUI overview_state parity)
+
+    private static func observabilityRows(
+        destinations: [[String: Any]],
+        sinks: [[String: Any]]
+    ) -> [ObservabilityDestinationRow] {
+        var rows: [ObservabilityDestinationRow] = []
+        for item in destinations {
+            guard let rawName = (item["name"] as? String)?.nonEmpty else { continue }
+            let name = rawName.lowercased() == "galileo" ? "Galileo" : rawName
+            let preset = (item["preset"] as? String) ?? ""
+            rows.append(ObservabilityDestinationRow(
+                name: name,
+                target: "otel",
+                scope: (item["scope"] as? String)?.nonEmpty ?? "process",
+                kind: preset.nonEmpty ?? "otlp",
+                state: (item["enabled"] as? Bool ?? false) ? "enabled" : "disabled",
+                signals: (item["signals"] as? String)?.nonEmpty ?? "none",
+                routing: routingLabel(
+                    routing: item["routing"] as? [String: Any],
+                    delivery: item["delivery"] as? [String: Any]
+                ),
+                endpoint: redactEndpoint((item["endpoint"] as? String)?.nonEmpty ?? "—")
+            ))
+        }
+        for item in sinks {
+            guard let name = (item["name"] as? String)?.nonEmpty else { continue }
+            rows.append(ObservabilityDestinationRow(
+                name: name,
+                target: "audit_sinks",
+                scope: (item["scope"] as? String)?.nonEmpty ?? "global",
+                kind: (item["kind"] as? String)?.nonEmpty ?? "unknown",
+                state: (item["enabled"] as? Bool ?? false) ? "enabled" : "disabled",
+                signals: "audit-events",
+                routing: "",
+                endpoint: redactEndpoint(
+                    (item["endpoint"] as? String)?.nonEmpty ?? (item["url"] as? String)?.nonEmpty ?? "—",
+                    hidePath: true
+                )
+            ))
+        }
+        return rows
+    }
+
+    /// ROUTING column label. Stage 1: eligibility from the routing dict
+    /// ("87.5% (7/8)" / "waiting"); stage 2: once delivery has attempted>0 it
+    /// REPLACES the label with collector accepted/pending/rejected/failed.
+    private static func routingLabel(routing: [String: Any]?, delivery: [String: Any]?) -> String {
+        var label = ""
+        if let routing {
+            let accepted = max(0, looseInt(routing["accepted"]))
+            let dropped = max(0, looseInt(routing["dropped"]))
+            let total = max(accepted + dropped, looseInt(routing["total"]))
+            if total > 0 {
+                let pct = looseDouble(routing["eligibility_percentage"])
+                    ?? looseDouble(routing["accepted_percentage"])
+                    ?? 100.0 * Double(accepted) / Double(total)
+                label = String(format: "%.1f%% (%d/%d)", pct, accepted, total)
+            } else {
+                label = "waiting"
+            }
+        }
+        if let delivery {
+            let attempted = max(0, looseInt(delivery["attempted"]))
+            if attempted > 0 {
+                let delivered = max(0, looseInt(delivery["collector_accepted"] ?? delivery["delivered"]))
+                let pending = max(0, looseInt(delivery["pending"]))
+                let rejected = max(0, looseInt(delivery["rejected"]))
+                let failed = max(0, looseInt(delivery["failed"]))
+                label = "collector accepted \(delivered)/\(attempted); pending \(pending); rejected \(rejected); failed \(failed)"
+            }
+        }
+        return label
+    }
+
+    /// SERVICES Telemetry row summary (TUI telemetry_detail()): enabled
+    /// destinations with delivery/eligibility percentages, prefixed by the
+    /// destination count.
+    private static func telemetrySummary(_ details: [String: Any]?) -> String {
+        guard let details else { return "" }
+        guard let rawDestinations = details["destinations"] as? [Any] else {
+            // Legacy single-endpoint payloads: "signals, redacted-endpoint".
+            let signals = (details["signals"] as? String) ?? ""
+            let endpoint = (details["endpoint"] as? String).flatMap {
+                $0.isEmpty ? nil : redactEndpoint($0, hidePath: true)
+            } ?? ""
+            return [signals, endpoint].filter { !$0.isEmpty }.joined(separator: ", ")
+        }
+        let destinations = rawDestinations.compactMap { $0 as? [String: Any] }
+        var names: [String] = []
+        for item in destinations {
+            guard item["enabled"] as? Bool == true,
+                  let rawName = (item["name"] as? String)?.nonEmpty else { continue }
+            let preset = ((item["preset"] as? String) ?? "").lowercased()
+            var label = (preset == "galileo" || rawName.lowercased() == "galileo") ? "Galileo" : rawName
+            if let delivery = item["delivery"] as? [String: Any], looseInt(delivery["attempted"]) > 0 {
+                let attempted = max(0, looseInt(delivery["attempted"]))
+                let delivered = max(0, looseInt(delivery["collector_accepted"] ?? delivery["delivered"]))
+                label += String(format: " (%.1f%% delivered)", 100.0 * Double(delivered) / Double(attempted))
+            } else if let routing = item["routing"] as? [String: Any], looseInt(routing["total"]) > 0 {
+                let pct = looseDouble(routing["eligibility_percentage"])
+                    ?? looseDouble(routing["accepted_percentage"]) ?? 0
+                label += String(format: " (%.1f%% eligible; awaiting delivery)", pct)
+            }
+            names.append(label)
+        }
+        let count = looseInt(details["destination_count"] ?? destinations.count)
+        var summary = "\(count) destination\(count == 1 ? "" : "s")"
+        if !names.isEmpty { summary += ": " + names.joined(separator: ", ") }
+        return summary
+    }
+
+    /// Port of observability/display.redact_endpoint_for_display: drop
+    /// userinfo/query/fragment always; collapse the path to "/…" for sinks.
+    static func redactEndpoint(_ endpoint: String, hidePath: Bool = false) -> String {
+        let value = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.isEmpty { return "—" }
+        if value == "—" { return value }
+        let hasScheme = value.contains("://")
+        let working = hasScheme ? value : "//" + value
+        guard let comps = URLComponents(string: working),
+              let host = comps.host?.nonEmpty?.lowercased()
+        else { return "<redacted-endpoint>" }
+        // URLComponents.host may keep IPv6 brackets — don't double-wrap.
+        var hostPart = (host.contains(":") && !host.hasPrefix("[")) ? "[\(host)]" : host
+        if let port = comps.port { hostPart += ":\(port)" }
+        var path = comps.percentEncodedPath
+        if hidePath, !path.isEmpty, path != "/" { path = "/…" }
+        if let scheme = comps.scheme, hasScheme {
+            return "\(scheme)://\(hostPart)\(path)"
+        }
+        return "\(hostPart)\(path)"
+    }
+
+    private static func looseInt(_ value: Any?) -> Int {
+        switch value {
+        case let i as Int: return i
+        case let n as NSNumber: return n.intValue
+        case let s as String: return Int(s) ?? Int(Double(s) ?? 0)
+        default: return 0
+        }
+    }
+
+    private static func looseDouble(_ value: Any?) -> Double? {
+        switch value {
+        case let d as Double: return d
+        case let n as NSNumber: return n.doubleValue
+        case let s as String: return Double(s)
+        default: return nil
+        }
     }
 
     /// Stringify the scalar entries of a /health subsystem "details" object so
