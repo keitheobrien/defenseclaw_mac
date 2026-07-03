@@ -140,20 +140,30 @@ enum TUIWizards {
     /// missing_required_fields connector branch).
     private static func connectorValidation(_ v: [String: String]) -> String? {
         guard value(v, "action", "setup") == "batch" else { return nil }
-        if value(v, "connectors-csv").isEmpty, !yes(v, "detected"), !yes(v, "all") {
+        let csv = value(v, "connectors-csv")
+        if csv.isEmpty, !yes(v, "detected"), !yes(v, "all") {
             return "Missing required field(s): Connectors (CSV) or Detected/All"
+        }
+        let invalid = csv.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty && !hookConnectors.contains($0) }
+        if !invalid.isEmpty {
+            return "Not hook-enforced connector(s): \(invalid.joined(separator: ", ")). Proxy connectors (openclaw/zeptoclaw) use their own setup."
         }
         return nil
     }
 
     private static let credentials = WizardDefinition(
         id: "credentials", title: "Credentials", icon: "key.horizontal",
-        blurb: "List, validate, fill, or securely set env-backed credentials.",
+        blurb: "List, validate, or securely set env-backed credentials.",
         baseArgs: ["keys"],
         commandBuilder: credentialCommands,
         secretInputField: "secret",
+        validation: credentialValidation,
         fields: [
-            WizardField(key: "action", label: "Action", kind: .choice(options: ["list", "check", "fill-missing", "set"]),
+            // fill-missing is terminal-only: it prompts per missing key with
+            // no non-interactive path and would hang a GUI-spawned process.
+            WizardField(key: "action", label: "Action", kind: .choice(options: ["list", "check", "set"]),
                         defaultValue: "list"),
             WizardField(key: "env", label: "Environment variable", kind: .text(placeholder: "OPENAI_API_KEY"),
                         visibleWhen: (key: "action", equals: ["set"])),
@@ -217,12 +227,16 @@ enum TUIWizards {
     private static let llm = WizardDefinition(
         id: "llm", title: "LLM", icon: "brain",
         blurb: "Configure the unified analyzer and guardrail model.",
-        baseArgs: ["setup", "llm"], appendNonInteractive: true,
+        baseArgs: ["setup", "llm"],
+        commandBuilder: llmCommands,
+        secretInputField: "api-key",
+        validation: llmValidation,
         fields: [
             WizardField(key: "provider", label: "Provider", kind: .choice(options: llmProviders), defaultValue: "anthropic"),
             WizardField(key: "model", label: "Model", kind: .text(placeholder: "claude-sonnet-4-6")),
             WizardField(key: "role", label: "Role", kind: .choice(options: ["unified", "agent", "judge"]), defaultValue: "unified"),
-            WizardField(key: "api-key", label: "API key", kind: .secure(placeholder: "Optional inline credential")),
+            WizardField(key: "api-key", label: "API key", kind: .secure(placeholder: "Stored via hidden stdin, never argv"),
+                        help: "When supplied, the key is written with `keys set` through stdin; only the env var name reaches setup llm."),
             WizardField(key: "api-key-env", label: "API key env var", kind: .text(placeholder: "ANTHROPIC_API_KEY")),
             WizardField(key: "base-url", label: "Base URL", kind: .text(placeholder: "https://…"),
                         visibleWhen: (key: "provider", equals: needsBaseURL)),
@@ -245,8 +259,9 @@ enum TUIWizards {
             WizardField(key: "no-wait", label: "Do not wait for readiness", kind: .flagOnly, defaultValue: "no", visibleWhen: (key: "action", equals: ["up"])),
             WizardField(key: "no-config", label: "Do not update config", kind: .flagOnly, defaultValue: "no", visibleWhen: (key: "action", equals: ["up"])),
             WizardField(key: "audit-sink", label: "Configure audit sink", kind: .bool, defaultValue: "yes", visibleWhen: (key: "action", equals: ["up"])),
+            // --follow streams forever and would hang the wizard's apply
+            // loop; the GUI always fetches a bounded snapshot.
             WizardField(key: "service", label: "Log service", kind: .text(placeholder: "optional service"), visibleWhen: (key: "action", equals: ["logs"])),
-            WizardField(key: "follow", label: "Follow logs", kind: .flagOnly, defaultValue: "no", visibleWhen: (key: "action", equals: ["logs"])),
             WizardField(key: "json", label: "JSON output", kind: .flagOnly, defaultValue: "no", visibleWhen: (key: "action", equals: ["url"])),
             WizardField(key: "confirm", label: "Confirm destructive reset", kind: .flagOnly, defaultValue: "no", visibleWhen: (key: "action", equals: ["reset"])),
         ]
@@ -364,6 +379,17 @@ enum TUIWizards {
         id: "custom-providers", title: "Custom Providers", icon: "point.3.connected.trianglepath.dotted",
         blurb: "List, add, inspect, or remove custom LLM provider overlays.",
         baseArgs: ["setup", "provider"], commandBuilder: providerCommands,
+        validation: { v in
+            let action = value(v, "action", "list")
+            if action == "add" {
+                if value(v, "name").isEmpty { return "Provider name is required for add (blank routes into the CLI's interactive wizard)." }
+                if value(v, "domain").isEmpty, value(v, "base-url").isEmpty {
+                    return "Supply at least one domain or a base URL."
+                }
+            }
+            if action == "remove", value(v, "name").isEmpty { return "Provider name is required for remove." }
+            return nil
+        },
         fields: [
             WizardField(key: "action", label: "Action", kind: .choice(options: ["list", "show", "add", "remove"]), defaultValue: "list"),
             WizardField(key: "name", label: "Provider name", kind: .text(placeholder: "internal-llm"), visibleWhen: (key: "action", equals: ["add", "remove"])),
@@ -380,18 +406,33 @@ enum TUIWizards {
         id: "skill-scanner", title: "Skill Scanner", icon: "wand.and.rays.inverse",
         blurb: "Configure skill analyzers, policy, and optional cloud checks.",
         baseArgs: ["setup", "skill-scanner"], appendNonInteractive: true,
+        liveDefaults: { raw in
+            var out: [String: String] = [:]
+            if let policy = raw["scanners.skill_scanner.policy"]?.string { out["policy"] = policy }
+            if let provider = raw["scanners.skill_scanner.llm.provider"]?.string ?? raw["llm.provider"]?.string,
+               ["anthropic", "openai"].contains(provider) { out["llm-provider"] = provider }
+            if let runs = raw["scanners.skill_scanner.llm_consensus_runs"]?.int { out["llm-consensus-runs"] = String(runs) }
+            return out
+        },
         fields: [
-            WizardField(key: "use-behavioral", label: "Behavioral analyzer", kind: .flagOnly, defaultValue: "no"),
-            WizardField(key: "use-llm", label: "LLM analyzer", kind: .flagOnly, defaultValue: "no"),
+            WizardField(key: "use-behavioral", label: "Behavioral analyzer", kind: .flagOnly, defaultValue: "no",
+                        help: "Unchecked leaves the current setting unchanged (the CLI has no off switch)."),
+            WizardField(key: "use-llm", label: "LLM analyzer", kind: .flagOnly, defaultValue: "no",
+                        help: "Unchecked leaves the current setting unchanged (the CLI has no off switch)."),
             WizardField(key: "llm-provider", label: "LLM provider", kind: .choice(options: ["anthropic", "openai"]), defaultValue: "anthropic"),
             WizardField(key: "llm-model", label: "LLM model", kind: .text(placeholder: "optional model")),
             WizardField(key: "llm-consensus-runs", label: "Consensus runs", kind: .text(placeholder: "0"), defaultValue: "0"),
-            WizardField(key: "enable-meta", label: "Meta analyzer", kind: .flagOnly, defaultValue: "no"),
-            WizardField(key: "use-trigger", label: "Trigger analyzer", kind: .flagOnly, defaultValue: "no"),
-            WizardField(key: "use-virustotal", label: "VirusTotal", kind: .flagOnly, defaultValue: "no"),
-            WizardField(key: "use-aidefense", label: "Cisco AI Defense", kind: .flagOnly, defaultValue: "no"),
+            WizardField(key: "enable-meta", label: "Meta analyzer", kind: .flagOnly, defaultValue: "no",
+                        help: "Unchecked leaves the current setting unchanged (the CLI has no off switch)."),
+            WizardField(key: "use-trigger", label: "Trigger analyzer", kind: .flagOnly, defaultValue: "no",
+                        help: "Unchecked leaves the current setting unchanged (the CLI has no off switch)."),
+            WizardField(key: "use-virustotal", label: "VirusTotal", kind: .flagOnly, defaultValue: "no",
+                        help: "Unchecked leaves the current setting unchanged (the CLI has no off switch)."),
+            WizardField(key: "use-aidefense", label: "Cisco AI Defense", kind: .flagOnly, defaultValue: "no",
+                        help: "Unchecked leaves the current setting unchanged (the CLI has no off switch)."),
             WizardField(key: "policy", label: "Policy", kind: .choice(options: ["strict", "balanced", "permissive", "none"]), defaultValue: "balanced"),
-            WizardField(key: "lenient", label: "Lenient parsing", kind: .flagOnly, defaultValue: "no"),
+            WizardField(key: "lenient", label: "Lenient parsing", kind: .flagOnly, defaultValue: "no",
+                        help: "Unchecked leaves the current setting unchanged (the CLI has no off switch)."),
             WizardField(key: "verify", label: "Verify after setup", kind: .bool, defaultValue: "yes"),
         ]
     )
@@ -400,13 +441,26 @@ enum TUIWizards {
         id: "mcp-scanner", title: "MCP Scanner", icon: "server.rack",
         blurb: "Configure MCP analyzers and prompt, resource, and instruction scanning.",
         baseArgs: ["setup", "mcp-scanner"], appendNonInteractive: true,
+        liveDefaults: { raw in
+            var out: [String: String] = [:]
+            if let analyzers = raw["scanners.mcp_scanner.analyzers"]?.string { out["analyzers"] = analyzers }
+            if case .sequence(let items)? = raw["scanners.mcp_scanner.analyzers"] {
+                out["analyzers"] = items.compactMap(\.string).joined(separator: ",")
+            }
+            if let provider = raw["scanners.mcp_scanner.llm.provider"]?.string ?? raw["llm.provider"]?.string,
+               ["anthropic", "openai"].contains(provider) { out["llm-provider"] = provider }
+            return out
+        },
         fields: [
             WizardField(key: "analyzers", label: "Analyzers", kind: .text(placeholder: "yara,api,llm,behavioral,readiness"), defaultValue: "yara,api,llm,behavioral,readiness"),
             WizardField(key: "llm-provider", label: "LLM provider", kind: .choice(options: ["anthropic", "openai"]), defaultValue: "anthropic"),
             WizardField(key: "llm-model", label: "LLM model", kind: .text(placeholder: "optional model")),
-            WizardField(key: "scan-prompts", label: "Scan prompts", kind: .flagOnly, defaultValue: "no"),
-            WizardField(key: "scan-resources", label: "Scan resources", kind: .flagOnly, defaultValue: "no"),
-            WizardField(key: "scan-instructions", label: "Scan instructions", kind: .flagOnly, defaultValue: "no"),
+            WizardField(key: "scan-prompts", label: "Scan prompts", kind: .flagOnly, defaultValue: "no",
+                        help: "Unchecked leaves the current setting unchanged (the CLI has no off switch)."),
+            WizardField(key: "scan-resources", label: "Scan resources", kind: .flagOnly, defaultValue: "no",
+                        help: "Unchecked leaves the current setting unchanged (the CLI has no off switch)."),
+            WizardField(key: "scan-instructions", label: "Scan instructions", kind: .flagOnly, defaultValue: "no",
+                        help: "Unchecked leaves the current setting unchanged (the CLI has no off switch)."),
             WizardField(key: "verify", label: "Verify after setup", kind: .bool, defaultValue: "yes"),
         ]
     )
@@ -414,13 +468,23 @@ enum TUIWizards {
     private static let gateway = WizardDefinition(
         id: "gateway", title: "Gateway", icon: "network",
         blurb: "Configure gateway host, ports, TLS posture, and authentication.",
-        baseArgs: ["setup", "gateway"], appendNonInteractive: true,
+        baseArgs: ["setup", "gateway"],
+        commandBuilder: gatewayCommands,
+        secretInputField: "token",
+        liveDefaults: { raw in
+            var out: [String: String] = [:]
+            if let host = raw["gateway.host"]?.string { out["host"] = host }
+            if let port = raw["gateway.port"]?.int { out["port"] = String(port) }
+            if let api = raw["gateway.api_port"]?.int { out["api-port"] = String(api) }
+            return out
+        },
         fields: [
             WizardField(key: "remote", label: "Remote mode", kind: .flagOnly, defaultValue: "no"),
             WizardField(key: "host", label: "Host", kind: .text(placeholder: "localhost"), defaultValue: "localhost"),
             WizardField(key: "port", label: "WebSocket port", kind: .text(placeholder: "9090"), defaultValue: "9090"),
             WizardField(key: "api-port", label: "REST API port", kind: .text(placeholder: "9099"), defaultValue: "9099"),
-            WizardField(key: "token", label: "Auth token", kind: .secure(placeholder: "optional token")),
+            WizardField(key: "token", label: "Auth token", kind: .secure(placeholder: "Stored via hidden stdin, never argv"),
+                        help: "When supplied, the token is persisted with `keys set OPENCLAW_GATEWAY_TOKEN` through stdin."),
             WizardField(key: "ssm-param", label: "SSM parameter", kind: .text(placeholder: "optional parameter")),
             WizardField(key: "ssm-region", label: "SSM region", kind: .text(placeholder: "us-east-1")),
             WizardField(key: "ssm-profile", label: "SSM profile", kind: .text(placeholder: "optional profile")),
@@ -432,6 +496,21 @@ enum TUIWizards {
         id: "guardrail", title: "Guardrail", icon: "shield.checkered",
         blurb: "Configure guardrail mode, scanners, detection strategy, and judge.",
         baseArgs: ["setup", "guardrail"], appendNonInteractive: true,
+        liveDefaults: { raw in
+            // Prefill from live config so an apply with untouched fields
+            // never silently downgrades the current posture.
+            var out: [String: String] = [:]
+            if let mode = raw["guardrail.mode"]?.string { out["mode"] = mode }
+            if let scanner = raw["guardrail.scanner_mode"]?.string { out["scanner-mode"] = scanner }
+            if let strategy = raw["guardrail.detection_strategy"]?.string { out["detection-strategy"] = strategy }
+            if let packDir = raw["guardrail.rule_pack_dir"]?.string, !packDir.isEmpty {
+                let pack = (packDir as NSString).lastPathComponent
+                if ["default", "strict", "permissive"].contains(pack) { out["rule-pack"] = pack }
+            }
+            if let message = raw["guardrail.block_message"]?.string { out["block-message"] = message }
+            if let judge = raw["guardrail.judge.model"]?.string { out["judge-model"] = judge }
+            return out
+        },
         fields: [
             WizardField(key: "connector", label: "Connector", kind: .choice(options: connectors), defaultValue: "claudecode"),
             WizardField(key: "mode", label: "Mode", kind: .choice(options: ["observe", "action"]), defaultValue: "observe"),
@@ -447,6 +526,12 @@ enum TUIWizards {
         id: "splunk", title: "Splunk", icon: "waveform.path.ecg.rectangle",
         blurb: "Configure Splunk O11y, local logs, or Enterprise HEC pipelines.",
         baseArgs: ["setup", "splunk"], commandBuilder: splunkCommands,
+        validation: { v in
+            if value(v, "mode", "splunk-o11y") == "local-docker", !yes(v, "accept-splunk-license") {
+                return "Local Docker mode requires accepting the Splunk license."
+            }
+            return nil
+        },
         fields: [
             WizardField(key: "mode", label: "Pipeline", kind: .choice(options: ["splunk-o11y", "local-docker", "enterprise"]), defaultValue: "splunk-o11y"),
             WizardField(key: "realm", label: "O11y realm", kind: .text(placeholder: "us1"), visibleWhen: (key: "mode", equals: ["splunk-o11y"])),
@@ -464,6 +549,16 @@ enum TUIWizards {
         id: "observability", title: "Observability", icon: "chart.xyaxis.line",
         blurb: "Add, list, enable, disable, or remove OTel and audit destinations.",
         baseArgs: ["setup", "observability"], commandBuilder: observabilityCommands,
+        validation: { v in
+            let action = value(v, "action", "add")
+            if ["enable", "disable", "remove"].contains(action), value(v, "name").isEmpty {
+                return "Destination name is required for \(action)."
+            }
+            if action == "add", value(v, "preset", "local-otlp") == "webhook", value(v, "endpoint").isEmpty {
+                return "The webhook preset requires an endpoint URL."
+            }
+            return nil
+        },
         fields: [
             WizardField(key: "action", label: "Action", kind: .choice(options: ["add", "list", "enable", "disable", "remove"]), defaultValue: "add"),
             WizardField(key: "preset", label: "Destination", kind: .choice(options: ["local-otlp", "otlp", "splunk-o11y", "splunk-hec", "splunk-enterprise", "datadog", "honeycomb", "newrelic", "grafana-cloud", "webhook"]), defaultValue: "local-otlp", visibleWhen: (key: "action", equals: ["add"])),
@@ -480,6 +575,14 @@ enum TUIWizards {
         id: "webhooks", title: "Webhooks", icon: "link.badge.plus",
         blurb: "Add, list, enable, disable, or remove alert notifier webhooks.",
         baseArgs: ["setup", "webhook"], commandBuilder: webhookCommands,
+        validation: { v in
+            let action = value(v, "action", "add")
+            if action == "add", value(v, "url").isEmpty { return "Webhook URL is required for add." }
+            if ["enable", "disable", "remove"].contains(action), value(v, "name").isEmpty {
+                return "Destination name is required for \(action)."
+            }
+            return nil
+        },
         fields: [
             WizardField(key: "action", label: "Action", kind: .choice(options: ["add", "list", "enable", "disable", "remove"]), defaultValue: "add"),
             WizardField(key: "type", label: "Type", kind: .choice(options: ["slack", "pagerduty", "webex", "generic"]), defaultValue: "slack", visibleWhen: (key: "action", equals: ["add"])),
@@ -496,8 +599,13 @@ enum TUIWizards {
 
     private static let sandbox = WizardDefinition(
         id: "sandbox", title: "Sandbox", icon: "cube.transparent",
-        blurb: "Initialize OpenShell sandbox networking and policy controls.",
+        blurb: "Initialize OpenShell sandbox networking and policy controls (Linux hosts only).",
         baseArgs: ["sandbox", "setup"], appendNonInteractive: true,
+        validation: { _ in
+            // cmd_init_sandbox exits on non-Linux, and --disable needs sudo
+            // this GUI can't provide — surface that before Run.
+            "Sandbox setup requires a Linux host; run `defenseclaw sandbox setup` there instead."
+        },
         fields: [
             WizardField(key: "sandbox-ip", label: "Sandbox IP", kind: .text(placeholder: "10.200.0.2"), defaultValue: "10.200.0.2"),
             WizardField(key: "host-ip", label: "Host IP", kind: .text(placeholder: "10.200.0.1"), defaultValue: "10.200.0.1"),
@@ -516,6 +624,7 @@ enum TUIWizards {
         id: "registries", title: "Registries", icon: "books.vertical",
         blurb: "Add an external skill or MCP catalog and optionally sync and scan it.",
         baseArgs: ["registry", "add"], commandBuilder: registryCommands,
+        validation: registryValidation,
         fields: [
             WizardField(key: "id", label: "Source ID", kind: .text(placeholder: "corp-skills"), defaultValue: "corp-skills"),
             WizardField(key: "kind", label: "Kind", kind: .choice(options: ["clawhub", "smithery", "skills_sh", "http_yaml", "http_json", "git", "file"]), defaultValue: "http_yaml"),
@@ -524,7 +633,9 @@ enum TUIWizards {
             WizardField(key: "auth-env", label: "Auth env var", kind: .text(placeholder: "optional env var")),
             WizardField(key: "enabled", label: "Enable source", kind: .bool, defaultValue: "yes"),
             WizardField(key: "sync", label: "Sync after adding", kind: .bool, defaultValue: "yes"),
-            WizardField(key: "scan", label: "Scan after sync", kind: .bool, defaultValue: "yes"),
+            WizardField(key: "scan", label: "Scan during sync", kind: .bool, defaultValue: "yes",
+                        visibleWhen: (key: "sync", equals: ["yes"]),
+                        help: "registry sync scans entries by default; off adds --no-scan."),
         ]
     )
 
@@ -582,6 +693,12 @@ enum TUIWizards {
         id: "trusted-paths", title: "Trusted Paths", icon: "checkmark.shield",
         blurb: "List, add, or remove trusted connector-binary discovery prefixes.",
         baseArgs: ["setup", "trusted-paths"], commandBuilder: trustedPathCommands,
+        validation: { v in
+            if ["add", "remove"].contains(value(v, "action", "list")), value(v, "directory").isEmpty {
+                return "Directory is required for add/remove."
+            }
+            return nil
+        },
         fields: [
             WizardField(key: "action", label: "Action", kind: .choice(options: ["list", "add", "remove"]), defaultValue: "list"),
             WizardField(key: "directory", label: "Directory", kind: .text(placeholder: "/opt/company/bin"), visibleWhen: (key: "action", equals: ["add", "remove"])),
@@ -615,10 +732,65 @@ enum TUIWizards {
     private static func credentialCommands(_ v: [String: String], _ mask: Bool) -> [[String]] {
         switch value(v, "action", "list") {
         case "check": [["keys", "check"]]
-        case "fill-missing": [["keys", "fill-missing", "--yes"]]
         case "set": [["keys", "set", value(v, "env")]]
         default: [["keys", "list", "--json"]]
         }
+    }
+
+    /// Secret hygiene: the API key travels via `keys set` on stdin; setup llm
+    /// only ever sees the env-var NAME.
+    private static func llmCommands(_ v: [String: String], _ mask: Bool) -> [[String]] {
+        var commands: [[String]] = []
+        if !value(v, "api-key").isEmpty {
+            commands.append(["keys", "set", value(v, "api-key-env")])
+        }
+        var args = ["setup", "llm"]
+        append(v, "provider", flag: "--provider", to: &args)
+        append(v, "model", flag: "--model", to: &args)
+        append(v, "role", flag: "--role", to: &args)
+        append(v, "api-key-env", flag: "--api-key-env", to: &args)
+        append(v, "base-url", flag: "--base-url", to: &args)
+        append(v, "bedrock-region", flag: "--bedrock-region", to: &args)
+        if value(v, "provider") == "bedrock" {
+            append(v, "bedrock-auth-mode", flag: "--bedrock-auth-mode", to: &args)
+        }
+        args.append("--non-interactive")
+        commands.append(args)
+        return commands
+    }
+
+    private static func llmValidation(_ v: [String: String]) -> String? {
+        if !value(v, "api-key").isEmpty, value(v, "api-key-env").isEmpty {
+            return "API key env var name is required when supplying an API key."
+        }
+        return nil
+    }
+
+    /// Gateway argv without the raw token; the secret persists via keys set.
+    private static func gatewayCommands(_ v: [String: String], _ mask: Bool) -> [[String]] {
+        var commands: [[String]] = []
+        if !value(v, "token").isEmpty {
+            commands.append(["keys", "set", "OPENCLAW_GATEWAY_TOKEN"])
+        }
+        var args = ["setup", "gateway"]
+        flag(v, "remote", "--remote", to: &args)
+        append(v, "host", flag: "--host", to: &args)
+        append(v, "port", flag: "--port", to: &args)
+        append(v, "api-port", flag: "--api-port", to: &args)
+        append(v, "ssm-param", flag: "--ssm-param", to: &args)
+        append(v, "ssm-region", flag: "--ssm-region", to: &args)
+        append(v, "ssm-profile", flag: "--ssm-profile", to: &args)
+        args.append(yes(v, "verify") ? "--verify" : "--no-verify")
+        args.append("--non-interactive")
+        commands.append(args)
+        return commands
+    }
+
+    private static func credentialValidation(_ v: [String: String]) -> String? {
+        guard value(v, "action", "list") == "set" else { return nil }
+        if value(v, "env").isEmpty { return "Environment variable name is required for set." }
+        if value(v, "secret").isEmpty { return "Secret value is required for set." }
+        return nil
     }
 
     private static func aiDefenseCommands(_ v: [String: String], _ mask: Bool) -> [[String]] {
@@ -816,9 +988,11 @@ enum TUIWizards {
         let action = value(v, "action", "add")
         var args = ["setup", "observability", action]
         if action == "add" {
-            args += [value(v, "preset", "local-otlp"), "--non-interactive"]
+            let preset = value(v, "preset", "local-otlp")
+            args += [preset, "--non-interactive"]
             append(v, "name", flag: "--name", to: &args)
-            append(v, "endpoint", flag: "--endpoint", to: &args)
+            // The webhook preset reads --url, not --endpoint.
+            append(v, "endpoint", flag: preset == "webhook" ? "--url" : "--endpoint", to: &args)
             appendSecure(v, "token", flag: "--token", mask: mask, to: &args)
             append(v, "signals", flag: "--signals", to: &args)
         } else if ["enable", "disable", "remove"].contains(action) {
@@ -863,9 +1037,23 @@ enum TUIWizards {
         add.append(yes(v, "enabled") ? "--enabled" : "--disabled")
         add.append("--non-interactive")
         var commands = [add]
-        if yes(v, "sync") { commands.append(["registry", "sync", id]) }
-        if yes(v, "scan") { commands.append(["skill", "scan", "--registry", id]) }
+        // `registry sync` runs the scanners itself (--scan defaults on);
+        // --no-scan opts out. There is no separate scan command to chain.
+        if yes(v, "sync") {
+            var sync = ["registry", "sync", id]
+            if !yes(v, "scan") { sync.append("--no-scan") }
+            commands.append(sync)
+        }
         return commands
+    }
+
+    private static func registryValidation(_ v: [String: String]) -> String? {
+        if value(v, "id").isEmpty { return "Source ID is required." }
+        let kind = value(v, "kind", "http_yaml")
+        if ["http_yaml", "http_json", "git", "file"].contains(kind), value(v, "url").isEmpty {
+            return "Manifest URL is required for kind=\(kind)."
+        }
+        return nil
     }
 
     private static func notificationCommands(_ v: [String: String], _ mask: Bool) -> [[String]] {

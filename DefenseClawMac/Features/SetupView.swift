@@ -1,7 +1,8 @@
 // Setup panel (spec §9.13): TUI setup workflows as data-driven native forms,
 // each ending in a review step that shows the exact `defenseclaw setup …`
-// command before applying via CLIRunner. Plus a config editor for direct
-// PATCH /config/patch edits.
+// command before applying via CLIRunner. Plus a typed config editor whose
+// section catalog is dumped from the installed runtime (self-updating on
+// runtime upgrades) and whose saves go through the runtime's own writer.
 
 import SwiftUI
 
@@ -63,6 +64,9 @@ struct WizardDefinition: Identifiable {
     /// Optional form validation. Returning a message keeps Review disabled and
     /// surfaces the same requirement before invoking the CLI.
     var validation: (([String: String]) -> String?)? = nil
+    /// Optional live-config prefill: values derived from config.yaml override
+    /// static defaults so an untouched apply never resets current posture.
+    var liveDefaults: ((YAMLNode) -> [String: String])? = nil
     let fields: [WizardField]
 }
 
@@ -106,7 +110,7 @@ struct SetupView: View {
                 Divider().padding(.vertical, 4)
 
                 Text("Config Editor").font(.title3.weight(.semibold))
-                Text("Typed, sectioned config.yaml editor — the TUI's Setup sections. Changes are reviewed as a diff, applied through the gateway (PATCH /config/patch), and queue a gateway restart.")
+                Text("Typed, sectioned config.yaml editor generated from the installed runtime's own catalog — new runtime settings appear here automatically. Changes are diff-reviewed, saved through the runtime's config writer, and queue a gateway restart.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 ConfigEditorView()
@@ -239,6 +243,13 @@ struct WizardSheet: View {
         .onAppear {
             for field in wizard.fields where values[field.key] == nil {
                 values[field.key] = field.defaultValue
+            }
+            // Live-config prefill outranks static defaults (never downgrade
+            // current posture on an untouched apply).
+            if let liveDefaults = wizard.liveDefaults {
+                for (key, value) in liveDefaults(appState.config.raw) where !value.isEmpty {
+                    values[key] = value
+                }
             }
             // TUI parity: the connector wizard preselects the configured
             // claw.mode connector, not a hardcoded default.
@@ -490,9 +501,30 @@ struct ConfigEditorView: View {
     @State private var statusOK = true
     @State private var restartQueued = false
     @State private var saving = false
+    /// Sections dumped from the installed runtime's own catalog — new
+    /// runtime features appear here on upgrade with no Mac code changes.
+    @State private var dynamicSections: [ConfigEditorSection]?
+    @State private var uncatalogued: ConfigEditorSection?
+    @State private var catalogSource = "loading…"
+    @State private var fieldSearch = ""
 
     private var sections: [ConfigEditorSection] {
-        ConfigEditorCatalog.sections(activeConnectors: appState.activeConnectorNames)
+        var all = dynamicSections
+            ?? ConfigEditorCatalog.sections(activeConnectors: appState.activeConnectorNames)
+        if let uncatalogued { all.append(uncatalogued) }
+        return all
+    }
+
+    /// Fields matching the cross-section search, with their section names.
+    private var searchMatches: [(section: String, field: ConfigEditorField)] {
+        let query = fieldSearch.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return [] }
+        return sections.flatMap { section in
+            section.fields.filter { field in
+                field.interactive &&
+                "\(field.label) \(field.key) \(field.hint)".localizedCaseInsensitiveContains(query)
+            }.map { (section.name, $0) }
+        }
     }
 
     private var currentSection: ConfigEditorSection? {
@@ -541,25 +573,73 @@ struct ConfigEditorView: View {
                 .padding(8)
                 .background(Cisco.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
             }
-            HStack(alignment: .top, spacing: 0) {
-                List(sections, selection: $selectedSection) { section in
-                    HStack {
-                        Text(section.name)
-                        Spacer()
-                        if sectionHasEdits(section) {
-                            Circle().fill(Cisco.orange).frame(width: 6, height: 6)
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Search all settings (label, key, or hint)", text: $fieldSearch)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 380)
+                if !fieldSearch.isEmpty {
+                    Button("Clear") { fieldSearch = "" }
+                        .controlSize(.small)
+                }
+                Spacer()
+                Text(catalogSource)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                Button {
+                    loadCatalog()
+                } label: {
+                    Label("Reload Catalog", systemImage: "arrow.clockwise")
+                }
+                .controlSize(.small)
+                .help("Re-dump the section catalog from the installed runtime")
+            }
+            if fieldSearch.isEmpty {
+                HStack(alignment: .top, spacing: 0) {
+                    List(sections, selection: $selectedSection) { section in
+                        HStack {
+                            Text(section.name)
+                            Spacer()
+                            if sectionHasEdits(section) {
+                                Circle().fill(Cisco.orange).frame(width: 6, height: 6)
+                            }
+                        }
+                        .tag(section.name)
+                    }
+                    .listStyle(.sidebar)
+                    .frame(width: 190)
+                    Divider()
+                    sectionForm
+                }
+                // Embedded in the Setup tab's ScrollView, so the sidebar List
+                // needs an explicit height or it collapses to zero.
+                .frame(height: 520)
+            } else {
+                // Cross-section search results as a flat list.
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if searchMatches.isEmpty {
+                            Text("No settings match “\(fieldSearch)”.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.top, 12)
+                        }
+                        ForEach(Array(searchMatches.enumerated()), id: \.offset) { _, match in
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(match.section)
+                                    .font(.caption2)
+                                    .foregroundStyle(Cisco.blue)
+                                    .frame(width: 130, alignment: .leading)
+                                    .lineLimit(1)
+                                fieldRow(match.field)
+                            }
                         }
                     }
-                    .tag(section.name)
+                    .padding(.trailing, 8)
                 }
-                .listStyle(.sidebar)
-                .frame(width: 190)
-                Divider()
-                sectionForm
+                .frame(height: 520)
             }
-            // Embedded in the Setup tab's ScrollView, so the sidebar List
-            // needs an explicit height or it collapses to zero.
-            .frame(height: 520)
             HStack {
                 if let error = firstValidationError {
                     Label(error, systemImage: "exclamationmark.triangle")
@@ -582,7 +662,7 @@ struct ConfigEditorView: View {
                 .help("Review the pending config changes before saving (writes config.yaml via the DefenseClaw runtime)")
             }
         }
-        .task { loadOriginals() }
+        .task { loadCatalog() }
         .sheet(isPresented: $showDiff) {
             ConfigDiffSheet(entries: diffEntries, saving: saving) { save in
                 if save { applyChanges() } else { showDiff = false }
@@ -717,15 +797,37 @@ struct ConfigEditorView: View {
         }
     }
 
-    /// Capture the on-disk values for every catalog key. Secrets stay out of
-    /// `original` (write-only fields) so they can never echo into the UI.
-    private func loadOriginals() {
+    /// Load the section catalog + on-disk values. Prefers the runtime's own
+    /// catalog (self-updating on runtime upgrades); falls back to the static
+    /// built-in port. Secrets stay out of `original` (write-only fields) so
+    /// they can never echo into the UI. Keys in config.yaml that neither
+    /// catalog describes land in the "Other (uncatalogued)" section.
+    private func loadCatalog() {
         Task {
             let cfg = await appState.configStore.reload()
             var values: [String: String] = [:]
-            for field in sections.flatMap(\.fields) where !field.key.isEmpty {
-                if field.kind == .password { continue }
-                values[field.key] = Self.displayValue(cfg.raw[field.key])
+            var active: [ConfigEditorSection]
+            if let dynamic = await DynamicConfigCatalog.load(using: appState.cli) {
+                dynamicSections = dynamic.sections
+                values = dynamic.values
+                active = dynamic.sections
+                let version = appState.installedRuntimeVersion.map { " \($0)" } ?? ""
+                catalogSource = "runtime catalog\(version) · \(dynamic.sections.count) sections"
+            } else {
+                dynamicSections = nil
+                active = ConfigEditorCatalog.sections(activeConnectors: appState.activeConnectorNames)
+                catalogSource = "built-in catalog (runtime dump unavailable)"
+                for field in active.flatMap(\.fields) where !field.key.isEmpty {
+                    if field.kind == .password { continue }
+                    values[field.key] = Self.displayValue(cfg.raw[field.key])
+                }
+            }
+            let known = Set(active.flatMap(\.fields).map(\.key).filter { !$0.isEmpty })
+            if let extra = DynamicConfigCatalog.uncataloguedSection(raw: cfg.raw, knownKeys: known) {
+                uncatalogued = extra.section
+                values.merge(extra.values) { current, _ in current }
+            } else {
+                uncatalogued = nil
             }
             original = values
             edited = [:]
@@ -801,7 +903,7 @@ struct ConfigEditorView: View {
                 statusOK = true
                 restartQueued = true
                 appState.reloadConfig()
-                loadOriginals()
+                loadCatalog()
             } else {
                 // cfg.save() runs after all applies, so a failure means
                 // nothing was written.
