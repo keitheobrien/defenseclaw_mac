@@ -490,6 +490,9 @@ struct AIDiscoveryView: View {
             }
         }
         .task { await load() }
+        // Pulse-fed retry: a transient gateway failure (restart mid-fetch,
+        // token rotation) must not freeze the panel on a stale error.
+        .task(id: appState.health.fetchedAt) { if error != nil { await load() } }
         .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in Task { await load() } }
         .onReceive(NotificationCenter.default.publisher(for: .dcScanAIDiscovery)) { _ in
             guard !scanning, appState.gatewayReachable else { return }

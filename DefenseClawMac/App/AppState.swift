@@ -158,6 +158,7 @@ final class AppState {
 
     private var pulseTask: Task<Void, Never>?
     private var wasReachable: Bool?
+    @ObservationIgnored private var lastConfigSignature = ""
 
     init() {
         let runner = CLIRunner()
@@ -210,6 +211,17 @@ final class AppState {
     }
 
     func pulse() async {
+        // Re-resolve config + gateway token when config.yaml/.env changed on
+        // disk (token rotation, setup commands, the TUI editing config) —
+        // /health is unauthenticated, so a stale token otherwise only
+        // surfaces as 401s on the authed endpoints until app relaunch.
+        let signature = ConfigStore.diskSignature
+        if signature != lastConfigSignature {
+            lastConfigSignature = signature
+            let cfg = await configStore.reload()
+            config = cfg
+            await gateway.update(config: cfg)
+        }
         do {
             var snap = try await gateway.health()
             // Enrich connector rows: mode/rule pack from config, and

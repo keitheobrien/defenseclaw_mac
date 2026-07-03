@@ -209,6 +209,18 @@ enum MiniYAML {
 actor ConfigStore {
     static let dataDirectory = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".defenseclaw")
+
+    /// Cheap change signature over config.yaml + .env (mtime/size) so the
+    /// pulse can re-resolve the gateway token and config when either file
+    /// changes out-of-band (token rotation, setup commands, the TUI).
+    static var diskSignature: String {
+        [configURL, dataDirectory.appendingPathComponent(".env")].map { url in
+            let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
+            let mtime = (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+            let size = (attrs?[.size] as? Int) ?? 0
+            return "\(url.lastPathComponent):\(mtime):\(size)"
+        }.joined(separator: "|")
+    }
     static let configURL = dataDirectory.appendingPathComponent("config.yaml")
     static let auditDBURL = dataDirectory.appendingPathComponent("audit.db")
     static let gatewayJSONLURL = dataDirectory.appendingPathComponent("gateway.jsonl")
