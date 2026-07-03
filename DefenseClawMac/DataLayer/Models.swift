@@ -72,6 +72,19 @@ struct HealthSnapshot: Sendable {
     /// The SERVICES Telemetry row detail (TUI telemetry_detail()), e.g.
     /// "1 destination: splunk-o11y (99.9% delivered)".
     var telemetryDetail: String = ""
+    /// The singular primary "connector" object from /health — drives the
+    /// connector-drift and zero-requests notices (distinct from connectors[]).
+    var primaryConnector: PrimaryConnectorHealth?
+
+    struct PrimaryConnectorHealth: Sendable {
+        var name: String
+        var state: String
+        var requests: Int
+        var toolInspectionMode: String = ""
+        var toolBlocks: Int = 0
+        var subprocessBlocks: Int = 0
+        var since: Date?
+    }
 
     struct Subsystem: Identifiable, Sendable {
         var name: String
@@ -80,6 +93,7 @@ struct HealthSnapshot: Sendable {
         /// Stringified scalar values from the /health subsystem's nested
         /// "details" object (e.g. skill_dirs, active_signals, addr, summary).
         var details: [String: String] = [:]
+        var since: Date?
         var id: String { name }
     }
 
@@ -125,6 +139,9 @@ struct ConnectorHealth: Identifiable, Sendable {
     var inspections: Int = 0  // /health tool_inspections
     var errors: Int = 0
     var state: String
+    /// Gateway-session start for this connector (/health connectors[].since) —
+    /// drives the TUI's live-window test and session-scoped counts.
+    var since: Date?
     var id: String { name }
 }
 
@@ -133,6 +150,14 @@ struct OverviewEnforcementMetrics: Sendable, Equatable {
     var blocks: Int = 0
     var findings: Int = 0
     var updatedAt: Date = .distantPast
+}
+
+/// One "What needs attention" line (TUI OverviewNotice): level info|warn|error.
+struct OverviewNotice: Identifiable, Sendable, Equatable {
+    enum Level: String, Sendable { case info, warn, error }
+    var level: Level
+    var message: String
+    var id: String { "\(level.rawValue)-\(message)" }
 }
 
 /// One label/value row of the Overview CONFIGURATION box (parity with the
@@ -316,6 +341,9 @@ struct EgressEvent: Identifiable, Sendable, Hashable {
     var targetPath: String = ""   // egress.target_path
     var bodyShape: String = ""    // egress.body_shape
     var source: String = ""       // egress.source
+    /// False when the row's ts failed to parse (timestamp is ingest time) —
+    /// such rows are excluded from the silent-bypass window like the TUI.
+    var timestampParsed = true
 
     /// The TUI's synthetic egress detail line (alerts.synthetic_egress_event).
     var detailLine: String {
@@ -539,6 +567,12 @@ struct AIUsageSnapshot: Sendable {
     var lastScan: Date?
     var components: [AIComponent] = []
     var signals: [AISignal] = []
+    // Overview box inputs (TUI ai_discovery_box)
+    var enabled: Bool = true
+    var newSignals: Int = 0
+    var changedSignals: Int = 0
+    var goneSignals: Int = 0
+    var privacyMode: String = ""
 
     /// Grouped one-row-per-product view, exactly as the TUI presents it.
     var rows: [AIDiscoveryRow] { AIDiscoveryGrouping.rows(from: signals) }
@@ -580,6 +614,11 @@ struct AISignal: Sendable, Hashable {
     var firstSeen: Date?
     var lastSeen: Date?
     var lastActive: Date?
+    // Overview-box row inputs (TUI display/dedup keys)
+    var name: String = ""
+    var supportedConnector: String = ""
+    var signalID: String = ""
+    var signatureID: String = ""
 }
 
 /// Grouped product row — exact port of the TUI's AIDiscoveryRow (_rebuild()).

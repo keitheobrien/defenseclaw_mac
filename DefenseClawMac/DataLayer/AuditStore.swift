@@ -247,6 +247,54 @@ actor AuditStore {
         )
     }
 
+    /// db.py::connector_hook_event_stats — ALL-TIME per-connector totals for
+    /// the Connectors table's no-live-window fallback, so CALLS doesn't
+    /// freeze at the recent-window size (the TUI calls this out explicitly).
+    /// Requires the audit_events.connector column (schema v7+); returns [:]
+    /// on older schemas and callers fall back to the windowed stats.
+    func connectorStatsAllTime() -> [String: ConnectorStats] {
+        guard tableExists("audit_events") else { return [:] }
+        let rows = query("""
+            SELECT connector, COUNT(*) AS calls,
+                   SUM(CASE WHEN ' '||COALESCE(details,'')||' ' LIKE '% action=block %'
+                              OR ' '||COALESCE(details,'')||' ' LIKE '% action=deny %'
+                       THEN 1 ELSE 0 END) AS blocks,
+                   SUM(CASE WHEN ' '||COALESCE(details,'')||' ' LIKE '% action=alert %'
+                              OR ' '||COALESCE(details,'')||' ' LIKE '% action=warn %'
+                       THEN 1 ELSE 0 END) AS alerts,
+                   MAX(timestamp) AS newest
+            FROM audit_events
+            WHERE action = 'connector-hook' AND connector <> ''
+            GROUP BY connector
+            """)
+        var out: [String: ConnectorStats] = [:]
+        for row in rows {
+            guard let name = row["connector"] as? String, !name.isEmpty else { continue }
+            let calls = (row["calls"] as? Int) ?? 0
+            out[name] = ConnectorStats(
+                hookCalls: calls,
+                blocks: min((row["blocks"] as? Int) ?? 0, calls),
+                alerts: min((row["alerts"] as? Int) ?? 0, calls),
+                lastActivity: DCDates.parse(row["newest"])
+            )
+        }
+        return out
+    }
+
+    /// db.py::count_scan_results_since — the ACTIVITY card's session-scoped
+    /// "Total scans". nil since = all-time.
+    func countScanResultsSince(_ since: Date?) -> Int {
+        guard tableExists("scan_results") else { return 0 }
+        guard let since else {
+            return (query("SELECT COUNT(*) AS n FROM scan_results").first?["n"] as? Int) ?? 0
+        }
+        let iso = ISO8601DateFormatter().string(from: since)
+        return (query(
+            "SELECT COUNT(*) AS n FROM scan_results WHERE datetime(timestamp) >= datetime(?)",
+            binds: [iso]
+        ).first?["n"] as? Int) ?? 0
+    }
+
     /// Connector breakdown parity with the TUI:
     /// `AuditPanelModel.refresh()` loads the latest 500 audit rows, and the
     /// hook-call tile's `_connector_hook_breakdown()` scans `items[-200:]`.

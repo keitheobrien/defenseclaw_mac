@@ -131,6 +131,18 @@ final class AppState {
     /// Latest audit-derived per-connector stats (pulse-fed) — the fallback
     /// source for scoped metrics when /health has no row for a connector.
     var connectorStatsCache: [String: AuditStore.ConnectorStats] = [:]
+    /// ALL-TIME per-connector totals (db.py connector_hook_event_stats) —
+    /// the Connectors table's no-live-window fallback so CALLS doesn't
+    /// freeze at the recent-window size. Empty on pre-v7 schemas.
+    var connectorStatsAllTimeCache: [String: AuditStore.ConnectorStats] = [:]
+    /// Last-good doctor cache from <data_dir>/doctor_cache.json (pulse-fed).
+    var doctorCache: DoctorCache?
+    /// Silent LLM bypass egress events in the last 5 minutes (pulse-fed).
+    var silentBypassCount = 0
+    /// Session-scoped "Total scans" for the Activity card (pulse-fed).
+    var sessionTotalScans = 0
+    /// True while a background diagnose probe is running (⇧⌘D).
+    var diagnoseRunning = false
     var alertPanelRequest: AlertPanelRequest?
     var auditPresetRequest: String?
     var logPanelRequest: LogPanelRequest?
@@ -205,6 +217,7 @@ final class AppState {
             // out-of-band, so /health counters can sit at zero).
             let stats = await audit.connectorStats()
             connectorStatsCache = stats
+            connectorStatsAllTimeCache = await audit.connectorStatsAllTime()
             for i in snap.connectors.indices {
                 let name = snap.connectors[i].name
                 snap.connectors[i].mode = config.connectorModes[name]
@@ -248,7 +261,16 @@ final class AppState {
         // config, .env) — refresh them even when offline so the card stays
         // useful. guardrailState falls back to the last-known subsystem.
         let guardrailState = health.subsystems.first { $0.name == "guardrail" }?.state
-        scanners = ScannerProbe.statuses(config: config, guardrailState: guardrailState)
+        // Doctor cache: keep last-good on parse failure (TUI semantics).
+        doctorCache = DoctorCache.load() ?? doctorCache
+        scanners = ScannerProbe.statuses(
+            config: config,
+            guardrailState: guardrailState,
+            missingCredentials: (doctorCache?.isEmpty == false) ? doctorCache!.missingRequiredCredentials : nil
+        )
+        // Session-scoped Total scans since the earliest connector session
+        // start; all-time when no session window has ever been observed.
+        sessionTotalScans = await audit.countScanResultsSince(sessionStart)
 
         // Tail the JSONL stream and refresh the alert set.
         _ = await stream.poll()
@@ -264,6 +286,14 @@ final class AppState {
         let queue = await audit.alertQueueEvents(limit: 500)
         let blocks = await stream.scanBlocks
         let egress = await stream.egress
+
+        // count_recent_silent_bypass: allow-decision LLM-shaped bypasses in
+        // the last 300s (passthrough+looks_like_llm, or the shape branch).
+        let bypassCutoff = Date().addingTimeInterval(-300)
+        silentBypassCount = egress.filter {
+            $0.timestampParsed && $0.timestamp >= bypassCutoff && $0.decision == "allow"
+                && (($0.branch == "passthrough" && $0.looksLikeLLM) || $0.branch == "shape")
+        }.count
 
         var rows: [AlertRow] = queue.map { .audit($0) }
         rows += blocks.map { .scan($0) }
@@ -652,20 +682,55 @@ final class AppState {
         // degraded when some are, disabled when every one is down/absent.
         let connStates = health.connectors.map { $0.state.lowercased() }
         let up = connStates.filter { running.contains($0) }.count
-        let total = connStates.count
+        let roster = config.connectors
+        let disabledN = roster.filter { config.connectorDisabled.contains($0.lowercased()) }.count
+        let rosterTotal = roster.count
+        let enabledTotal = max(rosterTotal - disabledN, 0)
+        let multiConnector = rosterTotal > 1
+
         let agentState: String = {
-            guard total > 0 else { return health.connectors.isEmpty && config.connectors.isEmpty ? "unknown" : "disabled" }
-            if up == total { return "running" }
+            // TUI: health None → "unknown" unconditionally.
+            guard gatewayReachable else { return "unknown" }
+            guard multiConnector else {
+                // Single-connector: the primary connector's live state.
+                return health.primaryConnector?.state.nonEmpty ?? "unknown"
+            }
+            guard !connStates.isEmpty else {
+                // No live rows: every rostered connector killed → disabled;
+                // else a pre-connectors[] gateway falls back to the singular
+                // primary connector's state.
+                if rosterTotal > 0, disabledN == rosterTotal { return "disabled" }
+                return health.primaryConnector?.state.nonEmpty ?? "unknown"
+            }
+            if up == connStates.count { return "running" }
             if up > 0 { return "degraded" }
             return connStates.first ?? "unknown"
         }()
         let agentDetail: String = {
-            guard total > 0 else {
-                let n = config.connectors.count
-                return n > 0 ? "\(n) connector\(n == 1 ? "" : "s") configured" : ""
+            guard multiConnector else {
+                // Single-connector: friendly name + live counters, or the
+                // configured-but-not-connected hint (TUI agent_detail).
+                let configured = (config.connectorMode ?? config.connectorName ?? "")
+                guard let primary = health.primaryConnector else {
+                    return configured.isEmpty ? "" : "\(friendlyConnectorName(configured)) (configured, not connected)"
+                }
+                var parts = [friendlyConnectorName(primary.name)]
+                if !primary.toolInspectionMode.isEmpty { parts.append(primary.toolInspectionMode) }
+                if primary.requests > 0 { parts.append("\(primary.requests) req") }
+                if primary.toolBlocks > 0 { parts.append("\(primary.toolBlocks) tool blocks") }
+                if primary.subprocessBlocks > 0 { parts.append("\(primary.subprocessBlocks) subprocess blocks") }
+                return parts.joined(separator: " - ")
             }
-            if up == total { return "\(total) connector\(total == 1 ? "" : "s") active" }
-            return "\(up)/\(total) connectors running"
+            if disabledN == 0 {
+                if connStates.isEmpty { return "\(rosterTotal) connectors configured" }
+                if up == rosterTotal { return "\(rosterTotal) connectors active" }
+                return "\(up)/\(rosterTotal) connectors running"
+            }
+            // One or more kill switches: report the disabled count separately.
+            let suffix = " · \(disabledN) disabled"
+            if enabledTotal == 0 { return "0 active\(suffix)" }
+            if !connStates.isEmpty, up < enabledTotal { return "\(up)/\(enabledTotal) running\(suffix)" }
+            return "\(enabledTotal) active\(suffix)"
         }()
 
         func sub(_ key: String) -> HealthSnapshot.Subsystem? { health.subsystem(key) }
@@ -729,6 +794,307 @@ final class AppState {
             ServiceStatus(key: "ai_discovery", name: "AI Discovery", state: state("ai_discovery"), detail: aiDetail),
             ServiceStatus(key: "sandbox", name: "Sandbox", state: state("sandbox"), detail: ""),
         ]
+    }
+
+    // MARK: - Command-output chrome (TUI Y / Ctrl+S / Shift+D)
+
+    /// The TUI's Y yank: copy the LAST command's output body (no header) to
+    /// the clipboard, with the two warn cases surfaced as notifications.
+    func copyLastCommandOutput() {
+        guard let entry = activity.entries.first else {
+            notify(title: "DefenseClaw", body: "No command output to copy yet.", id: "yank-\(Date().timeIntervalSince1970)")
+            return
+        }
+        let body = entry.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else {
+            notify(title: "DefenseClaw", body: "Last command produced no output.", id: "yank-\(Date().timeIntervalSince1970)")
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(entry.output, forType: .string)
+        notify(title: "DefenseClaw", body: "Copied last output to clipboard.", id: "yank-\(Date().timeIntervalSince1970)")
+    }
+
+    /// The TUI's Ctrl+S: write the last command's output (with the run-header
+    /// preamble) to <data_dir>/last-run.log, chmod 0600.
+    func exportLastCommandOutput() {
+        guard let entry = activity.entries.first else {
+            notify(title: "DefenseClaw", body: "No command output to save yet.", id: "export-\(Date().timeIntervalSince1970)")
+            return
+        }
+        let iso = ISO8601DateFormatter()
+        let header = """
+        # \(entry.command)
+        # \(entry.statusLabel.lowercased())
+        # started \(iso.string(from: entry.startedAt))
+        # saved   \(iso.string(from: Date()))
+
+        """
+        let target = ConfigStore.dataDirectory.appendingPathComponent("last-run.log")
+        do {
+            try (header + entry.output + "\n").write(to: target, atomically: true, encoding: .utf8)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
+            notify(title: "DefenseClaw", body: "Wrote last-run.log → \(target.path)", id: "export-\(Date().timeIntervalSince1970)")
+        } catch {
+            notify(title: "DefenseClaw", body: "Save failed: \(error.localizedDescription)", id: "export-\(Date().timeIntervalSince1970)")
+        }
+    }
+
+    /// The TUI's Shift+D background diagnose: run `defenseclaw doctor`
+    /// silently (no panel switch, no Activity entry), report a one-line
+    /// summary, and reload the doctor cache it rewrites.
+    func runBackgroundDiagnose() {
+        guard !diagnoseRunning else {
+            notify(title: "DefenseClaw", body: "Diagnose already running — waiting for the current probe to finish.",
+                   id: "diag-\(Date().timeIntervalSince1970)")
+            return
+        }
+        diagnoseRunning = true
+        notify(title: "DefenseClaw", body: "Running defenseclaw doctor…", id: "diag-start-\(Date().timeIntervalSince1970)")
+        Task {
+            // TUI: 60s budget, then kill the probe.
+            let runID = UUID()
+            let watchdog = Task {
+                try? await Task.sleep(for: .seconds(60))
+                if !Task.isCancelled { await cli.cancel(runID: runID) }
+            }
+            let result = await cli.run(arguments: ["doctor"], runID: runID)
+            watchdog.cancel()
+            diagnoseRunning = false
+            doctorCache = DoctorCache.load() ?? doctorCache
+            let lines = result.output.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
+            let summary = Self.diagnoseSummaryLine(lines)
+            if result.succeeded {
+                notify(title: "Doctor OK", body: summary.isEmpty ? "All checks completed." : summary,
+                       id: "diag-ok-\(Date().timeIntervalSince1970)")
+            } else {
+                notify(title: "Doctor exit \(result.exitCode)", body: lines.last ?? "",
+                       id: "diag-fail-\(Date().timeIntervalSince1970)")
+            }
+        }
+    }
+
+    /// TUI _diagnose_summary_line: prefer a "summary" line, then known result
+    /// needles scanned in reverse, then the first line.
+    private static func diagnoseSummaryLine(_ lines: [String]) -> String {
+        func trimmed(_ line: String) -> String {
+            line.trimmingCharacters(in: CharacterSet(charactersIn: ": -=")).trimmingCharacters(in: .whitespaces)
+        }
+        if let summary = lines.last(where: { $0.lowercased().contains("summary") }) {
+            return trimmed(summary)
+        }
+        for needle in ["checks passed", "issues detected", "issue(s)", "failures", "errors", "ok"] {
+            if let hit = lines.reversed().first(where: { $0.lowercased().contains(needle) }) {
+                return trimmed(hit)
+            }
+        }
+        return lines.first.map(trimmed) ?? ""
+    }
+
+    // MARK: - Attention notices (TUI build_notices, emission order = display order)
+
+    /// Earliest connector session start from /health connectors[].since —
+    /// nil means no live session window (fall back to all-time counts).
+    var sessionStart: Date? {
+        health.connectors.compactMap(\.since).min()
+            ?? health.primaryConnector?.since
+            ?? health.subsystem("guardrail")?.since
+    }
+
+    var overviewNotices: [OverviewNotice] {
+        var notices: [OverviewNotice] = []
+        let gatewayState = (health.subsystem("gateway")?.state ?? "")
+            .trimmingCharacters(in: .whitespaces).lowercased()
+        let gatewayBroken = !gatewayReachable || !["running", "disabled"].contains(gatewayState)
+        let gatewayStandalone = gatewayReachable && gatewayState == "disabled"
+        let guardrailOff = !config.guardrailEnabled
+        let skillScannerAvailable = ScannerProbe.binaryInstalled("skill-scanner")
+
+        if gatewayBroken && guardrailOff && !skillScannerAvailable {
+            notices.append(.init(level: .info, message: "First time? Head to the Setup panel to configure DefenseClaw."))
+        }
+        if gatewayBroken {
+            notices.append(.init(level: .error, message: "Gateway is offline - use Start Gateway in Quick Actions"))
+        } else if gatewayStandalone {
+            let details = health.subsystem("gateway")?.details ?? [:]
+            if let hint = (details["hint"]?.nonEmpty ?? details["summary"]?.nonEmpty) {
+                notices.append(.init(level: .info, message: hint))
+            }
+        }
+        if !config.rosterError.isEmpty {
+            notices.append(.init(level: .error, message: "Connector roster degraded: \(config.rosterError) - showing a reduced view; check your connector config"))
+        }
+        if installDetected, guardrailOff {
+            notices.append(.init(level: .warn, message: "LLM guardrail not configured - set it up in Setup → Guardrail"))
+        }
+        if !skillScannerAvailable {
+            notices.append(.init(level: .warn, message: "skill-scanner not on PATH - run: pip install skill-scanner"))
+        }
+        if silentBypassCount > 0 {
+            notices.append(.init(level: .warn, message: "\(silentBypassCount) silent LLM bypass event(s) in the last 5m - see Alerts -> egress"))
+        }
+        if let doctor = doctorCache, !doctor.isEmpty {
+            let contradicted = doctor.checks.filter { liveHealthContradicts($0) }
+            let staleFailures = contradicted.filter { $0.status == "fail" }.count
+            let effectiveFailed = max(doctor.failed - staleFailures, 0)
+            if effectiveFailed > 0 {
+                notices.append(.init(level: .error, message: "Doctor found \(effectiveFailed) failure(s) - see the Doctor card or run: defenseclaw doctor"))
+            } else if !contradicted.isEmpty {
+                notices.append(.init(level: .info, message: "Doctor cache shows \(contradicted.count) stale failure(s) that /health disagrees with - run Health Check to refresh"))
+            } else if doctor.isStale() {
+                notices.append(.init(level: .info, message: "Doctor cache is stale - run Health Check to re-probe"))
+            }
+            let missing = doctor.missingRequiredCredentials
+            if !missing.isEmpty {
+                let preview = missing.prefix(2).joined(separator: ", ")
+                let overflow = missing.count > 2 ? " (+\(missing.count - 2) more)" : ""
+                notices.append(.init(level: .error, message: "Missing required API key(s): \(preview)\(overflow) - run: defenseclaw keys fill-missing"))
+            }
+        }
+        // TUI parity: health=None (gateway unreachable) skips this block —
+        // otherwise stale drift/zero-requests notices freeze alongside the
+        // "Gateway is offline" error.
+        if gatewayReachable, let primary = health.primaryConnector, installDetected {
+            let live = primary.name.trimmingCharacters(in: .whitespaces)
+            // The drift check compares against claw.mode with the runtime
+            // loader's "openclaw" default (NOT connectorMode's fallback chain).
+            let configured = config.clawMode.trimmingCharacters(in: .whitespaces)
+            if !live.isEmpty, !configured.isEmpty, live != configured {
+                notices.append(.init(level: .warn, message: "Connector drift: configured \(friendlyConnectorName(configured)) but gateway is routing for \(friendlyConnectorName(live)) - restart the sidecar after editing claw.mode"))
+            }
+            if primary.requests == 0, health.uptimeMs > 60_000 {
+                notices.append(.init(level: .info, message: Self.zeroRequestsNotice(live: live, uptimeMs: health.uptimeMs)))
+            }
+        }
+        return notices
+    }
+
+    /// TUI zero_connector_requests_notice.
+    private static func zeroRequestsNotice(live: String, uptimeMs: Int) -> String {
+        let name = friendlyConnectorName(live)
+        let secs = uptimeMs / 1000
+        let h = secs / 3600, m = (secs % 3600) / 60
+        let formatted = h > 0 ? "\(h)h \(m)m" : (m > 0 ? "\(m)m" : "\(secs)s")
+        switch live.trimmingCharacters(in: .whitespaces).lowercased() {
+        case "codex":
+            return "\(name) connector has seen 0 hook events after \(formatted) - normal until Codex emits a hook/notify event; verify ~/.codex hooks if this persists"
+        case "claudecode":
+            return "\(name) connector has seen 0 hook events after \(formatted) - normal until Claude Code emits a hook event; verify Claude Code hooks if this persists"
+        case "omnigent":
+            return "\(name) connector has seen 0 policy events after \(formatted) - normal until OmniGent emits a supported policy callback; verify OmniGent policy setup if this persists"
+        case "hermes", "cursor", "windsurf", "geminicli", "copilot", "openhands", "antigravity", "opencode":
+            return "\(name) connector has seen 0 hook events after \(formatted) - verify connector hook setup if this persists"
+        default:
+            return "\(name) connector has seen 0 requests after \(formatted) - verify your agent is dialing the gateway port (gateway.port)"
+        }
+    }
+
+    /// TUI live_health_contradicts: a cached fail/warn check is STALE when
+    /// /health says the subsystem is actually running.
+    func liveHealthContradicts(_ check: DoctorCache.Check) -> Bool {
+        guard gatewayReachable, ["fail", "warn"].contains(check.status) else { return false }
+        func running(_ key: String) -> Bool {
+            (health.subsystem(key)?.state ?? "").lowercased() == "running"
+        }
+        switch check.label.trimmingCharacters(in: .whitespaces).lowercased() {
+        case "sidecar api": return running("api")
+        case "guardrail proxy": return running("guardrail")
+        case "openclaw gateway", "gateway": return running("gateway")
+        case let label where label.hasPrefix("otel"): return running("telemetry")
+        default: return false
+        }
+    }
+
+    // MARK: - Doctor box (TUI doctor_box)
+
+    struct DoctorBoxState {
+        struct CheckRow: Identifiable {
+            var badge: String   // FAIL | WARN | STALE
+            var label: String
+            var detail: String
+            var stale: Bool
+            var id: String { "\(badge)-\(label)" }
+        }
+        var empty = true
+        var summaryParts: [String] = []
+        var ageLabel = ""
+        var stale = false
+        var checks: [CheckRow] = []
+        var allGreen = false
+    }
+
+    var doctorBox: DoctorBoxState {
+        guard let doctor = doctorCache, !doctor.isEmpty else { return DoctorBoxState() }
+        let top = doctor.topFailures(3)
+        let staleFailures = doctor.checks.filter { $0.status == "fail" && liveHealthContradicts($0) }.count
+        let staleWarnings = doctor.checks.filter { $0.status == "warn" && liveHealthContradicts($0) }.count
+        let effectiveFailed = max(doctor.failed - staleFailures, 0)
+        let effectiveWarned = max(doctor.warned - staleWarnings, 0)
+        let staleCount = staleFailures + staleWarnings
+
+        var parts: [String] = []
+        if doctor.passed > 0 { parts.append("\(doctor.passed) pass") }
+        if effectiveFailed > 0 { parts.append("\(effectiveFailed) fail") }
+        if effectiveWarned > 0 { parts.append("\(effectiveWarned) warn") }
+        if staleCount > 0 { parts.append("\(staleCount) stale") }
+        if doctor.skipped > 0 { parts.append("\(doctor.skipped) skip") }
+
+        let rows = top.map { check in
+            let contradicted = liveHealthContradicts(check)
+            return DoctorBoxState.CheckRow(
+                badge: contradicted ? "STALE" : check.status.uppercased(),
+                label: check.label,
+                detail: contradicted && !check.detail.isEmpty ? "\(check.detail) (live state OK)" : check.detail,
+                stale: contradicted
+            )
+        }
+        return DoctorBoxState(
+            empty: false,
+            summaryParts: parts,
+            ageLabel: doctor.ageLabel(),
+            stale: doctor.isStale(),
+            checks: rows,
+            allGreen: rows.isEmpty
+        )
+    }
+
+    // MARK: - Connectors table rows (TUI _overview_connector_rows)
+
+    /// Roster-driven rows: one per configured connector when the roster has
+    /// more than one entry, overlaying live /health rows by name. Disabled
+    /// connectors stay visible with status "disabled" and their history;
+    /// rostered connectors without a live row fall back to cached audit stats
+    /// and the gateway-level status.
+    var connectorTableRows: [ConnectorHealth] {
+        let roster = config.connectors
+        guard roster.count > 1 else { return [] }
+        let gatewayState = (health.subsystem("gateway")?.state ?? "").trimmingCharacters(in: .whitespaces)
+        let fallbackStatus = !gatewayReachable
+            ? "unknown"
+            : (gatewayState.lowercased() == "running" ? "active" : (gatewayState.nonEmpty ?? "unknown"))
+        return roster.map { name in
+            let lower = name.lowercased()
+            let disabled = config.connectorDisabled.contains(lower)
+            if var row = health.connectors.first(where: { $0.name.lowercased() == lower }) {
+                if disabled { row.state = "disabled" }
+                return row
+            }
+            // TUI Tier 2: all-time totals; windowed cache only as a last
+            // resort on pre-v7 schemas without the connector column.
+            let stats = connectorStatsAllTimeCache.first { $0.key.lowercased() == lower }?.value
+                ?? connectorStatsCache.first { $0.key.lowercased() == lower }?.value
+            return ConnectorHealth(
+                name: name,
+                mode: config.connectorModes[name]?.nonEmpty ?? config.guardrailMode ?? "observe",
+                rulePack: config.connectorRulePacks[name]?.nonEmpty ?? "default",
+                lastActivity: stats?.lastActivity,
+                calls: stats?.hookCalls ?? 0,
+                blocks: stats?.blocks ?? 0,
+                alerts: stats?.alerts ?? 0,
+                state: disabled ? "disabled" : fallbackStatus,
+                since: nil
+            )
+        }
     }
 
     // MARK: - Configuration box (Overview, parity with the TUI CONFIGURATION panel)

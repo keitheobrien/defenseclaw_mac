@@ -8,11 +8,12 @@ struct OverviewView: View {
     @Environment(AppState.self) private var appState
     @State private var summary: (blockedSkills: Int, allowedSkills: Int, blockedMCPs: Int, allowedMCPs: Int, totalScans: Int, activeAlerts: Int) = (0, 0, 0, 0, 0, 0)
     @State private var hourly: [HourlyPoint] = []
-    @State private var doctorChecks: [DoctorCheck] = []
     @State private var doctorRunning = false
     @State private var doctorOutput = ""
     @State private var showDoctorSheet = false
     @State private var aiSnapshot = AIUsageSnapshot()
+    /// False until /api/v1/ai-usage has ever succeeded → TUI "offline" state.
+    @State private var aiFetchEverSucceeded = false
     @State private var configurationExpanded = false
 
     struct HourlyPoint: Identifiable {
@@ -32,6 +33,7 @@ struct OverviewView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 14) {
+                noticesCard
                 // Hero row: System Health · Scanners · Enforcement —
                 // the three at-a-glance status blocks, all equal height.
                 // fixedSize pins the row to its tallest card; fillHeight on
@@ -47,7 +49,7 @@ struct OverviewView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 quickActionsCard
                 configurationCard
-                if !appState.health.connectors.isEmpty { connectorCard }
+                if !overviewConnectorRows.isEmpty { connectorCard }
                 observabilityCard
                 activityCard
                 HStack(alignment: .top, spacing: 14) {
@@ -109,6 +111,52 @@ struct OverviewView: View {
     private var connectorScopeChip: some View {
         @Bindable var state = appState
         ConnectorFilterChip(names: appState.activeConnectorNames, selection: $state.connectorFilter)
+    }
+
+    /// "What needs attention" (TUI build_notices): top-3 notices in emission
+    /// order with [!]/[*]/[>] severity glyphs, or the quiet fallback line.
+    private var noticesCard: some View {
+        let notices = Array(appState.overviewNotices.prefix(3))
+        return DCCard("What Needs Attention", systemImage: "exclamationmark.bubble") {
+            if notices.isEmpty {
+                HStack(spacing: 6) {
+                    Text("[OK]")
+                        .font(.caption.weight(.bold).monospaced())
+                        .foregroundStyle(Cisco.green)
+                    Text("Runtime signals are quiet.")
+                        .font(.callout)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 5) {
+                    ForEach(notices) { notice in
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(noticeGlyph(notice.level))
+                                .font(.caption.weight(.bold).monospaced())
+                                .foregroundStyle(noticeColor(notice.level))
+                            Text(notice.message)
+                                .font(.callout)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func noticeGlyph(_ level: OverviewNotice.Level) -> String {
+        switch level {
+        case .error: "[!]"
+        case .warn: "[*]"
+        case .info: "[>]"
+        }
+    }
+
+    private func noticeColor(_ level: OverviewNotice.Level) -> Color {
+        switch level {
+        case .error: Cisco.red
+        case .warn: Cisco.orange
+        case .info: Cisco.blue
+        }
     }
 
     private var quickActionsCard: some View {
@@ -291,25 +339,54 @@ struct OverviewView: View {
             : Color.adaptive(light: 0xEFEFEF, dark: 0x2A2A2C)   // alternate row (grey)
     }
 
+    /// Roster-driven rows (TUI: config roster overlaid with live health; the
+    /// table only exists on multi-connector installs). Falls back to the live
+    /// health rows when the roster is unavailable but the gateway reports >1.
+    private var overviewConnectorRows: [ConnectorHealth] {
+        let rows = appState.connectorTableRows
+        if !rows.isEmpty { return rows }
+        return appState.health.connectors.count > 1 ? appState.health.connectors : []
+    }
+
     private var connectorCard: some View {
-        DCCard("Connectors", systemImage: "cable.connector") {
-            Table(appState.health.connectors, selection: connectorRowSelection) {
+        let rows = overviewConnectorRows
+        return DCCard("Connectors", systemImage: "cable.connector") {
+            Table(rows, selection: connectorRowSelection) {
                 TableColumn("Connector") { c in
-                    HStack {
-                        Circle().fill(Cisco.stateColor(raw: c.state)).frame(width: 7, height: 7)
-                        Text("\(friendlyConnectorName(c.name)) (\(c.name))")
-                            .fontWeight(isScoped(c.name) ? .semibold : .regular)
-                            .foregroundStyle(isScoped(c.name) ? Cisco.blue : .primary)
-                    }
+                    Text("\(friendlyConnectorName(c.name)) (\(c.name))")
+                        .fontWeight(isScoped(c.name) ? .semibold : .regular)
+                        .foregroundStyle(isScoped(c.name) ? Cisco.blue : .primary)
                 }
                 TableColumn("Mode", value: \.mode)
                 TableColumn("Rule Pack", value: \.rulePack)
                 TableColumn("Last Activity") { c in Text(DCDates.relative(c.lastActivity)) }
                 TableColumn("Calls") { c in Text("\(c.calls)") }
-                TableColumn("Blocks") { c in Text("\(c.blocks)") }
-                TableColumn("Alerts") { c in Text("\(c.alerts)") }
+                TableColumn("Blocks") { c in
+                    Text("\(c.blocks)")
+                        .foregroundStyle(c.blocks > 0 ? Cisco.red : .secondary)
+                }
+                TableColumn("Alerts") { c in
+                    Text("\(c.alerts)")
+                        .foregroundStyle(c.alerts > 0 ? Cisco.orange : .secondary)
+                }
+                TableColumn("Status") { c in
+                    // TUI: ●/○ + state word, both in the state color; filled
+                    // only for running/active/enabled.
+                    let normalized = c.state.trimmingCharacters(in: .whitespaces).lowercased()
+                    let filled = ["running", "active", "enabled"].contains(normalized)
+                    HStack(spacing: 5) {
+                        if filled {
+                            Circle().fill(Cisco.stateColor(raw: c.state)).frame(width: 7, height: 7)
+                        } else {
+                            Circle().strokeBorder(Cisco.stateColor(raw: c.state), lineWidth: 1)
+                                .frame(width: 7, height: 7)
+                        }
+                        Text(c.state.nonEmpty ?? "unknown")
+                            .foregroundStyle(Cisco.stateColor(raw: c.state))
+                    }
+                }
             }
-            .frame(height: CGFloat(appState.health.connectors.count) * 28 + 32)
+            .frame(height: CGFloat(rows.count) * 28 + 32)
             .scrollDisabled(true)
             if appState.activeConnectorNames.count > 1 {
                 HStack {
@@ -416,6 +493,22 @@ struct OverviewView: View {
                 .accessibilityHint("Opens Logs filtered to guardrail events")
             }
             if filtered { connectorCoverageRows }
+            // Global silent-bypass row (TUI: appended outside the filter
+            // branch, hidden entirely at 0).
+            if appState.silentBypassCount > 0 {
+                HStack(spacing: 8) {
+                    Text("Silent bypass")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Cisco.orange)
+                    Text("\(appState.silentBypassCount)")
+                        .font(.caption.weight(.bold).monospacedDigit())
+                        .foregroundStyle(Cisco.red)
+                    Text("(see Alerts → egress)")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                    Spacer(minLength: 0)
+                }
+            }
             if appState.overviewEnforcementMetrics.updatedAt != .distantPast {
                 Text("Updated \(DCDates.relative(appState.overviewEnforcementMetrics.updatedAt))")
                     .font(.caption2)
@@ -607,8 +700,10 @@ struct OverviewView: View {
             HStack(spacing: 18) {
                 summaryItem("Skills", "\(summary.blockedSkills) blocked · \(summary.allowedSkills) allowed")
                 summaryItem("MCPs", "\(summary.blockedMCPs) blocked · \(summary.allowedMCPs) allowed")
-                summaryItem("Total scans", "\(summary.totalScans)")
-                summaryItem("Active alerts", "\(summary.activeAlerts)")
+                // Session-scoped like the TUI: scans/alerts since the earliest
+                // live connector session start; all-time when offline.
+                summaryItem("Total scans", "\(appState.sessionTotalScans)")
+                summaryItem("Active alerts", "\(sessionActiveAlerts)")
                 Spacer()
             }
             if !hourly.isEmpty {
@@ -625,48 +720,221 @@ struct OverviewView: View {
         }
     }
 
+    /// DOCTOR box (TUI doctor_box): cache-hydrated at launch, summary counts
+    /// with live-health STALE reconciliation, age + 15-min staleness flag,
+    /// top-3 fail/warn rows, all-green message.
     private var doctorCard: some View {
-        DCCard("Doctor", systemImage: "stethoscope") {
-            if doctorChecks.isEmpty {
-                Text(doctorRunning ? "Running health probe…" : "No health check run yet. Use “Run Health Check” in the toolbar.")
+        let box = appState.doctorBox
+        return DCCard("Doctor", systemImage: "stethoscope") {
+            if doctorRunning {
+                Text("Running health probe…").font(.caption).foregroundStyle(.secondary)
+            } else if box.empty {
+                Text("Not yet run — use “Run Health Check” in the toolbar.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(doctorChecks) { check in
-                    HStack(spacing: 6) {
-                        Image(systemName: icon(for: check.result))
-                            .foregroundStyle(color(for: check.result))
-                        Text(check.name).font(.caption)
-                        Spacer()
+                // Summary: "20 pass  2 fail  5 warn  1 stale  8 skip · 3m ago (stale — rerun)"
+                HStack(spacing: 8) {
+                    if box.summaryParts.isEmpty {
+                        Text("no data").font(.caption).foregroundStyle(.secondary)
+                    }
+                    ForEach(box.summaryParts, id: \.self) { part in
+                        Text(part)
+                            .font(.caption.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(summaryPartColor(part))
+                    }
+                    if !box.ageLabel.isEmpty {
+                        Text("· \(box.ageLabel)")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    if box.stale {
+                        Text("(stale — rerun)")
+                            .font(.caption)
+                            .foregroundStyle(Cisco.orange)
+                    }
+                    Spacer(minLength: 0)
+                }
+                if box.allGreen {
+                    Text("All checks passing — nothing to address.")
+                        .font(.caption)
+                        .foregroundStyle(Cisco.green)
+                } else {
+                    Divider()
+                    ForEach(Array(box.checks.enumerated()), id: \.offset) { _, check in
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text("[\(check.badge)]")
+                                .font(.caption2.weight(.bold).monospaced())
+                                .foregroundStyle(badgeColor(check.badge))
+                            Text(check.label).font(.caption)
+                            Text(check.detail)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                            Spacer(minLength: 0)
+                        }
                     }
                 }
-                Button("Deep-dive output…") { showDoctorSheet = true }
+                if !doctorOutput.isEmpty {
+                    Button("Deep-dive output…") { showDoctorSheet = true }
+                        .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    /// Summary-part tint keyed by the word: pass=green fail=red warn=amber
+    /// stale=blue skip=muted (TUI header coloring).
+    private func summaryPartColor(_ part: String) -> Color {
+        if part.hasSuffix(" pass") { return Cisco.green }
+        if part.hasSuffix(" fail") { return Cisco.red }
+        if part.hasSuffix(" warn") { return Cisco.orange }
+        if part.hasSuffix(" stale") { return Cisco.blue }
+        return .secondary
+    }
+
+    private func badgeColor(_ badge: String) -> Color {
+        switch badge {
+        case "FAIL": Cisco.red
+        case "WARN": Cisco.orange
+        case "STALE": Cisco.blue
+        default: .secondary
+        }
+    }
+
+    /// One deduped Overview row per discovered agent (TUI ai_discovery_box).
+    private struct AIOverviewRow: Identifiable {
+        var badge: String       // [NEW] / [CHG] / [GONE] / [OK ]
+        var name: String
+        var vendor: String
+        var confidence: String  // " 98%"
+        var seenLabel: String   // "seen 3m ago"
+        var id: String { "\(badge)-\(name)-\(vendor)" }
+    }
+
+    /// Sort (state rank, -confidence, -last_seen, name), dedup by
+    /// connector/component/display key, cap 8 with overflow.
+    private var aiOverviewRows: (rows: [AIOverviewRow], overflow: Int) {
+        func stateRank(_ state: String) -> Int {
+            switch state.lowercased() {
+            case "new": 0
+            case "changed": 1
+            case "active", "": 2
+            case "gone": 3
+            default: 4
+            }
+        }
+        func displayName(_ s: AISignal) -> String {
+            s.name.nonEmpty ?? s.product.nonEmpty ?? s.signatureID.nonEmpty ?? s.signalID.nonEmpty ?? "(unknown)"
+        }
+        let sorted = aiSnapshot.signals.sorted { a, b in
+            let ra = stateRank(a.state), rb = stateRank(b.state)
+            if ra != rb { return ra < rb }
+            if a.confidence != b.confidence { return a.confidence > b.confidence }
+            let ta = a.lastSeen?.timeIntervalSince1970 ?? 0
+            let tb = b.lastSeen?.timeIntervalSince1970 ?? 0
+            if ta != tb { return ta > tb }
+            return displayName(a).lowercased() < displayName(b).lowercased()
+        }
+        var seen = Set<String>()
+        var unique: [AISignal] = []
+        for signal in sorted {
+            let key: String
+            if !signal.supportedConnector.isEmpty {
+                key = "connector:\(signal.supportedConnector.lowercased())"
+            } else if !signal.ecosystem.isEmpty || !signal.componentName.isEmpty {
+                key = "component:\(signal.ecosystem.lowercased()):\(signal.componentName.lowercased())"
+            } else {
+                // TUI display key uses the vendor label WITH the version
+                // suffix, so same-vendor different-version signals stay apart.
+                var vendorLabel = signal.vendor.nonEmpty ?? signal.category.nonEmpty ?? "-"
+                if !signal.version.isEmpty { vendorLabel += " \(signal.version)" }
+                key = "display:\(vendorLabel.lowercased()):\(displayName(signal).lowercased())"
+            }
+            if seen.insert(key).inserted { unique.append(signal) }
+        }
+        let overflow = max(unique.count - 8, 0)
+        let rows = unique.prefix(8).map { signal -> AIOverviewRow in
+            let badge: String = switch signal.state.lowercased() {
+            case "new": "[NEW]"
+            case "changed": "[CHG]"
+            case "gone": "[GONE]"
+            default: "[OK ]"
+            }
+            var vendor = signal.vendor.nonEmpty ?? signal.category.nonEmpty ?? "-"
+            if !signal.version.isEmpty { vendor += " \(signal.version)" }
+            if !signal.supportedConnector.isEmpty { vendor += " (\(signal.supportedConnector))" }
+            let pct = min(max(Int(signal.confidence * 100 + 0.5), 0), 100)
+            let seenLabel = signal.lastSeen.map { "seen \(DCDates.relative($0))" } ?? "seen -"
+            return AIOverviewRow(
+                badge: badge,
+                name: displayName(signal),
+                vendor: vendor,
+                confidence: String(format: "%3d%%", pct),
+                seenLabel: seenLabel
+            )
+        }
+        return (Array(rows), overflow)
+    }
+
+    private var aiCard: some View {
+        let box = aiOverviewRows
+        return DCCard("Discovered AI Agents", systemImage: "sparkle.magnifyingglass") {
+            if !aiFetchEverSucceeded {
+                Text("ai discovery offline - run: defenseclaw agent discovery status")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if !aiSnapshot.enabled {
+                Text("disabled - run: defenseclaw agent discovery enable")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if aiSnapshot.signals.isEmpty {
+                Text("no AI agents detected yet - try: defenseclaw agent discover")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                // Rich-panel parity: first 6 rows + "+N more" (overflow vs 8).
+                ForEach(box.rows.prefix(6)) { row in
+                    HStack(spacing: 8) {
+                        Text(row.badge)
+                            .font(.caption2.weight(.bold).monospaced())
+                            .foregroundStyle(aiBadgeColor(row.badge))
+                        Text(row.name)
+                            .font(.caption)
+                            .lineLimit(1)
+                            .frame(maxWidth: 170, alignment: .leading)
+                        Text(row.vendor)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        Text(row.confidence)
+                            .font(.caption2.monospacedDigit())
+                        Text(row.seenLabel)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                // TUI math: overflow counts only rows beyond the 8-cap (the
+                // hidden 7th/8th rendered rows are NOT added).
+                if box.overflow > 0 {
+                    Text("+\(box.overflow) more")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Button("See all →") { appState.selectedPanel = .aiDiscovery }
                     .controlSize(.small)
             }
         }
     }
 
-    private var aiCard: some View {
-        DCCard("AI Discovery", systemImage: "sparkle.magnifyingglass") {
-            if aiSnapshot.signals.isEmpty {
-                Text("No AI components detected (or discovery disabled).")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                // Grouped one-row-per-product, same as the AI Discovery panel/TUI.
-                ForEach(aiSnapshot.rows.prefix(8)) { row in
-                    HStack {
-                        Text(row.vendor.isEmpty ? row.product : "\(row.vendor)/\(row.product)")
-                            .font(.caption)
-                            .lineLimit(1)
-                        Text("×\(row.count)").font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
-                        Spacer()
-                        ConfidenceGauge(value: row.maxConfidence)
-                    }
-                }
-                Button("See all →") { appState.selectedPanel = .aiDiscovery }
-                    .controlSize(.small)
-            }
+    private func aiBadgeColor(_ badge: String) -> Color {
+        switch badge {
+        case "[NEW]": Cisco.green
+        case "[CHG]": Cisco.orange
+        case "[GONE]": .secondary
+        default: Cisco.blue
         }
     }
 
@@ -675,6 +943,14 @@ struct OverviewView: View {
     /// Same TUI-parity Findings count used by the menu bar.
     private var findingsCount: Int {
         appState.overviewEnforcementMetrics.findings
+    }
+
+    /// Severity-bearing alert rows within the live session window (TUI's
+    /// session-scoped "Active alerts"); all rows when no session start.
+    private var sessionActiveAlerts: Int {
+        let severityBearing = appState.unackedAlerts.filter { $0.severity > .info }
+        guard let start = appState.sessionStart else { return severityBearing.count }
+        return severityBearing.filter { $0.timestamp >= start }.count
     }
 
     private var heroHookCalls: Int {
@@ -713,7 +989,12 @@ struct OverviewView: View {
         hourly = await appState.audit.hourlyEnforcement24h()
             .map { HourlyPoint(hour: $0.hour, klass: $0.action, count: $0.count) }
         if appState.gatewayReachable {
-            aiSnapshot = (try? await appState.gateway.aiUsage()) ?? AIUsageSnapshot()
+            // Keep the last good snapshot on failure (TUI: a restarting
+            // gateway shows stale data, not "offline").
+            if let snap = try? await appState.gateway.aiUsage() {
+                aiSnapshot = snap
+                aiFetchEverSucceeded = true
+            }
         }
     }
 
@@ -729,12 +1010,10 @@ struct OverviewView: View {
                 successEffects: ["Diagnostic results refreshed"]
             )
             doctorOutput = result.output
-            doctorChecks = parseDoctorChecks(result.output)
-            if doctorChecks.isEmpty {
-                doctorChecks = [DoctorCheck(name: "doctor exited \(result.exitCode)",
-                                            result: result.succeeded ? .pass : .fail,
-                                            detail: result.output)]
-            }
+            // The CLI rewrites <data_dir>/doctor_cache.json at the end of
+            // every run (even failing ones) — reload it for the Doctor card
+            // instead of scraping stdout.
+            appState.doctorCache = DoctorCache.load() ?? appState.doctorCache
             doctorRunning = false
         }
     }
@@ -760,41 +1039,5 @@ struct OverviewView: View {
         }
     }
 
-    private func parseDoctorChecks(_ output: String) -> [DoctorCheck] {
-        output.split(separator: "\n").compactMap { raw in
-            let line = String(raw)
-            let lower = line.lowercased()
-            let result: DoctorCheck.Result
-            if lower.contains("pass") || lower.contains("✓") || lower.contains(" ok") {
-                result = .pass
-            } else if lower.contains("warn") || lower.contains("⚠") {
-                result = .warn
-            } else if lower.contains("fail") || lower.contains("✗") || lower.contains("error") {
-                result = .fail
-            } else {
-                return nil
-            }
-            let name = line
-                .replacingOccurrences(of: "✓", with: "")
-                .replacingOccurrences(of: "⚠", with: "")
-                .replacingOccurrences(of: "✗", with: "")
-                .trimmingCharacters(in: .whitespaces)
-            return DoctorCheck(name: String(name.prefix(80)), result: result, detail: line)
-        }
-    }
 
-    private func icon(for r: DoctorCheck.Result) -> String {
-        switch r {
-        case .pass: "checkmark.circle.fill"
-        case .warn: "exclamationmark.triangle.fill"
-        case .fail: "xmark.circle.fill"
-        }
-    }
-    private func color(for r: DoctorCheck.Result) -> Color {
-        switch r {
-        case .pass: Cisco.green
-        case .warn: Cisco.orange
-        case .fail: Cisco.red
-        }
-    }
 }

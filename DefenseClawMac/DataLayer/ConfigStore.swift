@@ -17,6 +17,12 @@ struct DefenseClawConfig: Sendable {
     /// Connectors whose guardrail is explicitly killed
     /// (guardrail.connectors.<name>.enabled: false) — TUI effective_enabled.
     var connectorDisabled: Set<String> = []
+    /// claw.mode with the runtime loader's "openclaw" default — the drift
+    /// notice's "configured" side (distinct from connectorMode's chain).
+    var clawMode = "openclaw"
+    /// Non-empty when guardrail.connectors exists but failed to parse — the
+    /// TUI's roster-degraded error notice.
+    var rosterError = ""
     var guardrailEnabled = false
     var guardrailMode: String?
     var guardrailPort: Int?
@@ -281,8 +287,12 @@ actor ConfigStore {
         c.llmProvider = root["llm.provider"]?.string ?? root["inspect_llm.provider"]?.string
         c.llmModel = root["llm.model"]?.string ?? root["inspect_llm.model"]?.string
         c.aiDefenseEndpoint = root["cisco_ai_defense.endpoint"]?.string
+        c.clawMode = root["claw.mode"]?.string ?? "openclaw"
         // Multi-connector roster (guardrail.connectors: {codex: {...}, ...}),
         // plus each connector's mode and rule pack for the Overview table.
+        if root["guardrail.connectors"] != nil, root["guardrail.connectors"]?.mapping == nil {
+            c.rosterError = "guardrail.connectors is not a mapping"
+        }
         if let roster = root["guardrail.connectors"]?.mapping {
             c.connectors = roster.keys.sorted()
             for (name, node) in roster {

@@ -365,6 +365,7 @@ actor EventStreamReader {
             // traffic; everything else INFO.
             let synthesized: Severity = (decision == "block" || (branch == "shape" && looksLikeLLM))
                 ? .medium : .info
+            let tsParsed = DCDates.parse(obj["ts"] ?? obj["timestamp"] ?? obj["time"]) != nil
             delta.egress.append(EgressEvent(
                 id: nextID(obj, "egress"),
                 timestamp: ts,
@@ -377,7 +378,8 @@ actor EventStreamReader {
                 connector: connector,
                 targetPath: firstString(egress["target_path"]),
                 bodyShape: firstString(egress["body_shape"]),
-                source: firstString(egress["source"])
+                source: firstString(egress["source"]),
+                timestampParsed: tsParsed
             ))
         default:
             break

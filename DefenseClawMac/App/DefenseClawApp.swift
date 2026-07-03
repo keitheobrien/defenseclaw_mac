@@ -68,6 +68,25 @@ struct DefenseClawApp: App {
                     appState.commandPalettePresented = true
                 }
                 .keyboardShortcut("p", modifiers: [.command, .shift])
+
+                Divider()
+
+                // The TUI's Y yank / Ctrl+S export / Shift+D diagnose chrome.
+                Button("Copy Last Command Output") {
+                    appState.copyLastCommandOutput()
+                }
+                .keyboardShortcut("y", modifiers: [.control])
+
+                Button("Export Last Command Output") {
+                    appState.exportLastCommandOutput()
+                }
+                .keyboardShortcut("s", modifiers: [.control])
+
+                Button("Diagnose in Background") {
+                    appState.runBackgroundDiagnose()
+                }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
+                .disabled(appState.diagnoseRunning)
             }
             CommandMenu("Go") {
                 ForEach(Array(PanelID.allCases.enumerated()), id: \.element) { index, panel in

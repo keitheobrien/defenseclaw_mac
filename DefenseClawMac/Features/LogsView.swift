@@ -21,6 +21,7 @@ struct LogsView: View {
     /// True while the last row is on screen; auto-scroll only then, so live
     /// tail updates never yank the view away from what the user is reading.
     @State private var isAtBottom = true
+    @State private var showRedactionToggle = false
 
     // Superset of the TUI's Verdicts-stream chips (ACTION_FILTERS: block/alert/
     // confirm/allow; EVENT_TYPE_FILTERS: verdict/judge/lifecycle/error/
@@ -111,6 +112,10 @@ struct LogsView: View {
             guard applyPendingPanelRequest() else { return }
             Task { await load(force: true) }
         }
+        .sheet(isPresented: $showRedactionToggle) {
+            RedactionToggleSheet()
+                .environment(appState)
+        }
     }
 
     private var filterBar: some View {
@@ -124,6 +129,19 @@ struct LogsView: View {
                 .frame(maxWidth: 440)
                 .onChange(of: stream) { _, _ in Task { await load(force: true) } }
                 Spacer()
+                if !appState.config.redactionEnabled {
+                    // TUI RAW badge: redaction kill-switch is off.
+                    Text("RAW — redaction off")
+                        .font(.caption2.weight(.bold))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Cisco.orange.opacity(0.18), in: Capsule())
+                        .foregroundStyle(Cisco.orange)
+                        .help("redaction off - `defenseclaw setup redaction on` to re-enable")
+                }
+                Button("Redaction…") { showRedactionToggle = true }
+                    .controlSize(.small)
+                    .help("Toggle the redaction kill-switch (runs defenseclaw setup redaction on|off)")
                 ConnectorFilterChip(names: appState.activeConnectorNames, selection: $state.connectorFilter)
             }
 
@@ -366,4 +384,97 @@ private struct DisplayLogRow: Identifiable {
     var count: Int
     var lastTimestamp: Date
     var id: String { row.id }
+}
+
+/// The TUI's "Redaction kill-switch" consequence modal: current/desired state,
+/// the raw-sink warning when disabling, and a two-step danger confirm. Runs
+/// `defenseclaw setup redaction on|off --yes` (config.yaml write + gateway
+/// restart happen CLI-side).
+struct RedactionToggleSheet: View {
+    @Environment(AppState.self) private var appState
+    @Environment(\.dismiss) private var dismiss
+    @State private var armed = false
+    @State private var running = false
+
+    private var currentlyDisabled: Bool { !appState.config.redactionEnabled }
+    private var desired: String { currentlyDisabled ? "on" : "off" }
+    private var currentLabel: String {
+        currentlyDisabled ? "RAW (full prompts to all sinks)" : "REDACTED (placeholders only)"
+    }
+    private var desiredLabel: String {
+        currentlyDisabled ? "REDACTED (placeholders only)" : "RAW (full prompts to all sinks)"
+    }
+    private var dangerous: Bool { desired == "off" }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Redaction kill-switch").font(.headline)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Current state: \(currentLabel)")
+                Text("Will become:   \(desiredLabel)")
+            }
+            .font(.callout.monospaced())
+            if dangerous {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Disabling redaction writes RAW content to:")
+                    Text("• SQLite audit DB")
+                    Text("• Splunk HEC, OTel log exporters, webhooks")
+                    Text("• gateway.log and the Logs panel")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                Text("Only proceed if every downstream sink lives in the same trust boundary as this install.")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Cisco.orange)
+            } else {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Re-enables redaction; placeholders return on the next sidecar boot.")
+                    Text("Existing already-emitted audit rows/events remain as written.")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            Text("Runs `defenseclaw setup redaction \(desired) --yes` and restarts the gateway.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            if armed {
+                Text("⚠ danger — click Confirm again to proceed")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Cisco.red)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button(running ? "Running…" : "Confirm") { confirm() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(dangerous ? Cisco.red : Cisco.green)
+                    .disabled(running)
+            }
+        }
+        .padding(16)
+        .frame(width: 470)
+    }
+
+    private func confirm() {
+        // Two-step confirm for the dangerous direction (TUI danger arming).
+        if dangerous, !armed {
+            armed = true
+            return
+        }
+        running = true
+        Task {
+            _ = await appState.runCommand(
+                title: "setup redaction \(desired)",
+                arguments: ["setup", "redaction", desired, "--yes"],
+                category: "setup",
+                origin: "Logs",
+                successEffects: [desired == "on" ? "Redaction re-enabled; gateway restarted"
+                                                 : "Redaction DISABLED; raw content flows to sinks"],
+                refreshOnSuccess: true
+            )
+            running = false
+            dismiss()
+        }
+    }
 }

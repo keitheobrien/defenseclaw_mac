@@ -91,7 +91,13 @@ enum ScannerProbe {
 
     /// Assemble all six scanner rows. `guardrailState` comes from /health
     /// (e.g. "running"); the mode/port/rule-pack detail comes from config.
-    static func statuses(config: DefenseClawConfig, guardrailState: String?) -> [ScannerStatus] {
+    /// `missingCredentials` is the doctor-cache-derived list (TUI keys_status):
+    /// nil = no cache yet ("not checked"); [] = all required set.
+    static func statuses(
+        config: DefenseClawConfig,
+        guardrailState: String?,
+        missingCredentials: [String]? = nil
+    ) -> [ScannerStatus] {
         var rows: [ScannerStatus] = []
 
         let skill = binaryInstalled("skill-scanner")
@@ -114,15 +120,22 @@ enum ScannerProbe {
         rows.append(.init(name: "guardrail", detail: guardrailDetail,
                           level: running ? .active : .warn))
 
-        // keys: required gateway credentials.
-        let missing = missingKeys(config: config)
-        if missing.isEmpty {
-            rows.append(.init(name: "keys", detail: "all required set", level: .active))
+        // keys: required credentials, doctor-cache-driven like the TUI
+        // (any failing "credential <NAME>" check counts as missing). NOTE:
+        // deliberate deviation — the TUI renders the "N missing" label green
+        // (keys.available drives its color); amber is more honest here.
+        if let missing = missingCredentials {
+            if missing.isEmpty {
+                rows.append(.init(name: "keys", detail: "all required set", level: .active))
+            } else {
+                let preview = missing.prefix(2).joined(separator: ", ")
+                let suffix = missing.count > 2 ? " (+\(missing.count - 2) more)" : ""
+                rows.append(.init(name: "keys", detail: "\(missing.count) missing: \(preview)\(suffix)",
+                                  level: .warn))
+            }
         } else {
-            let preview = missing.prefix(2).joined(separator: ", ")
-            let suffix = missing.count > 2 ? " +\(missing.count - 2)" : ""
-            rows.append(.init(name: "keys", detail: "\(missing.count) missing: \(preview)\(suffix)",
-                              level: .warn))
+            // No doctor cache yet (TUI: always "not checked", amber).
+            rows.append(.init(name: "keys", detail: "not checked", level: .warn))
         }
         return rows
     }

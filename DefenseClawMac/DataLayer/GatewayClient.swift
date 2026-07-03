@@ -106,7 +106,8 @@ actor GatewayClient {
                 snap.subsystems.append(.init(
                     name: key, state: state,
                     detail: sub["detail"] as? String ?? sub["error"] as? String,
-                    details: Self.flattenDetails(sub["details"])
+                    details: Self.flattenDetails(sub["details"]),
+                    since: DCDates.parse(sub["since"])
                 ))
             } else if let state = dict[key] as? String {
                 snap.subsystems.append(.init(name: key, state: state, detail: nil))
@@ -132,7 +133,21 @@ actor GatewayClient {
                 alerts: 0,
                 inspections: (c["tool_inspections"] as? Int) ?? 0,
                 errors: (c["errors"] as? Int) ?? 0,
-                state: (c["state"] as? String) ?? (c["status"] as? String) ?? "active"
+                state: (c["state"] as? String) ?? (c["status"] as? String) ?? "active",
+                since: DCDates.parse(c["since"])
+            )
+        }
+        // Singular primary connector (drift / zero-requests notices).
+        if let primary = dict["connector"] as? [String: Any],
+           let name = (primary["name"] as? String)?.nonEmpty {
+            snap.primaryConnector = .init(
+                name: name,
+                state: (primary["state"] as? String) ?? "",
+                requests: (primary["requests"] as? Int) ?? 0,
+                toolInspectionMode: (primary["tool_inspection_mode"] as? String) ?? "",
+                toolBlocks: (primary["tool_blocks"] as? Int) ?? 0,
+                subprocessBlocks: (primary["subprocess_blocks"] as? Int) ?? 0,
+                since: DCDates.parse(primary["since"])
             )
         }
 
@@ -426,7 +441,10 @@ actor GatewayClient {
 
     func aiUsage() async throws -> AIUsageSnapshot {
         let json = try await getJSON("/api/v1/ai-usage")
-        guard let dict = json as? [String: Any] else { return AIUsageSnapshot() }
+        // Throw on malformed payloads so callers keep the last good snapshot.
+        guard let dict = json as? [String: Any] else {
+            throw GatewayError.badResponse("/api/v1/ai-usage not an object")
+        }
         var snap = AIUsageSnapshot()
         let summary = (dict["summary"] as? [String: Any]) ?? dict
         snap.totalDetected = (summary["total_signals"] as? Int)
@@ -434,6 +452,12 @@ actor GatewayClient {
             ?? (summary["total_detected"] as? Int) ?? 0
         snap.activeSignals = (summary["active_signals"] as? Int) ?? 0
         snap.filesScanned = (summary["files_scanned"] as? Int) ?? 0
+        // TUI: bool(raw.get("enabled")) — a missing key means disabled.
+        snap.enabled = (dict["enabled"] as? Bool) ?? (summary["enabled"] as? Bool) ?? false
+        snap.newSignals = (summary["new_signals"] as? Int) ?? 0
+        snap.changedSignals = (summary["changed_signals"] as? Int) ?? 0
+        snap.goneSignals = (summary["gone_signals"] as? Int) ?? 0
+        snap.privacyMode = (summary["privacy_mode"] as? String) ?? (summary["mode"] as? String) ?? ""
         snap.lastScan = DCDates.parse(summary["scanned_at"] ?? summary["last_scan"] ?? summary["lastScan"])
         let signals = (dict["signals"] as? [[String: Any]]) ?? (dict["components"] as? [[String: Any]]) ?? []
         snap.signals = signals.map(decodeSignal)
@@ -465,7 +489,11 @@ actor GatewayClient {
             presenceBand: (r["presence_band"] as? String) ?? "",
             firstSeen: DCDates.parse(r["first_seen"]),
             lastSeen: DCDates.parse(r["last_seen"]),
-            lastActive: DCDates.parse(r["last_active_at"])
+            lastActive: DCDates.parse(r["last_active_at"]),
+            name: (r["name"] as? String) ?? "",
+            supportedConnector: (r["supported_connector"] as? String) ?? "",
+            signalID: (r["signal_id"] as? String) ?? (r["id"] as? String) ?? "",
+            signatureID: (r["signature_id"] as? String) ?? ""
         )
     }
 
