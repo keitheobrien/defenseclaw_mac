@@ -142,10 +142,19 @@ actor UpdateChecker {
         }
         _ = Self.runProcess("/usr/bin/xattr", ["-dr", "com.apple.quarantine", targetPath])
 
-        // Relaunch: detached child outlives this process.
+        // Relaunch: detached child outlives this process. It must WAIT for
+        // this process to fully exit before calling open — with the old
+        // instance still alive, LaunchServices sees a running app with the
+        // same bundle ID and merely activates it (the moved previous.app
+        // backup!) instead of launching the updated bundle. Bounded at ~30s
+        // so a hung teardown still eventually relaunches.
+        let pid = ProcessInfo.processInfo.processIdentifier
         let relaunch = Process()
         relaunch.executableURL = URL(fileURLWithPath: "/bin/sh")
-        relaunch.arguments = ["-c", "sleep 1; /usr/bin/open \"\(targetPath)\""]
+        relaunch.arguments = ["-c", """
+            for _ in $(seq 1 150); do kill -0 \(pid) 2>/dev/null || break; sleep 0.2; done; \
+            /usr/bin/open "\(targetPath)"
+            """]
         try? relaunch.run()
 
         await MainActor.run { NSApp.terminate(nil) }
