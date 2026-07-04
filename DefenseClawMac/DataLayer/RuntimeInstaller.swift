@@ -18,6 +18,12 @@ struct RuntimePayload: Sendable {
     var gatewaySHA256: String
     var wheelURL: URL
     var wheelSHA256: String
+    /// Optional dependency overrides — upstream pyproject's [tool.uv]
+    /// override-dependencies (CVE floors + the textual>=8.2.7 pin the
+    /// wheel's own scanner constraint would defeat). Applied with
+    /// `uv pip install --overrides` to reproduce upstream's resolution.
+    var overridesURL: URL?
+    var overridesSHA256: String?
 
     /// Loaded once per launch — the bundle is immutable while running.
     static let bundled: RuntimePayload? = load()
@@ -36,6 +42,8 @@ struct RuntimePayload: Sendable {
               let wheelFile = wheel["file"] as? String,
               let wheelSHA = wheel["sha256"] as? String
         else { return nil }
+        let overrides = root["overrides"] as? [String: Any]
+        let overridesFile = overrides?["file"] as? String
         return RuntimePayload(
             version: version,
             tag: (root["runtime_tag"] as? String) ?? version,
@@ -43,7 +51,9 @@ struct RuntimePayload: Sendable {
             gatewayURL: payloadDir.appendingPathComponent(gatewayFile),
             gatewaySHA256: gatewaySHA,
             wheelURL: payloadDir.appendingPathComponent(wheelFile),
-            wheelSHA256: wheelSHA
+            wheelSHA256: wheelSHA,
+            overridesURL: overridesFile.map(payloadDir.appendingPathComponent),
+            overridesSHA256: overrides?["sha256"] as? String
         )
     }
 
@@ -63,6 +73,11 @@ struct RuntimePayload: Sendable {
         }
         guard wheelActual == wheelSHA256 else {
             return "Bundled wheel does not match its manifest checksum."
+        }
+        if let overridesURL, let overridesSHA256 {
+            guard let actual = Self.sha256(of: overridesURL), actual == overridesSHA256 else {
+                return "Bundled dependency overrides do not match their manifest checksum."
+            }
         }
         return nil
     }
@@ -206,10 +221,18 @@ extension AppState {
         }
 
         runtimeInstallState = .running("Installing DefenseClaw CLI \(payload.version) (network: PyPI dependencies)")
+        var wheelArguments = ["pip", "install", "--python", stagingDir + "/bin/python"]
+        if let overridesURL = payload.overridesURL {
+            // Upstream's own override-dependencies: without them a fresh
+            // resolve honors the scanner's textual<8 cap and the TUI
+            // crashes, and the CVE-driven floors are lost.
+            wheelArguments += ["--overrides", overridesURL.path]
+        }
+        wheelArguments.append(payload.wheelURL.path)
         let wheel = await installerStep(
             "Install DefenseClaw CLI \(payload.version) (bundled wheel + PyPI dependencies)",
             binary: uv,
-            arguments: ["pip", "install", "--python", stagingDir + "/bin/python", payload.wheelURL.path],
+            arguments: wheelArguments,
             successEffects: ["DefenseClaw CLI \(payload.version) installed"]
         )
         guard wheel.succeeded else {

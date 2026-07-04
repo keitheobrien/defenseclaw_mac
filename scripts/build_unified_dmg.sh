@@ -126,6 +126,38 @@ step "Re-signing gateway: Developer ID + hardened runtime"
 codesign -f -o runtime --timestamp -s "$IDENTITY" "$GATEWAY"
 codesign --verify --strict --verbose=2 "$GATEWAY"
 
+# ── 3b. Dependency overrides from the upstream pyproject ─────────────────────
+# The wheel alone does not resolve to upstream's tested dependency set: their
+# pyproject's [tool.uv] override-dependencies carries CVE-driven floors
+# (cryptography, litellm, aiohttp, ...) AND the textual>=8.2.7 override that
+# the wheel's skill-scanner pin (textual<8) would otherwise defeat — without
+# it a fresh install's TUI crashes (Tabs.get_tab AttributeError). Ship the
+# tag's override list in the payload; the installer applies it via
+# `uv pip install --overrides`, reproducing upstream's own resolution.
+step "Extracting dependency overrides from upstream pyproject ($RUNTIME_TAG)"
+PYPROJECT="$RUNTIME_DIR/pyproject.toml"
+curl -fsSL --proto '=https' --tlsv1.2 \
+    -o "$PYPROJECT" "https://raw.githubusercontent.com/${RUNTIME_REPO}/${RUNTIME_TAG}/pyproject.toml" \
+    || die "could not fetch pyproject.toml for $RUNTIME_TAG"
+OVERRIDES="$RUNTIME_DIR/overrides.txt"
+python3 - "$PYPROJECT" > "$OVERRIDES" <<'PYEOF'
+import re, sys
+text = open(sys.argv[1]).read()
+block = re.search(r'override-dependencies\s*=\s*\[(.*?)\n\]', text, re.S)
+if not block:
+    sys.exit("no override-dependencies block in pyproject.toml")
+for line in block.group(1).splitlines():
+    line = line.strip()
+    if line.startswith('#') or not line:
+        continue
+    m = re.match(r'"([^"]+)"', line)
+    if m:
+        print(m.group(1))
+PYEOF
+grep -q '^textual' "$OVERRIDES" \
+    || die "override extraction produced no textual pin — check pyproject format: $(head -3 "$OVERRIDES")"
+printf '    %s overrides (incl. %s)\n' "$(wc -l < "$OVERRIDES" | tr -d ' ')" "$(grep '^textual' "$OVERRIDES")"
+
 # ── 4. Archive + export the app ──────────────────────────────────────────────
 APP_VERSION="$(sed -n 's/.*MARKETING_VERSION = \([0-9.]*\);.*/\1/p' "$REPO_ROOT/$APP_NAME.xcodeproj/project.pbxproj" | head -1)"
 [[ -n "$APP_VERSION" ]] || die "could not read MARKETING_VERSION"
@@ -188,6 +220,8 @@ mkdir -p "$PAYLOAD"
 cp "$GATEWAY" "$PAYLOAD/defenseclaw-gateway"
 cp "$WHEEL" "$PAYLOAD/$(basename "$WHEEL")"
 GATEWAY_SIGNED_SHA="$(shasum -a 256 "$PAYLOAD/defenseclaw-gateway" | awk '{print $1}')"
+cp "$OVERRIDES" "$PAYLOAD/overrides.txt"
+OVERRIDES_SHA="$(shasum -a 256 "$PAYLOAD/overrides.txt" | awk '{print $1}')"
 cat > "$PAYLOAD/payload-manifest.json" <<JSON
 {
   "runtime_version": "$RUNTIME_VERSION",
@@ -201,6 +235,10 @@ cat > "$PAYLOAD/payload-manifest.json" <<JSON
   "wheel": {
     "file": "$(basename "$WHEEL")",
     "sha256": "$WHEEL_SHA"
+  },
+  "overrides": {
+    "file": "overrides.txt",
+    "sha256": "$OVERRIDES_SHA"
   },
   "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
