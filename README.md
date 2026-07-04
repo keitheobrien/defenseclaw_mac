@@ -18,9 +18,12 @@ The General settings view shows app visibility controls plus independent update 
 
 ## Install
 
-Grab the latest prebuilt app from [Releases](https://github.com/keitheobrien/defenseclaw_mac/releases) (arm64, macOS 14+). Release builds are signed with Developer ID, use hardened runtime, and are notarized by Apple with a stapled ticket. Unzip the archive, move `DefenseClawMac.app` to `/Applications`, then open it normally. If you previously installed an ad-hoc build, delete the old `/Applications/DefenseClawMac.app` before copying in the notarized release.
+Every release on [Releases](https://github.com/keitheobrien/defenseclaw_mac/releases) ships two artifacts (arm64, macOS 14+), each signed with Developer ID, hardened-runtime, and notarized by Apple with a stapled ticket:
 
-The app self-updates: Settings ▸ General checks GitHub Releases for a newer Mac-app build and can download, swap, and relaunch in place, and it separately tracks the installed DefenseClaw runtime (`defenseclaw upgrade`). Both check paths are throttled to respect GitHub's unauthenticated rate limit.
+- **`DefenseClawMac-<version>.dmg` — unified installer (recommended).** The app with the matching DefenseClaw runtime release bundled inside, verified against the upstream artifacts (SHA-256 + Sigstore) at build time. Mount, drag `DefenseClawMac.app` to Applications, open it, and click **Install DefenseClaw Runtime** on first run — the app lays the bundled runtime into `~/.defenseclaw` and `~/.local/bin` natively, with every step recorded in the Activity panel. No remote script is ever executed; network is used to fetch the CLI's Python dependencies from PyPI, plus uv and Python 3.12 only if this Mac doesn't have them. Settings ▸ General also offers **Install / Repair Runtime** (configuration, tokens, and the audit database are never touched, and a source-checkout dev install is never overwritten).
+- **`DefenseClawMac-<version>.zip` — app only.** The traditional build for Macs that already have (or separately manage) the DefenseClaw runtime. Unzip, move `DefenseClawMac.app` to `/Applications`, open normally.
+
+The app self-updates: Settings ▸ General checks GitHub Releases for a newer Mac-app build (the small app-only zip) and can download, swap, and relaunch in place, and it separately tracks the installed DefenseClaw runtime (`defenseclaw upgrade`). The two update tracks stay independent — the DMG's bundled payload is used only for first install or repair. Both check paths are throttled to respect GitHub's unauthenticated rate limit.
 
 ## Build & run
 
