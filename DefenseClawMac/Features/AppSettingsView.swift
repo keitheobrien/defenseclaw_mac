@@ -90,6 +90,19 @@ private struct GeneralSettings: View {
                 } else {
                     LabeledContent("Status", value: runtimeStatusSummary)
                 }
+                if let payload = RuntimePayload.bundled {
+                    LabeledContent("Bundled payload", value: "v\(payload.version)")
+                    installStateRow
+                    Button(appState.installedRuntimeVersion == nil
+                           ? "Install Runtime v\(payload.version) (bundled)"
+                           : "Repair / Reinstall Runtime (v\(payload.version) bundled)") {
+                        Task { await appState.installBundledRuntime() }
+                    }
+                    .disabled(appState.runtimeInstallState.isRunning || runtimeActionDisabled)
+                    Text("Lays the runtime bundled in this app into ~/.defenseclaw and ~/.local/bin. Configuration, tokens, and the audit database are never touched. Dependency download from PyPI requires network.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("Update Actions") {
@@ -117,6 +130,26 @@ private struct GeneralSettings: View {
         .formStyle(.grouped)
         .task {
             await appState.refreshInstalledRuntimeVersion()
+        }
+    }
+
+    @ViewBuilder
+    private var installStateRow: some View {
+        switch appState.runtimeInstallState {
+        case .idle:
+            EmptyView()
+        case .running(let step):
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text(step).font(.caption).foregroundStyle(.secondary)
+            }
+        case .failed(let why):
+            Label(why, systemImage: "xmark.circle.fill")
+                .font(.caption).foregroundStyle(Cisco.red)
+                .textSelection(.enabled)
+        case .succeeded:
+            Label("Runtime installed.", systemImage: "checkmark.circle.fill")
+                .font(.caption).foregroundStyle(Cisco.green)
         }
     }
 
@@ -212,6 +245,9 @@ private struct GeneralSettings: View {
 
     private var runtimeActionDisabled: Bool {
         if appState.runtimeVersionCheckInProgress { return true }
+        // Bundled-payload install and `defenseclaw upgrade` mutate the same
+        // venv/gateway — one at a time.
+        if appState.runtimeInstallState.isRunning { return true }
         return switch appState.runtimeUpgradeState {
         case .checking, .downloading, .installing: true
         default: false

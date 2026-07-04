@@ -65,11 +65,18 @@ struct FirstRunView: View {
             HStack {
                 Button("Check Again") { checkInstallation() }
                 Button("Continue Without Setup") {
-                    appState.installDetected = true
+                    // Plain dismissal — installDetected stays honest (it
+                    // means "config.yaml exists" and feeds Overview notices).
                     dismiss()
                 }
                 Spacer()
-                if isRunning {
+                if appState.runtimeInstallState.isRunning {
+                    Button(role: .destructive) {
+                        if let id = appState.runtimeInstallRunID { appState.activity.cancel(id) }
+                    } label: {
+                        Label("Cancel Install", systemImage: "stop.fill")
+                    }
+                } else if isRunning {
                     Button(role: .destructive) {
                         if let runID { appState.activity.cancel(runID) }
                     } label: {
@@ -134,19 +141,78 @@ struct FirstRunView: View {
         .formStyle(.grouped)
     }
 
+    @ViewBuilder
     private var installer: some View {
-        GroupBox("Install the DefenseClaw Runtime") {
+        if let payload = RuntimePayload.bundled {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Download the installer, review its contents, then run it from Terminal. The Mac app does not execute a remote script automatically.")
-                    .font(.callout).foregroundStyle(.secondary)
-                Link(destination: Self.installerURL) {
-                    Label("Review Install Script", systemImage: "safari")
+                GroupBox("Install the Bundled DefenseClaw Runtime") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("This app includes DefenseClaw \(payload.version), verified against the upstream release at build time. Installing lays it into ~/.defenseclaw and ~/.local/bin — no remote script runs. Network is used to fetch the CLI's Python dependencies from PyPI, plus uv and Python 3.12 only if this Mac doesn't have them.")
+                            .font(.callout).foregroundStyle(.secondary)
+                        installStateRow
+                        HStack {
+                            Button {
+                                Task {
+                                    await appState.installBundledRuntime()
+                                    checkInstallation()
+                                }
+                            } label: {
+                                Label("Install DefenseClaw Runtime v\(payload.version)", systemImage: "arrow.down.circle.fill")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(appState.runtimeInstallState.isRunning)
+                            Button("Open Activity") {
+                                appState.selectedPanel = .activity
+                                dismiss()
+                            }
+                            .disabled(appState.runtimeInstallState == .idle)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                installCommandRow("1. Download", command: Self.downloadCommand)
-                installCommandRow("2. Run After Review", command: Self.runCommand)
+                DisclosureGroup("Install with the shell script instead") {
+                    scriptInstaller.padding(.top, 6)
+                }
+                .font(.callout)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            GroupBox("Install the DefenseClaw Runtime") {
+                scriptInstaller
+            }
         }
+    }
+
+    @ViewBuilder
+    private var installStateRow: some View {
+        switch appState.runtimeInstallState {
+        case .idle:
+            EmptyView()
+        case .running(let step):
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text(step).font(.caption).foregroundStyle(.secondary)
+            }
+        case .failed(let why):
+            Label(why, systemImage: "xmark.circle.fill")
+                .font(.caption).foregroundStyle(Cisco.red)
+                .textSelection(.enabled)
+        case .succeeded:
+            Label("Runtime installed. Configure it below.", systemImage: "checkmark.circle.fill")
+                .font(.caption).foregroundStyle(Cisco.green)
+        }
+    }
+
+    private var scriptInstaller: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Download the installer, review its contents, then run it from Terminal. The Mac app does not execute a remote script automatically.")
+                .font(.callout).foregroundStyle(.secondary)
+            Link(destination: Self.installerURL) {
+                Label("Review Install Script", systemImage: "safari")
+            }
+            installCommandRow("1. Download", command: Self.downloadCommand)
+            installCommandRow("2. Run After Review", command: Self.runCommand)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func execution(_ entry: CommandActivityEntry) -> some View {

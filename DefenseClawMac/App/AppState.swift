@@ -95,6 +95,13 @@ final class AppState {
     var runtimeReleaseChecked = false
     var availableRuntimeUpdate: ReleaseInfo?
     var runtimeUpgradeState: UpgradeState = .idle
+    /// Bundled-payload install/repair progress (RuntimeInstaller.swift).
+    var runtimeInstallState: RuntimeInstallState = .idle
+    /// Current installer step's activity runID — the Cancel target.
+    var runtimeInstallRunID: UUID?
+    /// First-run sheet dismissal for this launch (Open Activity / Esc); the
+    /// sheet re-presents next launch while no configuration exists.
+    var firstRunDismissed = false
     var runtimeBannerDismissed = false
     var runtimeUpgradeLogTail = ""
     @ObservationIgnored @AppStorage("lastRuntimeUpdateCheckTime") private var lastRuntimeUpdateCheckTime: Double = 0
@@ -545,6 +552,11 @@ final class AppState {
         if let version = UpdateChecker.parseVersion(result.output) {
             installedRuntimeVersion = version
             runtimeVersionError = nil
+            // A detected, working CLI supersedes an earlier bundled-install
+            // failure (e.g. the user installed via the shell script instead);
+            // don't leave a stale red "failed" label for the life of this
+            // menu-bar process. Activity retains the full failure record.
+            if case .failed = runtimeInstallState { runtimeInstallState = .idle }
         } else {
             installedRuntimeVersion = nil
             runtimeVersionError = result.succeeded
@@ -640,6 +652,9 @@ final class AppState {
         default:
             break
         }
+        // The bundled-payload installer mutates the same venv and gateway
+        // binary — never run both at once.
+        guard !runtimeInstallState.isRunning else { return false }
         guard availableRuntimeUpdate != nil else { return true }
         runtimeUpgradeState = .installing
         runtimeUpgradeLogTail = ""

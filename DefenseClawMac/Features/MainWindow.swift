@@ -51,7 +51,14 @@ struct MainWindow: View {
                 }
             }
         }
-        .sheet(isPresented: .constant(!appState.installDetected)) {
+        // A real (writable) binding so the environment DismissAction works —
+        // dismissal is remembered for this launch only, never faked as
+        // installDetected (that flag means "config.yaml exists" and feeds
+        // guardrail notices).
+        .sheet(isPresented: Binding(
+            get: { !appState.installDetected && !appState.firstRunDismissed },
+            set: { if !$0 { appState.firstRunDismissed = true } }
+        )) {
             FirstRunView()
                 .environment(appState)
         }
