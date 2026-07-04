@@ -1,6 +1,6 @@
 # DefenseClaw for macOS
 
-Native menu-bar companion app for [cisco-ai-defense/defenseclaw](https://github.com/cisco-ai-defense/defenseclaw), replicating the `defenseclaw tui` terminal dashboard with SwiftUI and Swift Charts. 
+Native menu-bar companion app for [cisco-ai-defense/defenseclaw](https://github.com/cisco-ai-defense/defenseclaw), replicating the `defenseclaw tui` terminal dashboard with SwiftUI and Swift Charts.
 
 ![Overview dashboard](images/overview.png)
 
