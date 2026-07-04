@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Build the unified macOS installer: a signed + notarized + stapled DMG whose
-# DefenseClawMac.app embeds the latest DefenseClaw runtime release as an
-# install payload (Contents/Resources/RuntimePayload). Also emits the release
-# zip for the self-update track from the same stapled app.
+# Build both release artifacts:
+#   DefenseClawMac-<ver>.zip — the traditional app-only build (no runtime
+#     payload; also the self-update asset, so updates stay small), and
+#   DefenseClawMac-<ver>.dmg — the unified installer whose app embeds the
+#     latest DefenseClaw runtime release as an install payload
+#     (Contents/Resources/RuntimePayload).
+# Both signed + notarized + stapled (three notary submissions).
 #
 # See docs/UNIFIED_INSTALLER_PLAN.md. Publishes nothing — artifacts land in
 # build/unified/out/.
@@ -156,11 +159,30 @@ xcodebuild -exportArchive \
     -exportPath "$WORK/export" \
     -exportOptionsPlist "$EXPORT_OPTS" \
     -quiet
-APP="$WORK/export/$APP_NAME.app"
-[[ -d "$APP" ]] || die "export did not produce $APP"
+APP_PLAIN="$WORK/export/$APP_NAME.app"
+[[ -d "$APP_PLAIN" ]] || die "export did not produce $APP_PLAIN"
 
-# ── 5. Inject RuntimePayload + re-sign the app ───────────────────────────────
+# ── 5. Traditional app-only artifact (self-update track) ─────────────────────
+if [[ "${SKIP_NOTARIZE:-0}" != "1" ]]; then
+    step "Notarizing app-only build"
+    PLAIN_ZIP="$WORK/$APP_NAME-plain-notarize.zip"
+    ditto -c -k --keepParent "$APP_PLAIN" "$PLAIN_ZIP"
+    notarize "$PLAIN_ZIP"
+    xcrun stapler staple "$APP_PLAIN"
+    spctl -a -t install -vv "$APP_PLAIN"
+fi
+step "Creating release zip (app-only)"
+RELEASE_ZIP="$OUT/$APP_NAME-$APP_VERSION.zip"
+ditto -c -k --keepParent "$APP_PLAIN" "$RELEASE_ZIP"
+
+# ── 6. Unified variant: copy, inject RuntimePayload, re-sign ─────────────────
 step "Injecting RuntimePayload (runtime $RUNTIME_VERSION)"
+APP="$WORK/unified-app/$APP_NAME.app"
+mkdir -p "$WORK/unified-app"
+ditto "$APP_PLAIN" "$APP"
+# The payload variant is re-signed and re-notarized below; drop the app-only
+# staple so the unified bundle carries its own ticket, not a stale one.
+rm -rf "$APP/Contents/CodeResources" 2>/dev/null || true
 PAYLOAD="$APP/Contents/Resources/RuntimePayload"
 mkdir -p "$PAYLOAD"
 cp "$GATEWAY" "$PAYLOAD/defenseclaw-gateway"
@@ -194,20 +216,15 @@ else
 fi
 codesign --verify --strict --deep --verbose=2 "$APP"
 
-# ── 6. Notarize + staple the app ─────────────────────────────────────────────
+# ── 7. Notarize + staple the unified app ─────────────────────────────────────
 if [[ "${SKIP_NOTARIZE:-0}" != "1" ]]; then
-    step "Notarizing app"
-    APP_ZIP="$WORK/$APP_NAME-notarize.zip"
+    step "Notarizing unified app"
+    APP_ZIP="$WORK/$APP_NAME-unified-notarize.zip"
     ditto -c -k --keepParent "$APP" "$APP_ZIP"
     notarize "$APP_ZIP"
     xcrun stapler staple "$APP"
     spctl -a -t install -vv "$APP"
 fi
-
-# ── 7. Release zip (self-update track) from the stapled app ──────────────────
-step "Creating release zip"
-RELEASE_ZIP="$OUT/$APP_NAME-$APP_VERSION.zip"
-ditto -c -k --keepParent "$APP" "$RELEASE_ZIP"
 
 # ── 8. DMG: stage, create, sign, notarize, staple ────────────────────────────
 step "Creating DMG"
