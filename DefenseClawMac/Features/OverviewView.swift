@@ -421,8 +421,23 @@ struct OverviewView: View {
         Binding(
             get: { appState.connectorFilter.isEmpty ? nil : appState.connectorFilter },
             set: { newValue in
-                guard appState.activeConnectorNames.count > 1 else { return }
-                appState.connectorFilter = newValue ?? ""
+                // Normalize instead of silently rejecting: the AppKit Table
+                // highlights the clicked row before the setter runs, so a
+                // bare `return` would strand a ghost selection with no
+                // @Observable invalidation to snap it back. Always assign —
+                // the write triggers a re-render that reconciles the Table
+                // to whatever value survived.
+                var accepted = newValue ?? ""
+                if appState.activeConnectorNames.count <= 1 {
+                    accepted = appState.connectorFilter // single-connector: inert
+                } else if !accepted.isEmpty,
+                          !appState.activeConnectorNames.contains(where: { $0.lowercased() == accepted.lowercased() }) {
+                    // Non-scopeable roster row (e.g. configured but not
+                    // live) — the pulse's normalize_filter would clear it
+                    // right back, so keep the prior scope.
+                    accepted = appState.connectorFilter
+                }
+                appState.connectorFilter = accepted
             }
         )
     }

@@ -1119,21 +1119,42 @@ final class AppState {
 
     // MARK: - Connectors table rows (TUI _overview_connector_rows)
 
-    /// Roster-driven rows: one per configured connector when the roster has
-    /// more than one entry, overlaying live /health rows by name. Disabled
-    /// connectors stay visible with status "disabled" and their history;
-    /// rostered connectors without a live row fall back to cached audit stats
-    /// and the gateway-level status.
+    /// The dashboard's agent table: every connector that is configured
+    /// and/or actively hooked (live /health row), with counters — always
+    /// visible, even on single-connector installs. Configured connectors
+    /// lead in config order; live-only rows follow alphabetically. Live
+    /// rows overlay by name; disabled connectors stay visible with status
+    /// "disabled"; configured rows without a live row fall back to cached
+    /// audit stats and the gateway-level status.
     var connectorTableRows: [ConnectorHealth] {
-        let roster = config.connectors
-        guard roster.count > 1 else { return [] }
+        // Configured = the guardrail.connectors roster plus the legacy
+        // singular connector.name/guardrail.connector shape, so
+        // single-connector installs keep their agent visible.
+        var configured = config.connectors
+        if let legacy = config.connectorName?.nonEmpty,
+           !configured.contains(where: { $0.lowercased() == legacy.lowercased() }) {
+            configured.append(legacy)
+        }
+        var seen = Set(configured.map { $0.lowercased() })
+        var extras: [String] = []
+        var liveNames = health.connectors.map(\.name)
+        if let primary = health.primaryConnector?.name { liveNames.append(primary) }
+        for name in liveNames {
+            let lower = name.lowercased()
+            guard !lower.isEmpty, seen.insert(lower).inserted else { continue }
+            extras.append(name)
+        }
+        let roster = configured + extras.sorted { $0.lowercased() < $1.lowercased() }
+
         let gatewayState = (health.subsystem("gateway")?.state ?? "").trimmingCharacters(in: .whitespaces)
         let fallbackStatus = !gatewayReachable
             ? "unknown"
             : (gatewayState.lowercased() == "running" ? "active" : (gatewayState.nonEmpty ?? "unknown"))
         return roster.map { name in
             let lower = name.lowercased()
-            let disabled = config.connectorDisabled.contains(lower)
+            // connectorDisabled stores the raw roster key — match it
+            // case-insensitively like every other name comparison here.
+            let disabled = config.connectorDisabled.contains { $0.lowercased() == lower }
             if var row = health.connectors.first(where: { $0.name.lowercased() == lower }) {
                 if disabled { row.state = "disabled" }
                 return row
@@ -1142,6 +1163,25 @@ final class AppState {
             // resort on pre-v7 schemas without the connector column.
             let stats = connectorStatsAllTimeCache.first { $0.key.lowercased() == lower }?.value
                 ?? connectorStatsCache.first { $0.key.lowercased() == lower }?.value
+            // Legacy gateways report the hooked agent only via the singular
+            // /health connector object — overlay its live state/counters.
+            if let primary = health.primaryConnector, primary.name.lowercased() == lower {
+                var calls = primary.requests
+                if calls == 0 { calls = stats?.hookCalls ?? 0 }
+                var blocks = primary.toolBlocks + primary.subprocessBlocks
+                if blocks == 0 { blocks = stats?.blocks ?? 0 }
+                return ConnectorHealth(
+                    name: name,
+                    mode: config.connectorModes[name]?.nonEmpty ?? config.guardrailMode ?? "observe",
+                    rulePack: config.connectorRulePacks[name]?.nonEmpty ?? "default",
+                    lastActivity: stats?.lastActivity,
+                    calls: calls,
+                    blocks: blocks,
+                    alerts: stats?.alerts ?? 0,
+                    state: disabled ? "disabled" : primary.state,
+                    since: primary.since
+                )
+            }
             return ConnectorHealth(
                 name: name,
                 mode: config.connectorModes[name]?.nonEmpty ?? config.guardrailMode ?? "observe",
@@ -1392,12 +1432,16 @@ final class AppState {
     /// Connector roster for filesystem catalog scans: live health first,
     /// then config's guardrail.connectors, then every known connector so
     /// the panels work regardless of agent type.
+    /// Every agent DefenseClaw knows how to hook — the catalog-scan and
+    /// Connectors-table fallback roster.
+    static let knownConnectors = ["openclaw", "zeptoclaw", "codex", "claudecode", "hermes",
+                                  "cursor", "windsurf", "geminicli", "copilot", "openhands", "antigravity"]
+
     func configuredConnectors() -> [String] {
         let fromHealth = health.connectors.map(\.name)
         if !fromHealth.isEmpty { return fromHealth }
         if !config.connectors.isEmpty { return config.connectors }
-        return ["openclaw", "zeptoclaw", "codex", "claudecode", "hermes",
-                "cursor", "windsurf", "geminicli", "copilot", "openhands", "antigravity"]
+        return Self.knownConnectors
     }
 
     func reloadConfig() {
