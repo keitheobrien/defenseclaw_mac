@@ -19,7 +19,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNTIME_REPO="cisco-ai-defense/defenseclaw"
 IDENTITY="Developer ID Application: Keith OBrien (9R236BB67S)"
 TEAM_ID="9R236BB67S"
-NOTARY_PROFILE="notarytool"
+NOTARY_PROFILE="${NOTARY_PROFILE:-notarytool}"
 ARCH="arm64"
 APP_NAME="DefenseClawMac"
 
