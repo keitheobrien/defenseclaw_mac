@@ -11,9 +11,6 @@ struct OverviewView: View {
     @State private var doctorRunning = false
     @State private var doctorOutput = ""
     @State private var showDoctorSheet = false
-    @State private var aiSnapshot = AIUsageSnapshot()
-    /// False until /api/v1/ai-usage has ever succeeded → TUI "offline" state.
-    @State private var aiFetchEverSucceeded = false
     @State private var configurationExpanded = false
 
     struct HourlyPoint: Identifiable {
@@ -385,9 +382,32 @@ struct OverviewView: View {
                             .foregroundStyle(Cisco.stateColor(raw: c.state))
                     }
                 }
+                TableColumn("Action") { c in
+                    if c.state == "not configured" {
+                        let candidate = appState.detectedUnconfiguredConnectors.first { $0.name == c.name }
+                        if appState.isConnectorSetupInFlight(c.name) {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Button(candidate?.canConfigureInline == true ? "Add" : "Setup") {
+                                appState.configureDetectedConnector(c.name)
+                            }
+                            .controlSize(.small)
+                            .help(candidate?.canConfigureInline == true
+                                  ? "Add \(friendlyConnectorName(c.name)) in observe mode without replacing existing connectors"
+                                  : "Open Setup for \(friendlyConnectorName(c.name))")
+                        }
+                    }
+                }
+                .width(66)
             }
             .frame(height: CGFloat(rows.count) * 28 + 32)
             .scrollDisabled(true)
+            if let connectorSetupError = appState.connectorSetupError {
+                Label(connectorSetupError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(Cisco.red)
+                    .textSelection(.enabled)
+            }
             if appState.activeConnectorNames.count > 1 {
                 HStack {
                     Text(scopeConnector.isEmpty
@@ -855,7 +875,7 @@ struct OverviewView: View {
         func displayName(_ s: AISignal) -> String {
             s.name.nonEmpty ?? s.product.nonEmpty ?? s.signatureID.nonEmpty ?? s.signalID.nonEmpty ?? "(unknown)"
         }
-        let sorted = aiSnapshot.signals.sorted { a, b in
+        let sorted = appState.aiSnapshot.signals.sorted { a, b in
             let ra = stateRank(a.state), rb = stateRank(b.state)
             if ra != rb { return ra < rb }
             if a.confidence != b.confidence { return a.confidence > b.confidence }
@@ -908,15 +928,15 @@ struct OverviewView: View {
     private var aiCard: some View {
         let box = aiOverviewRows
         return DCCard("Discovered AI Agents", systemImage: "sparkle.magnifyingglass") {
-            if !aiFetchEverSucceeded {
+            if !appState.aiFetchEverSucceeded {
                 Text("ai discovery offline - run: defenseclaw agent discovery status")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            } else if !aiSnapshot.enabled {
+            } else if !appState.aiSnapshot.enabled {
                 Text("disabled - run: defenseclaw agent discovery enable")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            } else if aiSnapshot.signals.isEmpty {
+            } else if appState.aiSnapshot.signals.isEmpty {
                 Text("no AI agents detected yet - try: defenseclaw agent discover")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -1015,14 +1035,6 @@ struct OverviewView: View {
         summary = await appState.audit.enforcementSummary()
         hourly = await appState.audit.hourlyEnforcement24h()
             .map { HourlyPoint(hour: $0.hour, klass: $0.action, count: $0.count) }
-        if appState.gatewayReachable {
-            // Keep the last good snapshot on failure (TUI: a restarting
-            // gateway shows stale data, not "offline").
-            if let snap = try? await appState.gateway.aiUsage() {
-                aiSnapshot = snap
-                aiFetchEverSucceeded = true
-            }
-        }
     }
 
     private func runDoctor() {

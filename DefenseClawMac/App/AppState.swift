@@ -144,6 +144,10 @@ final class AppState {
     var lastGatewayError: GatewayError?
     var config = DefenseClawConfig()
     var installDetected = true
+    var aiSnapshot = AIUsageSnapshot()
+    var aiFetchEverSucceeded = false
+    var connectorSetupInFlight: Set<String> = []
+    var connectorSetupError: String?
 
     // Alerts state
     var unackedAlerts: [AlertRow] = []
@@ -275,6 +279,10 @@ final class AppState {
                 }
             }
             health = snap
+            if let usage = try? await gateway.aiUsage() {
+                aiSnapshot = usage
+                aiFetchEverSucceeded = true
+            }
             // normalize_filter parity: a torn-down connector or a
             // single-connector roster silently falls back to All so the app
             // can never stay trapped in a filter with no chrome to clear it.
@@ -417,6 +425,47 @@ final class AppState {
             reloadConfig()
         }
         return result
+    }
+
+    /// Register a discovered hook connector without replacing existing peers.
+    /// Proxy connectors need their full scanner/proxy wizard, so those route to
+    /// Setup instead of attempting a lossy one-click configuration.
+    func configureDetectedConnector(_ name: String) {
+        let normalized = ConnectorOnboarding.normalizedConnector(name)
+        guard TUIWizards.hookConnectors.contains(normalized) else {
+            selectedPanel = .setup
+            return
+        }
+        guard connectorSetupInFlight.insert(normalized).inserted else { return }
+        connectorSetupError = nil
+        Task {
+            let commandName = normalized == "claudecode" ? "claude-code" : normalized
+            let result = await runCommand(
+                title: "Add \(friendlyConnectorName(normalized)) connector",
+                arguments: ["setup", commandName, "--yes", "--mode", "observe"],
+                category: "setup",
+                origin: "Overview",
+                successEffects: ["\(friendlyConnectorName(normalized)) added to connector roster"],
+                suggestedNextAction: "Resume the agent so it emits a fresh hook event."
+            )
+            if result.succeeded {
+                let updated = await configStore.reload()
+                config = updated
+                await gateway.update(config: updated)
+                await pulse()
+            } else {
+                let detail = result.output
+                    .split(separator: "\n")
+                    .last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
+                    .map(String.init) ?? "exit \(result.exitCode)"
+                connectorSetupError = "Could not add \(friendlyConnectorName(normalized)): \(detail)"
+            }
+            connectorSetupInFlight.remove(normalized)
+        }
+    }
+
+    func isConnectorSetupInFlight(_ name: String) -> Bool {
+        connectorSetupInFlight.contains(ConnectorOnboarding.normalizedConnector(name))
     }
 
     /// Mirrors the TUI exactly: `defenseclaw alerts acknowledge --severity <S>`
@@ -960,6 +1009,51 @@ final class AppState {
             ?? health.subsystem("guardrail")?.since
     }
 
+    /// High-confidence local agents that DefenseClaw knows how to configure but
+    /// which are absent from both config and live /health. These are surfaced as
+    /// unmanaged candidates; discovery alone never changes enforcement state.
+    var detectedUnconfiguredConnectors: [ConnectorRegistrationCandidate] {
+        var managed = Set(config.connectors.map(ConnectorOnboarding.normalizedConnector))
+        if let legacy = config.connectorName?.nonEmpty {
+            managed.insert(ConnectorOnboarding.normalizedConnector(legacy))
+        }
+        for name in health.connectors.map(\.name) {
+            managed.insert(ConnectorOnboarding.normalizedConnector(name))
+        }
+        if let primary = health.primaryConnector?.name.nonEmpty {
+            managed.insert(ConnectorOnboarding.normalizedConnector(primary))
+        }
+
+        var best: [String: ConnectorRegistrationCandidate] = [:]
+        for signal in aiSnapshot.signals {
+            let name = ConnectorOnboarding.normalizedConnector(signal.supportedConnector)
+            let score = max(signal.confidence, signal.identityScore, signal.presenceScore)
+            guard !name.isEmpty,
+                  signal.state.lowercased() != "gone",
+                  score >= 0.8,
+                  Self.knownConnectors.contains(name),
+                  !managed.contains(name)
+            else { continue }
+
+            let candidate = ConnectorRegistrationCandidate(
+                name: name,
+                confidence: score,
+                lastSeen: signal.lastSeen ?? signal.lastActive,
+                canConfigureInline: TUIWizards.hookConnectors.contains(name)
+            )
+            if let current = best[name] {
+                let currentDate = current.lastSeen ?? .distantPast
+                let candidateDate = candidate.lastSeen ?? .distantPast
+                if candidate.confidence < current.confidence
+                    || (candidate.confidence == current.confidence && candidateDate <= currentDate) {
+                    continue
+                }
+            }
+            best[name] = candidate
+        }
+        return Self.knownConnectors.compactMap { best[$0] }
+    }
+
     var overviewNotices: [OverviewNotice] {
         var notices: [OverviewNotice] = []
         let gatewayState = (health.subsystem("gateway")?.state ?? "")
@@ -982,6 +1076,14 @@ final class AppState {
         }
         if !config.rosterError.isEmpty {
             notices.append(.init(level: .error, message: "Connector roster degraded: \(config.rosterError) - showing a reduced view; check your connector config"))
+        }
+        let unmanaged = detectedUnconfiguredConnectors
+        if !unmanaged.isEmpty {
+            let names = unmanaged.map { friendlyConnectorName($0.name) }.joined(separator: ", ")
+            notices.append(.init(
+                level: .warn,
+                message: "Detected but not configured: \(names) - add from the Connectors card or Setup"
+            ))
         }
         if installDetected, guardrailOff {
             notices.append(.init(level: .warn, message: "LLM guardrail not configured - set it up in Setup → Guardrail"))
@@ -1083,12 +1185,27 @@ final class AppState {
     }
 
     var doctorBox: DoctorBoxState {
-        guard let doctor = doctorCache, !doctor.isEmpty else { return DoctorBoxState() }
+        let unmanaged = detectedUnconfiguredConnectors
+        let registrationCheck: DoctorBoxState.CheckRow? = unmanaged.isEmpty ? nil : .init(
+            badge: "WARN",
+            label: "Connector registration",
+            detail: "Detected but not configured: \(unmanaged.map { friendlyConnectorName($0.name) }.joined(separator: ", ")). Add from the Connectors card.",
+            stale: false
+        )
+        guard let doctor = doctorCache, !doctor.isEmpty else {
+            guard let registrationCheck else { return DoctorBoxState() }
+            return DoctorBoxState(
+                empty: false,
+                summaryParts: ["1 warn"],
+                checks: [registrationCheck],
+                allGreen: false
+            )
+        }
         let top = doctor.topFailures(3)
         let staleFailures = doctor.checks.filter { $0.status == "fail" && liveHealthContradicts($0) }.count
         let staleWarnings = doctor.checks.filter { $0.status == "warn" && liveHealthContradicts($0) }.count
         let effectiveFailed = max(doctor.failed - staleFailures, 0)
-        let effectiveWarned = max(doctor.warned - staleWarnings, 0)
+        let effectiveWarned = max(doctor.warned - staleWarnings, 0) + (registrationCheck == nil ? 0 : 1)
         let staleCount = staleFailures + staleWarnings
 
         var parts: [String] = []
@@ -1098,7 +1215,7 @@ final class AppState {
         if staleCount > 0 { parts.append("\(staleCount) stale") }
         if doctor.skipped > 0 { parts.append("\(doctor.skipped) skip") }
 
-        let rows = top.map { check in
+        var rows = top.map { check in
             let contradicted = liveHealthContradicts(check)
             return DoctorBoxState.CheckRow(
                 badge: contradicted ? "STALE" : check.status.uppercased(),
@@ -1107,6 +1224,7 @@ final class AppState {
                 stale: contradicted
             )
         }
+        if let registrationCheck { rows.append(registrationCheck) }
         return DoctorBoxState(
             empty: false,
             summaryParts: parts,
@@ -1119,13 +1237,10 @@ final class AppState {
 
     // MARK: - Connectors table rows (TUI _overview_connector_rows)
 
-    /// The dashboard's agent table: every connector that is configured
-    /// and/or actively hooked (live /health row), with counters — always
-    /// visible, even on single-connector installs. Configured connectors
-    /// lead in config order; live-only rows follow alphabetically. Live
-    /// rows overlay by name; disabled connectors stay visible with status
-    /// "disabled"; configured rows without a live row fall back to cached
-    /// audit stats and the gateway-level status.
+    /// The dashboard's agent table: configured connectors, active /health
+    /// rows, and high-confidence discovered-but-unconfigured candidates.
+    /// Discovery never activates a connector; candidates render with an
+    /// explicit repair action in Overview.
     var connectorTableRows: [ConnectorHealth] {
         // Configured = the guardrail.connectors roster plus the legacy
         // singular connector.name/guardrail.connector shape, so
@@ -1144,7 +1259,15 @@ final class AppState {
             guard !lower.isEmpty, seen.insert(lower).inserted else { continue }
             extras.append(name)
         }
-        let roster = configured + extras.sorted { $0.lowercased() < $1.lowercased() }
+        let candidates = detectedUnconfiguredConnectors
+        let candidatesByName = Dictionary(uniqueKeysWithValues: candidates.map { ($0.name, $0) })
+        var unmanaged: [String] = []
+        for candidate in candidates where seen.insert(candidate.name).inserted {
+            unmanaged.append(candidate.name)
+        }
+        let roster = configured
+            + extras.sorted { $0.lowercased() < $1.lowercased() }
+            + unmanaged.sorted()
 
         let gatewayState = (health.subsystem("gateway")?.state ?? "").trimmingCharacters(in: .whitespaces)
         let fallbackStatus = !gatewayReachable
@@ -1152,6 +1275,19 @@ final class AppState {
             : (gatewayState.lowercased() == "running" ? "active" : (gatewayState.nonEmpty ?? "unknown"))
         return roster.map { name in
             let lower = name.lowercased()
+            if let candidate = candidatesByName[ConnectorOnboarding.normalizedConnector(name)] {
+                return ConnectorHealth(
+                    name: candidate.name,
+                    mode: "—",
+                    rulePack: "—",
+                    lastActivity: candidate.lastSeen,
+                    calls: 0,
+                    blocks: 0,
+                    alerts: 0,
+                    state: "not configured",
+                    since: nil
+                )
+            }
             // connectorDisabled stores the raw roster key — match it
             // case-insensitively like every other name comparison here.
             let disabled = config.connectorDisabled.contains { $0.lowercased() == lower }
@@ -1435,7 +1571,8 @@ final class AppState {
     /// Every agent DefenseClaw knows how to hook — the catalog-scan and
     /// Connectors-table fallback roster.
     static let knownConnectors = ["openclaw", "zeptoclaw", "codex", "claudecode", "hermes",
-                                  "cursor", "windsurf", "geminicli", "copilot", "openhands", "antigravity"]
+                                  "cursor", "windsurf", "geminicli", "copilot", "openhands",
+                                  "antigravity", "opencode", "omnigent"]
 
     func configuredConnectors() -> [String] {
         let fromHealth = health.connectors.map(\.name)

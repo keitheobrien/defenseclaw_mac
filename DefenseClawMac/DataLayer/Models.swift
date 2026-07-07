@@ -46,7 +46,7 @@ enum EntityState: String {
             return .active
         case "blocked", "error", "rejected", "stopped", "fail", "failed", "block", "offline":
             return .blocked
-        case "warn", "warning", "reconnecting", "starting", "stale", "degraded", "observe":
+        case "warn", "warning", "reconnecting", "starting", "stale", "degraded", "observe", "not configured", "unconfigured":
             return .warn
         case "quarantined":
             return .quarantined
@@ -142,6 +142,17 @@ struct ConnectorHealth: Identifiable, Sendable {
     /// Gateway-session start for this connector (/health connectors[].since) —
     /// drives the TUI's live-window test and session-scoped counts.
     var since: Date?
+    var id: String { name }
+}
+
+/// A locally detected DefenseClaw-capable agent that is not registered in the
+/// active gateway roster. Detection is informational; registration always
+/// requires an explicit user action.
+struct ConnectorRegistrationCandidate: Identifiable, Sendable, Hashable {
+    var name: String
+    var confidence: Double
+    var lastSeen: Date?
+    var canConfigureInline: Bool
     var id: String { name }
 }
 

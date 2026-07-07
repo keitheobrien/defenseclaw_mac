@@ -136,6 +136,7 @@ struct WizardSheet: View {
     @State private var phase: Phase = .form
     @State private var output = ""
     @State private var exitCode: Int32?
+    @State private var confirmConnectorReplacement = false
 
     enum Phase { case form, review, running, done }
 
@@ -192,6 +193,12 @@ struct WizardSheet: View {
 
     private var validationMessage: String? {
         wizard.validation?(values)
+    }
+
+    private var replacesConnectorRoster: Bool {
+        wizard.id == "connector"
+            && (values["action"] == "batch"
+                || (values["action"] == "setup" && values["replace"] == "yes"))
     }
 
     /// Gateway-applied wizards: one PATCH /config/patch per non-empty field.
@@ -260,6 +267,12 @@ struct WizardSheet: View {
                 values["connector"] = configured
             }
             if wizard.interactiveOnly { phase = .review } // nothing to fill in
+        }
+        .alert("Replace the connector roster?", isPresented: $confirmConnectorReplacement) {
+            Button("Cancel", role: .cancel) {}
+            Button("Replace Connectors", role: .destructive) { apply() }
+        } message: {
+            Text("This removes the other configured connectors from the active DefenseClaw roster. Their local agent files may remain installed until separately removed.")
         }
     }
 
@@ -345,6 +358,14 @@ struct WizardSheet: View {
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Cisco.surfacePanel, in: RoundedRectangle(cornerRadius: 8))
+            if replacesConnectorRoster {
+                Label(
+                    "This command replaces the active connector roster. Use normal Setup to add a connector without removing its peers.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(Cisco.red)
+            }
             KeyValueGrid(pairs: visibleFields.compactMap { field in
                 let value = values[field.key] ?? ""
                 guard !value.isEmpty else { return nil }
@@ -368,14 +389,21 @@ struct WizardSheet: View {
                     .buttonStyle(.borderedProminent)
                     .tint(Cisco.blue)
                 } else {
-                    Button("Apply") { apply() }
+                    if replacesConnectorRoster {
+                        Button("Replace Connectors", role: .destructive) {
+                            confirmConnectorReplacement = true
+                        }
                         .keyboardShortcut(.defaultAction)
-                        .buttonStyle(.borderedProminent)
-                        .tint(Cisco.blue)
-                        .disabled(wizard.configPatchPrefix != nil && !appState.gatewayReachable)
-                        .help(wizard.configPatchPrefix != nil && !appState.gatewayReachable
-                              ? "Gateway offline — config patches need the gateway running."
-                              : "")
+                    } else {
+                        Button("Apply") { apply() }
+                            .keyboardShortcut(.defaultAction)
+                            .buttonStyle(.borderedProminent)
+                            .tint(Cisco.blue)
+                            .disabled(wizard.configPatchPrefix != nil && !appState.gatewayReachable)
+                            .help(wizard.configPatchPrefix != nil && !appState.gatewayReachable
+                                  ? "Gateway offline — config patches need the gateway running."
+                                  : "")
+                    }
                 }
             }
         }
