@@ -116,6 +116,30 @@ final class AppState {
     // Pulse state
     var health: HealthSnapshot = HealthSnapshot()
     var scanners: [ScannerStatus] = []
+    /// Last scanner Fix failure, shown inline in the Scanners card.
+    var scannerFixError: String?
+    /// Located `defenseclaw` binary, cached here so the 5s pulse never
+    /// spawns the login-shell fallback search; refreshed on start/reload.
+    private var probeCLIPath: String?
+    /// Scanner names the login-shell PATH resolves (custom bin dirs the
+    /// standard probe misses) — checked once, alongside probeCLIPath.
+    private var shellResolvedScanners: Set<String> = []
+    private var probeResolved = false
+
+    /// One-time (per launch / per config reload) subprocess-backed lookups
+    /// backing the scanner probe. Runs at the top of the first pulse, so
+    /// panel-triggered pulses can't race ahead of start() and briefly show
+    /// fixable scanners as "missing".
+    private func resolveProbePaths(force: Bool = false) async {
+        if probeResolved && !force { return }
+        probeCLIPath = await cli.locateBinary()
+        var found: Set<String> = []
+        for name in ScannerProbe.externalScanners where !ScannerProbe.binaryInstalled(name) {
+            if await cli.locateTool(name) != nil { found.insert(name) }
+        }
+        shellResolvedScanners = found
+        probeResolved = true
+    }
     var gatewayReachable = false
     var lastGatewayError: GatewayError?
     var config = DefenseClawConfig()
@@ -229,6 +253,7 @@ final class AppState {
             config = cfg
             await gateway.update(config: cfg)
         }
+        await resolveProbePaths() // no-op after the first pulse
         do {
             var snap = try await gateway.health()
             // Enrich connector rows: mode/rule pack from config, and
@@ -285,8 +310,15 @@ final class AppState {
         scanners = ScannerProbe.statuses(
             config: config,
             guardrailState: guardrailState,
-            missingCredentials: (doctorCache?.isEmpty == false) ? doctorCache!.missingRequiredCredentials : nil
+            missingCredentials: (doctorCache?.isEmpty == false) ? doctorCache!.missingRequiredCredentials : nil,
+            cliPath: probeCLIPath,
+            shellFound: shellResolvedScanners
         )
+        // A Fix error is only meaningful while a fixable row remains; once
+        // the rows resolve (externally or via a later Fix), drop the banner.
+        if scannerFixError != nil, !scanners.contains(where: { $0.fixSource != nil }) {
+            scannerFixError = nil
+        }
         // Session-scoped Total scans since the earliest connector session
         // start; all-time when no session window has ever been observed.
         sessionTotalScans = await audit.countScanResultsSince(sessionStart)
@@ -1373,7 +1405,30 @@ final class AppState {
             let cfg = await configStore.reload()
             config = cfg
             await gateway.update(config: cfg)
+            await resolveProbePaths(force: true) // path override may have changed
             await pulse()
+        }
+    }
+
+    /// One-click repair for a scanner that exists in the DefenseClaw install
+    /// but isn't linked into a PATH dir: recreate the installer's
+    /// ~/.local/bin symlinks (binary + its -api/-pre-commit siblings), then
+    /// re-probe so the row flips to "installed" immediately.
+    func fixScanner(_ status: ScannerStatus) {
+        guard let source = status.fixSource else { return }
+        scannerFixError = nil
+        do {
+            try ScannerProbe.linkIntoLocalBin(name: status.name, source: source)
+            let guardrailState = health.subsystems.first { $0.name == "guardrail" }?.state
+            scanners = ScannerProbe.statuses(
+                config: config,
+                guardrailState: guardrailState,
+                missingCredentials: (doctorCache?.isEmpty == false) ? doctorCache!.missingRequiredCredentials : nil,
+                cliPath: probeCLIPath,
+                shellFound: shellResolvedScanners
+            )
+        } catch {
+            scannerFixError = "\(status.name): \(error.localizedDescription)"
         }
     }
 

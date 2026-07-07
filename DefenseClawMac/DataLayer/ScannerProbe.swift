@@ -3,6 +3,14 @@
 // built-ins that ship in the CLI (aibom, codeguard), the guardrail (state +
 // mode/port/rule-pack), and required credentials (keys). All reads are
 // filesystem/env only — cheap enough to run on the pulse, no subprocess.
+//
+// The external scanners ship inside the DefenseClaw install's venv and are
+// only usable when linked into a PATH dir (the installer symlinks them into
+// ~/.local/bin). When that step was skipped — or an upgrade rebuilt the venv
+// and broke the links — the binaries exist but probe as "missing". The probe
+// therefore also looks for them next to the resolved `defenseclaw` binary,
+// and linkIntoLocalBin() offers a one-click repair that recreates the
+// installer's own symlink layout.
 
 import Foundation
 
@@ -11,6 +19,9 @@ struct ScannerStatus: Identifiable, Sendable, Equatable {
     var name: String
     var detail: String
     var level: Level
+    /// Set when the binary exists in the DefenseClaw install but isn't on
+    /// PATH: the discovered source path, enabling the one-click Fix.
+    var fixSource: String?
     var id: String { name }
 }
 
@@ -60,6 +71,90 @@ enum ScannerProbe {
         return value
     }
 
+    /// Where a scanner binary was found, if anywhere.
+    enum Location: Sendable, Equatable {
+        case onPath              // executable in a standard bin dir
+        case unlinked(String)    // in the DefenseClaw install, not on PATH
+        case missing
+    }
+
+    /// PATH-dir probe first; otherwise look next to the resolved
+    /// `defenseclaw` entry point — the scanners ship in the same venv bin
+    /// dir, so a symlink-resolved sibling is the install's own copy.
+    /// (isExecutableFile follows symlinks, so a broken ~/.local/bin link
+    /// correctly falls through to .unlinked and gets repaired by Fix.)
+    static func locate(_ name: String, cliPath: String?) -> Location {
+        if binaryInstalled(name) { return .onPath }
+        if let cliPath {
+            let sibling = URL(fileURLWithPath: cliPath)
+                .resolvingSymlinksInPath()
+                .deletingLastPathComponent()
+                .appendingPathComponent(name).path
+            if FileManager.default.isExecutableFile(atPath: sibling) {
+                return .unlinked(sibling)
+            }
+        }
+        return .missing
+    }
+
+    enum FixError: LocalizedError {
+        case destinationOccupied(String)
+        case sourceVanished(String)
+        var errorDescription: String? {
+            switch self {
+            case .destinationOccupied(let path):
+                "\(path) already exists and is not a symlink — move it aside, then Fix again."
+            case .sourceVanished(let path):
+                "\(path) is gone — the install moved or was rebuilt; it will re-probe shortly."
+            }
+        }
+    }
+
+    /// One-click repair: recreate the installer's own layout by symlinking
+    /// the discovered binary into ~/.local/bin, plus any executable
+    /// `<name>-*` siblings (…-api, …-pre-commit) the installer also links.
+    /// Stale or broken symlinks are replaced — but a sibling link that
+    /// still resolves to a working executable is left alone (it may
+    /// belong to a different install). A regular file at the destination
+    /// is never overwritten. Throws if the probed source itself vanished
+    /// (e.g. an upgrade rebuilt the venv between the probe and the click),
+    /// so a stale Fix is never a silent no-op.
+    static func linkIntoLocalBin(name: String, source: String) throws {
+        let fm = FileManager.default
+        guard fm.isExecutableFile(atPath: source) else {
+            throw FixError.sourceVanished(source)
+        }
+        let binDir = fm.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin")
+        try fm.createDirectory(at: binDir, withIntermediateDirectories: true)
+
+        let sourceDir = URL(fileURLWithPath: source).deletingLastPathComponent()
+        var targets = [name]
+        if let siblings = try? fm.contentsOfDirectory(atPath: sourceDir.path) {
+            targets += siblings.filter { $0.hasPrefix("\(name)-") }.sorted()
+        }
+        for target in targets {
+            let src = sourceDir.appendingPathComponent(target).path
+            guard fm.isExecutableFile(atPath: src) else { continue }
+            let dest = binDir.appendingPathComponent(target)
+            // attributesOfItem does not follow the final symlink (lstat),
+            // so a stale link is detected as such rather than as missing.
+            if let attrs = try? fm.attributesOfItem(atPath: dest.path) {
+                if attrs[.type] as? FileAttributeType == .typeSymbolicLink {
+                    // A sibling link that still works stays untouched; the
+                    // probed binary itself is known-broken on PATH, so its
+                    // link is always safe to recreate.
+                    if target != name, fm.isExecutableFile(atPath: dest.path) { continue }
+                    try fm.removeItem(at: dest)
+                } else if target == name {
+                    throw FixError.destinationOccupied(dest.path)
+                } else {
+                    continue // never fight over an extra's real file
+                }
+            }
+            try fm.createSymbolicLink(atPath: dest.path, withDestinationPath: src)
+        }
+    }
+
     private static func dotEnvNames() -> Set<String> {
         let url = ConfigStore.dataDirectory.appendingPathComponent(".env")
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
@@ -89,25 +184,43 @@ enum ScannerProbe {
         }
     }
 
+    /// The two external scanners the card probes for.
+    static let externalScanners = ["skill-scanner", "mcp-scanner"]
+
     /// Assemble all six scanner rows. `guardrailState` comes from /health
     /// (e.g. "running"); the mode/port/rule-pack detail comes from config.
     /// `missingCredentials` is the doctor-cache-derived list (TUI keys_status):
     /// nil = no cache yet ("not checked"); [] = all required set.
+    /// `cliPath` (the located `defenseclaw` binary) anchors the fallback
+    /// search for scanners that exist in the install but aren't on PATH.
+    /// `shellFound` holds scanner names the login-shell PATH resolved
+    /// (checked once at startup) — binDirs only covers the standard three
+    /// dirs, so this keeps a MacPorts/pipx/custom-dir install from being
+    /// mislabeled "not in PATH" with a spurious Fix button.
     static func statuses(
         config: DefenseClawConfig,
         guardrailState: String?,
-        missingCredentials: [String]? = nil
+        missingCredentials: [String]? = nil,
+        cliPath: String? = nil,
+        shellFound: Set<String> = []
     ) -> [ScannerStatus] {
         var rows: [ScannerStatus] = []
 
-        let skill = binaryInstalled("skill-scanner")
-        rows.append(.init(name: "skill-scanner",
-                          detail: skill ? "installed" : "missing",
-                          level: skill ? .active : .missing))
-        let mcp = binaryInstalled("mcp-scanner")
-        rows.append(.init(name: "mcp-scanner",
-                          detail: mcp ? "installed" : "missing",
-                          level: mcp ? .active : .missing))
+        for scanner in externalScanners {
+            if shellFound.contains(scanner) {
+                rows.append(.init(name: scanner, detail: "installed", level: .active))
+                continue
+            }
+            switch locate(scanner, cliPath: cliPath) {
+            case .onPath:
+                rows.append(.init(name: scanner, detail: "installed", level: .active))
+            case .unlinked(let source):
+                rows.append(.init(name: scanner, detail: "found — not in PATH",
+                                  level: .warn, fixSource: source))
+            case .missing:
+                rows.append(.init(name: scanner, detail: "missing", level: .missing))
+            }
+        }
 
         rows.append(.init(name: "aibom", detail: "built-in", level: .builtin))
         rows.append(.init(name: "codeguard", detail: "built-in", level: .builtin))

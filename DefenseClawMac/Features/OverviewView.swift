@@ -598,7 +598,19 @@ struct OverviewView: View {
                             .foregroundStyle(scannerColor(s.level))
                             .lineLimit(1)
                             .truncationMode(.tail)
+                        if s.fixSource != nil {
+                            Button("Fix") { appState.fixScanner(s) }
+                                .buttonStyle(.borderless)
+                                .font(.caption.weight(.semibold))
+                                .help("Link \(s.name) into ~/.local/bin so the CLI and gateway can find it")
+                        }
                     }
+                }
+                if let err = appState.scannerFixError {
+                    Text(err)
+                        .font(.caption2)
+                        .foregroundStyle(Cisco.red)
+                        .lineLimit(2)
                 }
                 if appState.scanners.isEmpty {
                     Text("Probing scanners…").font(.caption).foregroundStyle(.secondary)

@@ -28,14 +28,17 @@ actor CLIRunner {
         if name.hasPrefix("/") {
             return FileManager.default.isExecutableFile(atPath: name) ? name : nil
         }
-        if let cached = cachedPaths[name], FileManager.default.isExecutableFile(atPath: cached) {
-            return cached
-        }
+        // Override outranks the cache: a path freshly set in Settings must
+        // win immediately even while the previously cached binary still
+        // exists (the cache otherwise pins the old install forever).
         if name == "defenseclaw",
            let override = UserDefaults.standard.string(forKey: Self.pathOverrideKey),
            FileManager.default.isExecutableFile(atPath: override) {
             cachedPaths[name] = override
             return override
+        }
+        if let cached = cachedPaths[name], FileManager.default.isExecutableFile(atPath: cached) {
+            return cached
         }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let candidates = [
@@ -52,6 +55,12 @@ actor CLIRunner {
             return found
         }
         return nil
+    }
+
+    /// Augmented-PATH lookup for an arbitrary tool (scanner probe fallback).
+    /// Subprocess-backed — callers cache the result; never run on the pulse.
+    func locateTool(_ name: String) -> String? {
+        which(name)
     }
 
     private func which(_ name: String) -> String? {
