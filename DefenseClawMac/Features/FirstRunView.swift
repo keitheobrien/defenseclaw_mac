@@ -397,7 +397,10 @@ struct FirstRunView: View {
     private func discoverConnectors() async {
         connectorDiscoveryInProgress = true
         connectorDiscoveryError = nil
-        let result = await appState.cli.run(arguments: ["agent", "discover", "--json", "--no-emit-otel"])
+        // --refresh: every call here follows an explicit user action, and the
+        // runtime's discovery cache lives 24h — a stale hit would hide an
+        // agent installed since the last scan.
+        let result = await appState.cli.run(arguments: ["agent", "discover", "--json", "--no-emit-otel", "--refresh"])
         let allDetected = result.succeeded
             ? ConnectorOnboarding.installedConnectors(from: result.output, supportedOrder: Self.connectors)
             : []
