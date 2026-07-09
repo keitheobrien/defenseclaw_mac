@@ -439,7 +439,7 @@ final class AppState {
         guard connectorSetupInFlight.insert(normalized).inserted else { return }
         connectorSetupError = nil
         Task {
-            let commandName = normalized == "claudecode" ? "claude-code" : normalized
+            let commandName = ConnectorOnboarding.setupCommandName(normalized)
             let result = await runCommand(
                 title: "Add \(friendlyConnectorName(normalized)) connector",
                 arguments: ["setup", commandName, "--yes", "--mode", "observe"],
