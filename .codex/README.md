@@ -7,8 +7,6 @@ Included:
 
 - `environments/environment.toml` wires the Codex Run action to
   `./script/build_and_run.sh`.
-- `skills/pdf` is the project-shared PDF skill copied from the local Codex
-  skill directory.
 
 Intentionally excluded:
 
