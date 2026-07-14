@@ -76,7 +76,7 @@ struct ActivityView: View {
                     } label: {
                         Label("Clear Completed", systemImage: "trash")
                     }
-                    .disabled(!appState.activity.entries.contains { $0.status != .running })
+                    .disabled(!appState.activity.entries.contains { !$0.status.isActive })
                 } else {
                     Button(action: loadMutations) {
                         Label("Refresh", systemImage: "arrow.clockwise")
@@ -189,6 +189,18 @@ struct ActivityView: View {
                         Label("Cancel", systemImage: "stop.fill")
                     }
                     .controlSize(.small)
+                } else if entry.status == .cancelling {
+                    Button(role: .destructive) {} label: {
+                        Label("Cancelling...", systemImage: "stop.fill")
+                    }
+                    .controlSize(.small)
+                    .disabled(true)
+                } else if entry.status == .finishing {
+                    Button {} label: {
+                        Label("Finishing...", systemImage: "hourglass")
+                    }
+                    .controlSize(.small)
+                    .disabled(true)
                 }
                 Button { appState.activity.selectedID = nil } label: { Image(systemName: "xmark.circle.fill") }
                     .buttonStyle(.borderless)
@@ -216,7 +228,7 @@ struct ActivityView: View {
                 .help("Copy Output")
             }
             ScrollView {
-                Text(entry.output.isEmpty ? (entry.status == .running ? "Waiting for output..." : "No output") : entry.output)
+                Text(entry.output.isEmpty ? emptyOutputLabel(entry.status) : entry.output)
                     .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -263,6 +275,8 @@ struct ActivityView: View {
     private func statusIcon(_ status: CommandActivityStatus) -> String {
         switch status {
         case .running: "hourglass"
+        case .cancelling: "stop.circle"
+        case .finishing: "hourglass.circle"
         case .succeeded: "checkmark.circle.fill"
         case .failed: "xmark.circle.fill"
         case .cancelled: "stop.circle.fill"
@@ -272,9 +286,20 @@ struct ActivityView: View {
     private func statusColor(_ status: CommandActivityStatus) -> Color {
         switch status {
         case .running: Cisco.blue
+        case .cancelling: Cisco.orange
+        case .finishing: .secondary
         case .succeeded: Cisco.green
         case .failed: Cisco.red
         case .cancelled: .secondary
+        }
+    }
+
+    private func emptyOutputLabel(_ status: CommandActivityStatus) -> String {
+        switch status {
+        case .running: "Waiting for output..."
+        case .cancelling: "Stopping command..."
+        case .finishing: "Finalizing output..."
+        case .succeeded, .failed, .cancelled: "No output"
         }
     }
 
