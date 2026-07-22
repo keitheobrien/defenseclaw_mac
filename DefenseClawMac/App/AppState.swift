@@ -185,6 +185,9 @@ final class AppState {
     var auditPresetRequest: String?
     var logPanelRequest: LogPanelRequest?
     var commandPalettePresented = false
+    /// Shared presentation signal for the main window's responsive
+    /// sidebar/detail/inspector layout. Only the visible panel publishes it.
+    var detailInspectorPresented = false
 
     // Settings (mirrored via @AppStorage in views; defaults here)
     @ObservationIgnored @AppStorage("pulseInterval") var pulseInterval: Double = 5
