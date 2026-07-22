@@ -235,7 +235,7 @@ struct MenuBarPopover: View {
                 Task { await appState.acknowledge(appState.unackedAlerts) }
             }
             .controlSize(.small)
-            .disabled(appState.unackedAlerts.isEmpty)
+            .disabled(appState.unackedAlerts.isEmpty || appState.ackInProgress)
             Button(appState.monitoringPaused ? "Resume" : "Pause") {
                 appState.monitoringPaused.toggle()
             }

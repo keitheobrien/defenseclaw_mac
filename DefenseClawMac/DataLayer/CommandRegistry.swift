@@ -34,7 +34,13 @@ struct CommandDefinition: Identifiable, Hashable, Sendable {
 
     func invocation(extraArguments: [String], secretInput: String) throws -> CommandInvocation {
         guard acceptsSecretInput else {
-            return CommandInvocation(arguments: arguments + extraArguments, standardInput: nil)
+            let invocationArguments = arguments + extraArguments
+            return CommandInvocation(
+                arguments: invocationArguments,
+                standardInput: AlertDispositionCommand.suppliesConfirmation(
+                    for: invocationArguments
+                ) ? AlertDispositionCommand.confirmationInput : nil
+            )
         }
         guard extraArguments.count == 1,
               extraArguments[0].range(

@@ -29,6 +29,17 @@ enum RuntimeContractSurfaceTests {
         precondition(invocation.standardInput == secret)
         precondition(!invocation.arguments.contains(secret), "credential leaked into argv")
 
+        let alertInvocation = try! command(titled: "alerts acknowledge").invocation(
+            extraArguments: ["--severity", "HIGH"],
+            secretInput: ""
+        )
+        precondition(alertInvocation.standardInput == AlertDispositionCommand.confirmationInput)
+        precondition(alertInvocation.arguments == ["alerts", "acknowledge", "--severity", "HIGH"])
+
+        let directAlertInvocation = AlertDispositionCommand.acknowledge(severity: "HIGH")
+        precondition(directAlertInvocation.arguments == alertInvocation.arguments)
+        precondition(directAlertInvocation.standardInput == "y")
+
         print("Runtime contract surface tests passed")
     }
 
