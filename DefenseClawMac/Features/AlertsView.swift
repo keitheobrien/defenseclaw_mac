@@ -113,9 +113,10 @@ struct AlertsView: View {
         )) {
             if let row = selectedInspectorRow {
                 alertInspector(row)
-                    .inspectorColumnWidth(min: 340, ideal: 440)
+                    .dcInspectorColumnWidth()
             }
         }
+        .reportsDetailInspector(selectedRow != nil)
         .searchable(text: $search, placement: .toolbar, prompt: "Search action, target, details")
         .toolbar {
             ToolbarItemGroup {

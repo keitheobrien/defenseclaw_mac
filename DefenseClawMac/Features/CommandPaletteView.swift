@@ -8,6 +8,7 @@ struct CommandPaletteView: View {
     @State private var category = "all"
     @State private var selectedID: Int? = CommandRegistry.all.first?.id
     @State private var extraArguments = ""
+    @State private var secretInput = ""
     @State private var output = ""
     @State private var exitCode: Int32?
     @State private var running = false
@@ -35,7 +36,7 @@ struct CommandPaletteView: View {
     var body: some View {
         NavigationSplitView {
             VStack(spacing: 8) {
-                TextField("Search 226 commands", text: $search)
+                TextField("Search \(CommandRegistry.sourceCount) commands", text: $search)
                     .textFieldStyle(.roundedBorder)
                     .padding(.horizontal, 10)
                     .padding(.top, 10)
@@ -74,6 +75,7 @@ struct CommandPaletteView: View {
         }
         .onChange(of: selectedID) {
             extraArguments = ""
+            secretInput = ""
             output = ""
             exitCode = nil
             parseError = nil
@@ -113,12 +115,17 @@ struct CommandPaletteView: View {
 
             if command.requiresInput {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("Arguments").font(.caption.weight(.semibold))
+                    Text(command.acceptsSecretInput ? "Credential name" : "Arguments")
+                        .font(.caption.weight(.semibold))
                     TextField(command.usage.isEmpty ? "Additional arguments" : command.usage,
                               text: $extraArguments)
                         .textFieldStyle(.roundedBorder)
                         .font(.body.monospaced())
                     Text(command.usage).font(.caption2).foregroundStyle(.secondary)
+                    if command.acceptsSecretInput {
+                        SecureField("Credential value", text: $secretInput)
+                            .textFieldStyle(.roundedBorder)
+                    }
                     if let parseError {
                         Label(parseError, systemImage: "exclamationmark.triangle")
                             .font(.caption).foregroundStyle(Cisco.red)
@@ -181,7 +188,12 @@ struct CommandPaletteView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(command.isDestructive ? Cisco.red : Cisco.blue)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(running || (command.requiresInput && extraArguments.trimmingCharacters(in: .whitespaces).isEmpty))
+                    .disabled(
+                        running
+                            || (command.requiresInput
+                                && extraArguments.trimmingCharacters(in: .whitespaces).isEmpty)
+                            || (command.acceptsSecretInput && secretInput.isEmpty)
+                    )
                 }
             }
         }
@@ -198,7 +210,8 @@ struct CommandPaletteView: View {
 
     private func requestRun(_ command: CommandDefinition) {
         do {
-            _ = try CommandArgumentParser.parse(extraArguments)
+            let extras = try CommandArgumentParser.parse(extraArguments)
+            _ = try command.invocation(extraArguments: extras, secretInput: secretInput)
             parseError = nil
         } catch {
             parseError = error.localizedDescription
@@ -210,9 +223,10 @@ struct CommandPaletteView: View {
 
     private func runSelected() {
         guard let command = selected else { return }
-        let extras: [String]
+        let invocation: CommandInvocation
         do {
-            extras = try CommandArgumentParser.parse(extraArguments)
+            let extras = try CommandArgumentParser.parse(extraArguments)
+            invocation = try command.invocation(extraArguments: extras, secretInput: secretInput)
             parseError = nil
         } catch {
             parseError = error.localizedDescription
@@ -222,11 +236,13 @@ struct CommandPaletteView: View {
         running = true
         output = ""
         exitCode = nil
+        if command.acceptsSecretInput { secretInput = "" }
         Task {
             let result = await appState.runCommand(
                 title: command.title,
                 binary: command.binary,
-                arguments: command.arguments + extras,
+                arguments: invocation.arguments,
+                standardInput: invocation.standardInput,
                 category: command.category,
                 origin: "Command Palette",
                 refreshOnSuccess: command.changesState

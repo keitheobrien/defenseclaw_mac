@@ -3,6 +3,36 @@
 
 import SwiftUI
 
+private struct DetailInspectorPresentationReporter: ViewModifier {
+    @Environment(AppState.self) private var appState
+    let isPresented: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear { appState.detailInspectorPresented = isPresented }
+            .onChange(of: isPresented) { _, presented in
+                appState.detailInspectorPresented = presented
+            }
+            .onDisappear {
+                if isPresented { appState.detailInspectorPresented = false }
+            }
+    }
+}
+
+extension View {
+    func dcInspectorColumnWidth() -> some View {
+        inspectorColumnWidth(
+            min: InspectorLayoutPolicy.minimumWidth,
+            ideal: InspectorLayoutPolicy.idealWidth,
+            max: InspectorLayoutPolicy.maximumWidth
+        )
+    }
+
+    func reportsDetailInspector(_ isPresented: Bool) -> some View {
+        modifier(DetailInspectorPresentationReporter(isPresented: isPresented))
+    }
+}
+
 struct SeverityBadge: View {
     let severity: Severity
     var body: some View {
