@@ -125,7 +125,7 @@ struct AlertsView: View {
                 } label: {
                     Label("Acknowledge Selection", systemImage: "checkmark.circle")
                 }
-                .disabled(selectedRows.isEmpty)
+                .disabled(selectedRows.isEmpty || appState.ackInProgress)
                 Button {
                     Task { await appState.refreshAlerts() }
                 } label: {

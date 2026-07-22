@@ -18,6 +18,7 @@ struct CLICancellationTests {
         await ignoredSignalsEscalateToForcedTermination()
         await closedOutputDoesNotBlockCancellation()
         await inheritedPipeDoesNotHoldRunOpen()
+        await standardInputIsWrittenAndClosed()
         cancelledResultIsNotSuccessful()
         print("CLICancellationTests passed")
     }
@@ -174,6 +175,17 @@ struct CLICancellationTests {
         expect(result.succeeded, "direct parent exit succeeds")
         expect(result.output.contains("direct-parent-exited"), "direct parent output is retained")
         expect(ContinuousClock.now - started < .seconds(2), "descendant-held pipe is bounded")
+    }
+
+    private static func standardInputIsWrittenAndClosed() async {
+        let runner = CLIRunner()
+        let result = await runner.run(
+            binary: "/usr/bin/python3",
+            arguments: ["-c", "import sys; print(sys.stdin.readline().strip()); print('eof' if not sys.stdin.read() else 'open')"],
+            standardInput: "y"
+        )
+        expect(result.succeeded, "stdin-backed command succeeds")
+        expect(result.output.contains("y\neof"), "stdin value is written and the pipe is closed")
     }
 
     private static func cancelledResultIsNotSuccessful() {
