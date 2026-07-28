@@ -11,7 +11,7 @@
 # build/unified/out/.
 #
 # Env overrides:
-#   RUNTIME_TAG=0.8.6    pin the runtime release (default: latest)
+#   RUNTIME_TAG=0.8.9    pin the runtime release (default: latest)
 #   SKIP_NOTARIZE=1      skip notarization/stapling/spctl (iteration builds)
 set -euo pipefail
 
@@ -37,6 +37,15 @@ fi
 step() { printf '\n==> %s\n' "$*"; }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
+# macOS may attach com.apple.provenance while exported binaries are still being
+# assembled. If that cached metadata predates the final Developer ID signature,
+# an otherwise byte-valid app can fail verification after a ZIP round trip.
+# Remove only that cache; notarization tickets and other extended attributes
+# remain intact.
+strip_stale_provenance() {
+    xattr -rd com.apple.provenance "$1" 2>/dev/null || true
+}
+
 # notarytool's exit code on an Invalid verdict is not reliable across
 # versions — require an explicit "status: Accepted" in the output.
 notarize() {
@@ -51,8 +60,9 @@ notarize() {
 
 command -v gh >/dev/null || die "gh CLI is required"
 command -v cosign >/dev/null || die "cosign is required (brew install cosign) — checksums.txt provenance is verified fail-closed"
+command -v git >/dev/null || die "git is required to verify the signed runtime source tree"
 command -v python3 >/dev/null || die "python3 is required"
-command -v curl >/dev/null || die "curl is required"
+command -v xattr >/dev/null || die "xattr is required to clear stale macOS provenance metadata"
 
 rm -rf "$WORK"
 mkdir -p "$RUNTIME_DIR" "$OUT"
@@ -69,17 +79,22 @@ step "Runtime release: $RUNTIME_TAG"
 PROTECTED_GATEWAY="$RUNTIME_DIR/defenseclaw_${RUNTIME_VERSION}_protocol2_darwin_${ARCH}.dcgateway"
 WHEEL="$RUNTIME_DIR/defenseclaw-${RUNTIME_VERSION}-2-py3-none-any.dcwheel"
 UPGRADE_MANIFEST="$RUNTIME_DIR/upgrade-manifest.json"
+RELEASE_PROVENANCE="$RUNTIME_DIR/release-provenance.json"
+RELEASE_SOURCE_MAP="$RUNTIME_DIR/release-source-map.json"
 RUNTIME_ATTESTATION="$RUNTIME_DIR/runtime-candidate-checksums.txt"
 gh release download "$RUNTIME_TAG" --repo "$RUNTIME_REPO" --dir "$RUNTIME_DIR" \
     --pattern "$(basename "$PROTECTED_GATEWAY")" \
     --pattern "$(basename "$WHEEL")" \
     --pattern "upgrade-manifest.json" \
+    --pattern "release-provenance.json" \
+    --pattern "release-source-map.json" \
     --pattern "checksums.txt" \
     --pattern "checksums.txt.sig" \
     --pattern "checksums.txt.pem"
 
-[[ -f "$PROTECTED_GATEWAY" && -f "$WHEEL" && -f "$UPGRADE_MANIFEST" ]] \
-    || die "release $RUNTIME_TAG did not provide its protected macOS runtime and upgrade policy"
+[[ -f "$PROTECTED_GATEWAY" && -f "$WHEEL" && -f "$UPGRADE_MANIFEST" \
+   && -f "$RELEASE_PROVENANCE" && -f "$RELEASE_SOURCE_MAP" ]] \
+    || die "release $RUNTIME_TAG did not provide its protected runtime, policy, and source provenance"
 for f in checksums.txt checksums.txt.sig checksums.txt.pem; do
     [[ -f "$RUNTIME_DIR/$f" ]] || die "release is missing $f — refusing to trust unsigned/unverifiable checksums"
 done
@@ -111,7 +126,61 @@ step "Verifying artifact checksums"
 verify_sha256 "$PROTECTED_GATEWAY"
 verify_sha256 "$WHEEL"
 verify_sha256 "$UPGRADE_MANIFEST"
+verify_sha256 "$RELEASE_PROVENANCE"
+verify_sha256 "$RELEASE_SOURCE_MAP"
 WHEEL_SHA="$(shasum -a 256 "$WHEEL" | awk '{print $1}')"
+
+# Bind every source-derived input to the immutable commit authenticated by the
+# signed release provenance. Tags are convenient selectors, but mutable Git
+# refs are not a sufficient trust boundary for a release build.
+SOURCE_BINDING="$(python3 - "$RELEASE_PROVENANCE" "$RELEASE_SOURCE_MAP" "$RUNTIME_VERSION" <<'PYEOF'
+import hashlib
+import json
+from pathlib import Path
+import re
+import sys
+
+provenance_path, source_map_path = map(Path, sys.argv[1:3])
+version = sys.argv[3]
+provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+source_map_bytes = source_map_path.read_bytes()
+source_map = json.loads(source_map_bytes)
+
+if provenance.get("schema_version") != 1 or source_map.get("schema_version") != 1:
+    raise SystemExit("unsupported release provenance schema")
+if provenance.get("release_version") != version or source_map.get("release_version") != version:
+    raise SystemExit("release provenance version does not match the selected runtime")
+
+source_commit = provenance.get("source_commit")
+if not isinstance(source_commit, str) or re.fullmatch(r"[0-9a-f]{40}", source_commit) is None:
+    raise SystemExit("release provenance has no valid immutable source commit")
+source_tree = provenance.get("source_tree")
+if not isinstance(source_tree, str) or re.fullmatch(r"[0-9a-f]{40}", source_tree) is None:
+    raise SystemExit("release provenance has no valid source tree")
+for key in ("source_commit", "source_tree", "policy_commit", "policy_tree"):
+    if source_map.get(key) != provenance.get(key):
+        raise SystemExit(f"release source map disagrees with provenance for {key}")
+
+expected_map_sha = provenance.get("release_source_map_sha256")
+actual_map_sha = hashlib.sha256(source_map_bytes).hexdigest()
+if expected_map_sha != actual_map_sha:
+    raise SystemExit("release source map hash does not match signed provenance")
+
+for document in (provenance, source_map):
+    identity = document.get("source_install_identity")
+    if not isinstance(identity, dict) or identity.get("source_release") != version:
+        raise SystemExit("release source identity does not match the selected runtime")
+    if identity.get("runtime_config_version") != 8:
+        raise SystemExit("unsupported DefenseClaw runtime config version")
+
+print(source_commit, source_tree)
+PYEOF
+)"
+read -r SOURCE_COMMIT SOURCE_TREE <<< "$SOURCE_BINDING"
+[[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ && "$SOURCE_TREE" =~ ^[0-9a-f]{40}$ ]] \
+    || die "release provenance did not yield a valid source commit and tree"
+printf '    source commit  %s\n' "$SOURCE_COMMIT"
+printf '    source tree    %s\n' "$SOURCE_TREE"
 
 # The public, release-workflow-signed checksum manifest is the candidate
 # attestation available to downstream packagers. Preserve the authenticated
@@ -226,13 +295,23 @@ codesign --verify --strict --verbose=2 "$GATEWAY"
 # (cryptography, litellm, aiohttp, ...) AND the textual>=8.2.7 override that
 # the wheel's skill-scanner pin (textual<8) would otherwise defeat — without
 # it a fresh install's TUI crashes (Tabs.get_tab AttributeError). Ship the
-# tag's override list in the payload; the installer applies it via
+# authenticated source tree's override list in the payload; the installer applies it via
 # `uv pip install --overrides`, reproducing upstream's own resolution.
-step "Extracting dependency overrides from upstream pyproject ($RUNTIME_TAG)"
+step "Extracting dependency overrides from authenticated source commit ($SOURCE_COMMIT)"
 PYPROJECT="$RUNTIME_DIR/pyproject.toml"
-curl -fsSL --proto '=https' --tlsv1.2 \
-    -o "$PYPROJECT" "https://raw.githubusercontent.com/${RUNTIME_REPO}/${RUNTIME_TAG}/pyproject.toml" \
-    || die "could not fetch pyproject.toml for $RUNTIME_TAG"
+SOURCE_REPO="$RUNTIME_DIR/source.git"
+git init --bare --quiet "$SOURCE_REPO"
+git -C "$SOURCE_REPO" fetch --quiet --no-tags --depth=1 \
+    "https://github.com/${RUNTIME_REPO}.git" "$SOURCE_COMMIT" \
+    || die "could not fetch authenticated source commit $SOURCE_COMMIT"
+FETCHED_COMMIT="$(git -C "$SOURCE_REPO" rev-parse 'FETCH_HEAD^{commit}')"
+FETCHED_TREE="$(git -C "$SOURCE_REPO" rev-parse 'FETCH_HEAD^{tree}')"
+[[ "$FETCHED_COMMIT" == "$SOURCE_COMMIT" ]] \
+    || die "fetched source commit does not match signed release provenance"
+[[ "$FETCHED_TREE" == "$SOURCE_TREE" ]] \
+    || die "fetched source tree does not match signed release provenance"
+git -C "$SOURCE_REPO" show "${SOURCE_COMMIT}:pyproject.toml" > "$PYPROJECT" \
+    || die "authenticated source tree does not contain pyproject.toml"
 OVERRIDES="$RUNTIME_DIR/overrides.txt"
 python3 - "$PYPROJECT" > "$OVERRIDES" <<'PYEOF'
 import re, sys
@@ -287,6 +366,8 @@ xcodebuild -exportArchive \
     -quiet
 APP_PLAIN="$WORK/export/$APP_NAME.app"
 [[ -d "$APP_PLAIN" ]] || die "export did not produce $APP_PLAIN"
+strip_stale_provenance "$APP_PLAIN"
+codesign --verify --strict --deep --verbose=2 "$APP_PLAIN"
 
 # ── 5. Traditional app-only artifact (self-update track) ─────────────────────
 if [[ "${SKIP_NOTARIZE:-0}" != "1" ]]; then
@@ -295,11 +376,19 @@ if [[ "${SKIP_NOTARIZE:-0}" != "1" ]]; then
     ditto -c -k --keepParent "$APP_PLAIN" "$PLAIN_ZIP"
     notarize "$PLAIN_ZIP"
     xcrun stapler staple "$APP_PLAIN"
+    strip_stale_provenance "$APP_PLAIN"
+    codesign --verify --strict --deep --verbose=2 "$APP_PLAIN"
     spctl -a -t install -vv "$APP_PLAIN"
 fi
 step "Creating release zip (app-only)"
 RELEASE_ZIP="$OUT/$APP_NAME-$APP_VERSION.zip"
+strip_stale_provenance "$APP_PLAIN"
+codesign --verify --strict --deep --verbose=2 "$APP_PLAIN"
 ditto -c -k --keepParent "$APP_PLAIN" "$RELEASE_ZIP"
+ZIP_CHECK="$WORK/app-only-zip-check"
+mkdir -p "$ZIP_CHECK"
+ditto -x -k "$RELEASE_ZIP" "$ZIP_CHECK"
+codesign --verify --strict --deep --verbose=2 "$ZIP_CHECK/$APP_NAME.app"
 
 # ── 6. Unified variant: copy, inject RuntimePayload, re-sign ─────────────────
 step "Injecting RuntimePayload (runtime $RUNTIME_VERSION)"
@@ -322,18 +411,23 @@ UPGRADE_MANIFEST_SHA="$(shasum -a 256 "$PAYLOAD/upgrade-manifest.json" | awk '{p
 RUNTIME_ATTESTATION_SHA="$(shasum -a 256 "$PAYLOAD/runtime-candidate-checksums.txt" | awk '{print $1}')"
 python3 - "$PAYLOAD/payload-manifest.json" "$RUNTIME_VERSION" "$RUNTIME_TAG" "$ARCH" \
     "$GATEWAY_SIGNED_SHA" "$(basename "$WHEEL")" "$WHEEL_SHA" "$OVERRIDES_SHA" \
-    "$UPGRADE_MANIFEST_SHA" "$RUNTIME_ATTESTATION_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" <<'PYEOF'
+    "$UPGRADE_MANIFEST_SHA" "$RUNTIME_ATTESTATION_SHA" "$SOURCE_COMMIT" "$SOURCE_TREE" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" <<'PYEOF'
 import json
 from pathlib import Path
 import sys
 
 (
     path, version, tag, arch, gateway_sha, wheel_name, wheel_sha,
-    overrides_sha, policy_sha, attestation_sha, built_at,
+    overrides_sha, policy_sha, attestation_sha, source_commit, source_tree, built_at,
 ) = sys.argv[1:]
 payload = {
     "runtime_version": version,
     "runtime_tag": tag,
+    "runtime_source": {
+        "commit": source_commit,
+        "tree": source_tree,
+    },
     "arch": arch,
     "gateway": {
         "file": "defenseclaw-gateway",
@@ -368,6 +462,7 @@ then
 else
     codesign -f -o runtime --timestamp -s "$IDENTITY" "$APP"
 fi
+strip_stale_provenance "$APP"
 codesign --verify --strict --deep --verbose=2 "$APP"
 
 # ── 7. Notarize + staple the unified app ─────────────────────────────────────
@@ -377,6 +472,8 @@ if [[ "${SKIP_NOTARIZE:-0}" != "1" ]]; then
     ditto -c -k --keepParent "$APP" "$APP_ZIP"
     notarize "$APP_ZIP"
     xcrun stapler staple "$APP"
+    strip_stale_provenance "$APP"
+    codesign --verify --strict --deep --verbose=2 "$APP"
     spctl -a -t install -vv "$APP"
 fi
 
@@ -385,6 +482,8 @@ step "Creating DMG"
 STAGE="$WORK/dmg-stage"
 mkdir -p "$STAGE"
 ditto "$APP" "$STAGE/$APP_NAME.app"
+strip_stale_provenance "$STAGE/$APP_NAME.app"
+codesign --verify --strict --deep --verbose=2 "$STAGE/$APP_NAME.app"
 ln -s /Applications "$STAGE/Applications"
 DMG="$OUT/$APP_NAME-$APP_VERSION.dmg"
 # hdiutil's automatic sizing can undercount code-signing metadata and extended
