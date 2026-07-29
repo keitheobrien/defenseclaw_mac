@@ -420,6 +420,8 @@ struct AIDiscoveryView: View {
     @State private var selected: AIDiscoveryRow?
     @State private var scanning = false
     @State private var error: String?
+    @State private var loaded = false
+    @State private var scanRequested = false
 
     /// Grouped rows (one per product), filtered like the TUI's _apply_filter:
     /// substring match across state/product/vendor/component/version/bands/categories/detectors.
@@ -453,9 +455,9 @@ struct AIDiscoveryView: View {
             }
             if filtered.isEmpty {
                 DCEmptyState(
-                    title: "No AI components",
-                    message: "Run a scan to detect AI SDKs and frameworks on this machine (POST /api/v1/ai-usage/scan).",
-                    systemImage: "sparkle.magnifyingglass"
+                    title: emptyState.title,
+                    message: emptyState.message,
+                    systemImage: emptyState.systemImage
                 )
                 .frame(maxHeight: .infinity)
             } else {
@@ -472,11 +474,12 @@ struct AIDiscoveryView: View {
         .toolbar {
             ToolbarItemGroup {
                 Button {
-                    scan()
+                    run(primaryAction)
                 } label: {
-                    Label("Scan Now", systemImage: "wand.and.rays")
+                    Label(primaryAction.label, systemImage: primaryAction.systemImage)
                 }
-                .disabled(scanning || !appState.gatewayReachable)
+                .disabled(scanning || !appState.gatewayReachable || !loaded)
+                .help(primaryAction.label)
                 Button {
                     Task { await load() }
                 } label: {
@@ -487,12 +490,40 @@ struct AIDiscoveryView: View {
         .task { await load() }
         // Pulse-fed retry: a transient gateway failure (restart mid-fetch,
         // token rotation) must not freeze the panel on a stale error.
-        .task(id: appState.health.fetchedAt) { if error != nil { await load() } }
+        .task(id: appState.health.fetchedAt) {
+            if error != nil || scanRequested { await load() }
+            if scanRequested { await fulfillScanRequest() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in Task { await load() } }
         .onReceive(NotificationCenter.default.publisher(for: .dcScanAIDiscovery)) { _ in
-            guard !scanning, appState.gatewayReachable else { return }
-            scan()
+            requestScan()
         }
+    }
+
+    private var primaryAction: AIDiscoveryPrimaryAction {
+        .resolve(enabled: snapshot.enabled)
+    }
+
+    private var emptyState: (title: String, message: String, systemImage: String) {
+        guard loaded else {
+            return (
+                "AI discovery unavailable",
+                "Waiting for the local DefenseClaw gateway.",
+                "sparkle.magnifyingglass"
+            )
+        }
+        guard snapshot.enabled else {
+            return (
+                "AI discovery disabled",
+                "Use Enable AI Discovery above to enable the service, restart the gateway, and run the first scan.",
+                "power"
+            )
+        }
+        return (
+            "No AI components",
+            "Run a scan to detect AI SDKs and frameworks on this machine.",
+            "sparkle.magnifyingglass"
+        )
     }
 
     private var rowSelection: Binding<String?> {
@@ -602,22 +633,67 @@ struct AIDiscoveryView: View {
     }
 
     private func load() async {
-        guard appState.gatewayReachable else { return }
         do {
             snapshot = try await appState.gateway.aiUsage()
+            loaded = true
             error = nil
-        } catch { self.error = error.localizedDescription }
+        } catch {
+            loaded = false
+            self.error = error.localizedDescription
+        }
     }
 
-    private func scan() {
+    private func requestScan() {
+        guard !scanning else { return }
+        scanRequested = true
+        Task { await fulfillScanRequest() }
+    }
+
+    private func fulfillScanRequest() async {
+        guard scanRequested, !scanning else { return }
+        switch AIDiscoveryScanRequestStep.resolve(
+            statusLoaded: loaded && error == nil,
+            enabled: snapshot.enabled
+        ) {
+        case .loadStatus:
+            await load()
+            guard loaded else { return }
+            await fulfillScanRequest()
+        case .showDisabled:
+            scanRequested = false
+            error = "AI Discovery is disabled. Use Enable AI Discovery above before scanning."
+        case .scan:
+            scanRequested = false
+            run(.scan)
+        }
+    }
+
+    private func run(_ action: AIDiscoveryPrimaryAction) {
+        guard !scanning else { return }
         scanning = true
         appState.scanInFlight = true
+        error = nil
         Task {
-            do {
-                try await appState.gateway.aiScan()
+            let result = await appState.runCommand(
+                title: action.title,
+                arguments: action.arguments,
+                category: action.category,
+                origin: "AI Discovery",
+                successEffects: action.successEffects,
+                suggestedNextAction: "Review the refreshed AI Discovery inventory.",
+                refreshOnSuccess: true
+            )
+            if result.succeeded {
+                await appState.pulse()
                 await load()
-                error = nil
-            } catch { self.error = "Scan failed: \(error.localizedDescription)" }
+            } else {
+                let detail = result.output
+                    .split(separator: "\n")
+                    .last(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+                    .map(String.init)
+                error = detail.map { "\(action.title) failed: \($0)" }
+                    ?? "\(action.title) failed with exit \(result.exitCode)."
+            }
             scanning = false
             appState.scanInFlight = false
         }
