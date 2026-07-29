@@ -693,7 +693,6 @@ enum TUIWizards {
             WizardField(key: "include-package-manifests", label: "Include package manifests", kind: .bool, defaultValue: "yes", visibleWhen: (key: "enable", equals: ["yes"])),
             WizardField(key: "include-env-var-names", label: "Include env var names", kind: .bool, defaultValue: "yes", visibleWhen: (key: "enable", equals: ["yes"])),
             WizardField(key: "include-network-domains", label: "Include network domains", kind: .bool, defaultValue: "yes", visibleWhen: (key: "enable", equals: ["yes"])),
-            WizardField(key: "emit-otel", label: "Emit OTel", kind: .bool, defaultValue: "yes", visibleWhen: (key: "enable", equals: ["yes"])),
             WizardField(key: "store-raw-local-paths", label: "Store raw local paths", kind: .bool, defaultValue: "no", visibleWhen: (key: "enable", equals: ["yes"])),
             WizardField(key: "restart", label: "Restart gateway", kind: .bool, defaultValue: "yes"),
             WizardField(key: "scan", label: "Scan immediately", kind: .bool, defaultValue: "yes", visibleWhen: (key: "enable", equals: ["yes"])),
@@ -1187,7 +1186,7 @@ enum TUIWizards {
             append(v, key, flag: "--\(key)", to: &args)
         }
         for key in ["include-shell-history", "include-package-manifests", "include-env-var-names",
-                    "include-network-domains", "emit-otel", "store-raw-local-paths"] {
+                    "include-network-domains", "store-raw-local-paths"] {
             args.append(yes(v, key) ? "--\(key)" : "--no-\(key)")
         }
         if !yes(v, "restart") { args.append("--no-restart") }
