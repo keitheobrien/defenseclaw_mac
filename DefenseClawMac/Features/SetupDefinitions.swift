@@ -526,6 +526,14 @@ enum TUIWizards {
         id: "splunk", title: "Splunk", icon: "waveform.path.ecg.rectangle",
         blurb: "Configure Splunk O11y, local logs, or Enterprise HEC pipelines.",
         baseArgs: ["setup", "splunk"], commandBuilder: splunkCommands,
+        secretEnvironment: { v in
+            var environment: [String: String] = [:]
+            let accessToken = value(v, "access-token")
+            let hecToken = value(v, "hec-token")
+            if !accessToken.isEmpty { environment["SPLUNK_ACCESS_TOKEN"] = accessToken }
+            if !hecToken.isEmpty { environment["DEFENSECLAW_SPLUNK_HEC_TOKEN"] = hecToken }
+            return environment
+        },
         validation: { v in
             if value(v, "mode", "splunk-o11y") == "local-docker", !yes(v, "accept-splunk-license") {
                 return "Local Docker mode requires accepting the Splunk license."
@@ -547,27 +555,44 @@ enum TUIWizards {
 
     private static let observability = WizardDefinition(
         id: "observability", title: "Observability", icon: "chart.xyaxis.line",
-        blurb: "Add, list, enable, disable, or remove OTel and audit destinations.",
+        blurb: "Add, list, enable, disable, remove, or test OTel and audit destinations.",
         baseArgs: ["setup", "observability"], commandBuilder: observabilityCommands,
-        validation: { v in
-            let action = value(v, "action", "add")
-            if ["enable", "disable", "remove"].contains(action), value(v, "name").isEmpty {
-                return "Destination name is required for \(action)."
-            }
-            if action == "add", value(v, "preset", "local-otlp") == "webhook", value(v, "endpoint").isEmpty {
-                return "The webhook preset requires an endpoint URL."
-            }
-            return nil
+        secretEnvironment: { v in
+            let token = value(v, "token")
+            return token.isEmpty ? [:] : ["DEFENSECLAW_SETUP_OBSERVABILITY_TOKEN": token]
         },
+        validation: observabilityValidation,
         fields: [
-            WizardField(key: "action", label: "Action", kind: .choice(options: ["add", "list", "enable", "disable", "remove"]), defaultValue: "add"),
-            WizardField(key: "preset", label: "Destination", kind: .choice(options: ["local-otlp", "otlp", "splunk-o11y", "splunk-hec", "splunk-enterprise", "datadog", "honeycomb", "newrelic", "grafana-cloud", "webhook"]), defaultValue: "local-otlp", visibleWhen: (key: "action", equals: ["add"])),
-            WizardField(key: "name", label: "Destination name", kind: .text(placeholder: "name"), visibleWhen: (key: "action", equals: ["add", "enable", "disable", "remove"])),
-            WizardField(key: "endpoint", label: "Endpoint", kind: .text(placeholder: "host:port or URL"), visibleWhen: (key: "action", equals: ["add"])),
+            WizardField(key: "action", label: "Action", kind: .choice(options: ["add", "list", "enable", "disable", "remove", "test"]), defaultValue: "add"),
+            WizardField(key: "preset", label: "Destination", kind: .choice(options: ["local-otlp", "otlp", "splunk-o11y", "splunk-hec", "splunk-enterprise", "datadog", "honeycomb", "newrelic", "grafana-cloud", "galileo", "webhook"]), defaultValue: "local-otlp", visibleWhen: (key: "action", equals: ["add"])),
+            WizardField(key: "name", label: "Destination name", kind: .text(placeholder: "name"), visibleWhen: (key: "action", equals: ["add", "enable", "disable", "remove", "test"])),
+            WizardField(key: "enabled", label: "Enable destination", kind: .bool, defaultValue: "yes", visibleWhen: (key: "action", equals: ["add"])),
+            WizardField(key: "signals-o11y", label: "Signals", kind: .text(placeholder: "traces,metrics"), defaultValue: "traces,metrics", visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["splunk-o11y"])),
+            WizardField(key: "signals-galileo", label: "Signals", kind: .choice(options: ["traces"]), defaultValue: "traces", visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["galileo"])),
+            WizardField(key: "signals-general", label: "Signals", kind: .text(placeholder: "traces,metrics,logs"), defaultValue: "traces,metrics,logs", visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["local-otlp", "otlp", "datadog", "honeycomb", "newrelic", "grafana-cloud"])),
+            WizardField(key: "realm", label: "Splunk realm", kind: .text(placeholder: "us1"), defaultValue: "us1", visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["splunk-o11y"])),
+            WizardField(key: "site", label: "Datadog site", kind: .text(placeholder: "us5"), defaultValue: "us5", visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["datadog"])),
+            WizardField(key: "region", label: "Region / zone", kind: .text(placeholder: "us or prod-us-east-0"), visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["newrelic", "grafana-cloud"])),
+            WizardField(key: "dataset", label: "Honeycomb dataset", kind: .text(placeholder: "defenseclaw"), defaultValue: "defenseclaw", visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["honeycomb"])),
+            WizardField(key: "endpoint", label: "Endpoint", kind: .text(placeholder: "host:port or URL"), visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["splunk-enterprise", "galileo", "otlp"])),
+            WizardField(key: "protocol", label: "OTLP protocol", kind: .choice(options: ["grpc", "http"]), defaultValue: "grpc", visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["otlp"])),
+            WizardField(key: "project", label: "Galileo project", kind: .text(placeholder: "project name or ID"), visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["galileo"])),
+            WizardField(key: "logstream", label: "Galileo Log stream", kind: .text(placeholder: "default"), defaultValue: "default", visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["galileo"])),
+            WizardField(key: "host", label: "Splunk HEC host", kind: .text(placeholder: "localhost"), defaultValue: "localhost", visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["splunk-hec"])),
+            WizardField(key: "port", label: "Splunk HEC port", kind: .text(placeholder: "8088"), defaultValue: "8088", visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["splunk-hec"])),
+            WizardField(key: "index", label: "Splunk index", kind: .text(placeholder: "defenseclaw"), defaultValue: "defenseclaw", visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["splunk-hec", "splunk-enterprise"])),
+            WizardField(key: "source", label: "Splunk source", kind: .text(placeholder: "defenseclaw"), defaultValue: "defenseclaw", visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["splunk-hec", "splunk-enterprise"])),
+            WizardField(key: "sourcetype", label: "Splunk sourcetype", kind: .text(placeholder: "_json"), defaultValue: "_json", visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["splunk-hec", "splunk-enterprise"])),
+            WizardField(key: "url", label: "Webhook URL", kind: .text(placeholder: "https://…"), visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["webhook"])),
+            WizardField(key: "method", label: "Webhook method", kind: .choice(options: ["POST", "PUT"]), defaultValue: "POST", visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["webhook"])),
+            WizardField(key: "url-path", label: "Webhook URL path", kind: .text(placeholder: "/events"), visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["webhook"])),
+            WizardField(key: "verify-tls-hec", label: "Verify HEC TLS", kind: .bool, defaultValue: "no", visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["splunk-hec"])),
+            WizardField(key: "verify-tls-webhook", label: "Verify webhook TLS", kind: .bool, defaultValue: "yes", visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["webhook"])),
             WizardField(key: "token", label: "Token / API key", kind: .secure(placeholder: "optional token"), visibleWhen: (key: "action", equals: ["add"])),
-            WizardField(key: "signals", label: "Signals", kind: .text(placeholder: "traces,metrics,logs"), visibleWhen: (key: "action", equals: ["add"])),
-            WizardField(key: "connector", label: "Connector", kind: .choice(options: ["all"] + connectors), defaultValue: "all"),
+            WizardField(key: "dry-run", label: "Preview without writing", kind: .flagOnly, defaultValue: "no", visibleWhen: (key: "action", equals: ["add"])),
             WizardField(key: "json", label: "JSON output", kind: .flagOnly, defaultValue: "no", visibleWhen: (key: "action", equals: ["list"])),
+            WizardField(key: "test-timeout", label: "Probe timeout", kind: .text(placeholder: "5"), defaultValue: "5", visibleWhen: (key: "action", equals: ["test"])),
+            WizardField(key: "write-probe", label: "Send a content-free probe", kind: .flagOnly, defaultValue: "no", visibleWhen: (key: "action", equals: ["test"])),
         ]
     )
 
@@ -679,6 +704,10 @@ enum TUIWizards {
         id: "splunk-dashboards", title: "Splunk Dashboards", icon: "rectangle.3.group.bubble.left",
         blurb: "Apply or destroy the DefenseClaw Splunk O11y dashboards and detectors.",
         baseArgs: ["setup", "splunk", "dashboards"], commandBuilder: splunkDashboardCommands,
+        secretEnvironment: { v in
+            let token = value(v, "o11y-api-token")
+            return token.isEmpty ? [:] : ["SFX_AUTH_TOKEN": token]
+        },
         fields: [
             WizardField(key: "action", label: "Action", kind: .choice(options: ["apply", "destroy"]), defaultValue: "apply"),
             WizardField(key: "with-detectors", label: "Include detectors", kind: .bool, defaultValue: "no"),
@@ -974,9 +1003,7 @@ enum TUIWizards {
         let modeFlag = mode == "splunk-o11y" ? "--o11y" : mode == "local-docker" ? "--logs" : "--enterprise"
         var args = ["setup", "splunk", modeFlag, "--non-interactive"]
         append(v, "realm", flag: "--realm", to: &args)
-        appendSecure(v, "access-token", flag: "--access-token", mask: mask, to: &args)
         append(v, "hec-endpoint", flag: "--hec-endpoint", to: &args)
-        appendSecure(v, "hec-token", flag: "--hec-token", mask: mask, to: &args)
         flag(v, "accept-splunk-license", "--accept-splunk-license", to: &args)
         args.append(yes(v, "traces") ? "--traces" : "--no-traces")
         args.append(yes(v, "metrics") ? "--metrics" : "--no-metrics")
@@ -991,19 +1018,98 @@ enum TUIWizards {
             let preset = value(v, "preset", "local-otlp")
             args += [preset, "--non-interactive"]
             append(v, "name", flag: "--name", to: &args)
-            // The webhook preset reads --url, not --endpoint.
-            append(v, "endpoint", flag: preset == "webhook" ? "--url" : "--endpoint", to: &args)
-            appendSecure(v, "token", flag: "--token", mask: mask, to: &args)
-            append(v, "signals", flag: "--signals", to: &args)
+            let signalKey: String? = switch preset {
+            case "splunk-o11y": "signals-o11y"
+            case "galileo": "signals-galileo"
+            case "local-otlp", "otlp", "datadog", "honeycomb", "newrelic", "grafana-cloud":
+                "signals-general"
+            default: nil
+            }
+            if let signalKey { append(v, signalKey, flag: "--signals", to: &args) }
+            args.append(yes(v, "enabled") ? "--enabled" : "--disabled")
+            flag(v, "dry-run", "--dry-run", to: &args)
+            let keys: [String]
+            switch preset {
+            case "splunk-o11y": keys = ["realm"]
+            case "splunk-hec": keys = ["host", "port", "index", "source", "sourcetype"]
+            case "splunk-enterprise": keys = ["endpoint", "index", "source", "sourcetype"]
+            case "datadog": keys = ["site"]
+            case "honeycomb": keys = ["dataset"]
+            case "newrelic", "grafana-cloud": keys = ["region"]
+            case "galileo": keys = ["endpoint", "project", "logstream"]
+            case "otlp": keys = ["endpoint", "protocol"]
+            case "webhook": keys = ["url", "method", "url-path"]
+            default: keys = []
+            }
+            for key in keys { append(v, key, flag: "--\(key)", to: &args) }
+            if preset == "splunk-hec" {
+                args.append(yes(v, "verify-tls-hec") ? "--verify-tls" : "--no-verify-tls")
+            } else if preset == "webhook" {
+                args.append(yes(v, "verify-tls-webhook") ? "--verify-tls" : "--no-verify-tls")
+            }
         } else if ["enable", "disable", "remove"].contains(action) {
             let name = value(v, "name")
             if !name.isEmpty { args.append(name) }
             if action == "remove" { args.append("--yes") }
         } else if action == "list" {
             flag(v, "json", "--json", to: &args)
+        } else if action == "test" {
+            let name = value(v, "name")
+            if !name.isEmpty { args.append(name) }
+            append(v, "test-timeout", flag: "--timeout", to: &args)
+            flag(v, "write-probe", "--write-probe", to: &args)
         }
-        connector(v, to: &args)
         return [args]
+    }
+
+    private static func observabilityValidation(_ v: [String: String]) -> String? {
+        let action = value(v, "action", "add")
+        if ["enable", "disable", "remove", "test"].contains(action), value(v, "name").isEmpty {
+            return "Destination name is required for \(action)."
+        }
+        if action == "test", Double(value(v, "test-timeout", "5")).map({ $0 > 0 }) != true {
+            return "Probe timeout must be a positive number."
+        }
+        guard action == "add" else { return nil }
+        let preset = value(v, "preset", "local-otlp")
+        let signalKey: String? = switch preset {
+        case "splunk-o11y": "signals-o11y"
+        case "galileo": "signals-galileo"
+        case "local-otlp", "otlp", "datadog", "honeycomb", "newrelic", "grafana-cloud":
+            "signals-general"
+        default: nil
+        }
+        let signals = signalKey.map { csvValues(v, $0) } ?? []
+        if signals.contains(where: { !["traces", "metrics", "logs"].contains($0) }) {
+            return "Signals may contain only traces, metrics, and logs."
+        }
+        if preset == "galileo", signals != ["traces"] {
+            return "The Galileo preset supports traces only."
+        }
+        let required: [(String, String)]
+        switch preset {
+        case "splunk-o11y": required = [("realm", "Splunk realm")]
+        case "splunk-hec": required = [("host", "Splunk HEC host"), ("port", "Splunk HEC port")]
+        case "splunk-enterprise": required = [("endpoint", "Splunk Enterprise endpoint")]
+        case "datadog": required = [("site", "Datadog site")]
+        case "honeycomb": required = [("dataset", "Honeycomb dataset")]
+        case "newrelic", "grafana-cloud": required = [("region", "Region / zone")]
+        case "galileo": required = [
+            ("endpoint", "Galileo endpoint"),
+            ("project", "Galileo project"),
+            ("logstream", "Galileo Log stream"),
+        ]
+        case "otlp": required = [("endpoint", "OTLP endpoint")]
+        case "webhook": required = [("url", "Webhook URL")]
+        default: required = []
+        }
+        if let missing = required.first(where: { value(v, $0.0).isEmpty }) {
+            return "\(missing.1) is required."
+        }
+        if preset == "splunk-hec", Int(value(v, "port")).map({ $0 > 0 }) != true {
+            return "Splunk HEC port must be a positive integer."
+        }
+        return nil
     }
 
     private static func webhookCommands(_ v: [String: String], _ mask: Bool) -> [[String]] {
@@ -1096,7 +1202,6 @@ enum TUIWizards {
             flag(v, "enable-detectors", "--enable-detectors", to: &args)
         }
         append(v, "name-prefix", flag: "--name-prefix", to: &args)
-        appendSecure(v, "o11y-api-token", flag: "--o11y-api-token", mask: mask, to: &args)
         append(v, "api-url", flag: "--api-url", to: &args)
         return [args]
     }
@@ -1147,15 +1252,15 @@ enum TUIWizards {
         if !item.isEmpty && item != skipped { args += [flag, item] }
     }
 
-    private static func appendSecure(_ values: [String: String], _ key: String, flag: String,
-                                     mask: Bool, to args: inout [String]) {
-        let item = value(values, key)
-        if !item.isEmpty { args += [flag, mask ? "••••••" : item] }
-    }
-
     private static func appendCSV(_ values: [String: String], _ key: String, flag: String, to args: inout [String]) {
         value(values, key).split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }.forEach { args += [flag, $0] }
+    }
+
+    private static func csvValues(_ values: [String: String], _ key: String) -> [String] {
+        value(values, key).split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
     }
 
     private static func flag(_ values: [String: String], _ key: String, _ flag: String, to args: inout [String]) {

@@ -30,3 +30,45 @@ if grep -Fq 'Search 226 commands' "$ROOT/DefenseClawMac/Features/CommandPaletteV
   echo "Command palette still contains a stale hard-coded count" >&2
   exit 1
 fi
+
+if ! grep -Fq 'DEFENSECLAW_SETUP_OBSERVABILITY_TOKEN' "$ROOT/DefenseClawMac/Features/SetupDefinitions.swift"; then
+  echo "Observability token is not using the runtime 0.8.9 secret environment contract" >&2
+  exit 1
+fi
+
+if ! sed -n '/case \.secure:/,/default:/p' "$ROOT/DefenseClawMac/Features/SetupView.swift" \
+    | grep -Fq 'continue'; then
+  echo "Generic setup fields no longer fail closed for secure values" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'commandEnvironment.keys.sorted().map' "$ROOT/DefenseClawMac/Features/SetupView.swift"; then
+  echo "Setup review no longer displays masked child-environment keys" >&2
+  exit 1
+fi
+
+for secret_key in SPLUNK_ACCESS_TOKEN DEFENSECLAW_SPLUNK_HEC_TOKEN SFX_AUTH_TOKEN; do
+  if ! grep -Fq "$secret_key" "$ROOT/DefenseClawMac/Features/SetupDefinitions.swift"; then
+    echo "Setup secret is missing its child-environment transport: $secret_key" >&2
+    exit 1
+  fi
+done
+
+if sed -n '/func observabilityCommands/,/func observabilityValidation/p' \
+    "$ROOT/DefenseClawMac/Features/SetupDefinitions.swift" | grep -Fq -- '--connector'; then
+  echo "Observability command still emits the removed runtime --connector option" >&2
+  exit 1
+fi
+
+for required in release-provenance.json release-source-map.json \
+    "FETCH_HEAD^{tree}" '"runtime_source":' strip_stale_provenance app-only-zip-check; do
+  if ! grep -Fq "$required" "$ROOT/scripts/build_unified_dmg.sh"; then
+    echo "Unified packaging is missing authenticated source binding: $required" >&2
+    exit 1
+  fi
+done
+
+if grep -Fq 'raw.githubusercontent.com' "$ROOT/scripts/build_unified_dmg.sh"; then
+  echo "Unified packaging still accepts unverified raw source bytes" >&2
+  exit 1
+fi

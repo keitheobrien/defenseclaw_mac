@@ -61,6 +61,9 @@ struct WizardDefinition: Identifiable {
     var commandBuilder: (([String: String], Bool) -> [[String]])? = nil
     /// Field delivered through stdin instead of argv (currently `keys set`).
     var secretInputField: String? = nil
+    /// Secret fields exported only to the child process environment. Values
+    /// are masked in review and Activity history and never enter argv.
+    var secretEnvironment: (([String: String]) -> [String: String])? = nil
     /// Optional form validation. Returning a message keeps Review disabled and
     /// surfaces the same requirement before invoking the CLI.
     var validation: (([String: String]) -> String?)? = nil
@@ -170,8 +173,7 @@ struct WizardSheet: View {
             case .flagOnly:
                 if value == "yes" { args.append("--\(field.key)") }
             case .secure:
-                guard !value.isEmpty else { continue }
-                args.append("--\(field.key)=\(maskSecrets ? "••••••" : value)")
+                continue
             default:
                 guard !value.isEmpty else { continue }
                 args.append("--\(field.key)=\(value)")
@@ -191,8 +193,23 @@ struct WizardSheet: View {
 
     private var cliCommands: [[String]] { buildCommands(maskSecrets: false) }
 
+    private var commandEnvironment: [String: String] {
+        let visibleKeys = Set(visibleFields.map(\.key))
+        let scopedValues = values.filter { visibleKeys.contains($0.key) }
+        return wizard.secretEnvironment?(scopedValues) ?? [:]
+    }
+
     private var validationMessage: String? {
-        wizard.validation?(values)
+        if let message = wizard.validation?(values) { return message }
+        if let field = visibleFields.first(where: { field in
+               guard case .secure = field.kind else { return false }
+               return !(values[field.key] ?? "").isEmpty
+                   && wizard.secretInputField != field.key
+                   && wizard.secretEnvironment == nil
+           }) {
+            return "\(field.label) has no secure CLI transport configured."
+        }
+        return nil
     }
 
     private var replacesConnectorRoster: Bool {
@@ -223,8 +240,13 @@ struct WizardSheet: View {
         }
         let commands = buildCommands(maskSecrets: true)
         guard !commands.isEmpty else { return "(no changes selected — nothing to apply)" }
-        return commands
-            .map { (["defenseclaw"] + $0).joined(separator: " ") }
+        return commands.enumerated()
+            .map { index, arguments in
+                let environment = index == 0
+                    ? commandEnvironment.keys.sorted().map { "\($0)=••••••" }
+                    : []
+                return (environment + ["defenseclaw"] + arguments).joined(separator: " ")
+            }
             .joined(separator: "\n")
     }
 
@@ -470,6 +492,7 @@ struct WizardSheet: View {
                     binary: "defenseclaw",
                     arguments: arguments,
                     standardInput: secret,
+                    environment: index == 0 ? commandEnvironment : [:],
                     category: "setup",
                     origin: "Setup",
                     refreshOnSuccess: true

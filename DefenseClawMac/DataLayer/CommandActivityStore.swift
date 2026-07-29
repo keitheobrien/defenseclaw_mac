@@ -67,6 +67,7 @@ final class CommandActivityStore {
         binary: String = "defenseclaw",
         arguments: [String],
         standardInput: String? = nil,
+        environment: [String: String] = [:],
         category: String = "other",
         origin: String,
         successEffects: [String] = [],
@@ -82,7 +83,11 @@ final class CommandActivityStore {
             CommandActivityEntry(
                 id: id,
                 title: title,
-                command: Self.displayCommand(binary: binary, arguments: arguments),
+                command: Self.displayCommand(
+                    binary: binary,
+                    arguments: arguments,
+                    maskedEnvironmentKeys: environment.keys.sorted()
+                ),
                 category: category,
                 origin: origin,
                 startedAt: Date(),
@@ -99,6 +104,7 @@ final class CommandActivityStore {
             binary: binary,
             arguments: arguments,
             standardInput: standardInput,
+            environment: environment,
             runID: id
         ) { [weak self] line in
             Task { @MainActor in self?.append(line: line, to: id) }
@@ -157,8 +163,13 @@ final class CommandActivityStore {
         }
     }
 
-    private static func displayCommand(binary: String, arguments: [String]) -> String {
-        ([binary] + arguments).map { value in
+    private static func displayCommand(
+        binary: String,
+        arguments: [String],
+        maskedEnvironmentKeys: [String] = []
+    ) -> String {
+        let environment = maskedEnvironmentKeys.map { "\($0)=••••••" }
+        return (environment + [binary] + arguments).map { value in
             value.contains(where: { $0.isWhitespace }) ? "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'" : value
         }.joined(separator: " ")
     }

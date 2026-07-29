@@ -410,6 +410,7 @@ final class AppState {
         binary: String = "defenseclaw",
         arguments: [String],
         standardInput: String? = nil,
+        environment: [String: String] = [:],
         category: String = "other",
         origin: String,
         successEffects: [String] = [],
@@ -422,6 +423,7 @@ final class AppState {
             binary: binary,
             arguments: arguments,
             standardInput: standardInput,
+            environment: environment,
             category: category,
             origin: origin,
             successEffects: successEffects,
@@ -478,12 +480,12 @@ final class AppState {
         connectorSetupInFlight.contains(ConnectorOnboarding.normalizedConnector(name))
     }
 
-    /// Runtime 0.8.6 accepts severity selectors directly, while current
-    /// mainline confirms those broad mutations interactively. The invocation
-    /// helper preserves the tagged-runtime argv and supplies that confirmation
-    /// over stdin for forward compatibility. Audit rows drop from the queue via
-    /// the acknowledgement projection; synthetic stream rows remain a local
-    /// hide because they have no protected audit disposition.
+    /// Runtime 0.8.9 keeps severity selectors and confirms broad mutations
+    /// interactively. The invocation helper supplies that confirmation over
+    /// stdin while remaining compatible with older runtimes that ignore it.
+    /// Audit rows drop from the queue via the acknowledgement projection;
+    /// synthetic stream rows remain a local hide because they have no protected
+    /// audit disposition.
     func acknowledge(_ rows: [AlertRow]) async {
         guard !rows.isEmpty, !ackInProgress else { return }
         ackInProgress = true

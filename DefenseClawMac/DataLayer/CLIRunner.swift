@@ -163,10 +163,17 @@ actor CLIRunner {
     /// Runs `defenseclaw <args>`, streaming combined output lines to `onLine`.
     func run(
         arguments: [String],
+        environment: [String: String] = [:],
         runID: UUID? = nil,
         onLine: (@Sendable (String) -> Void)? = nil
     ) async -> CLIResult {
-        await run(binary: "defenseclaw", arguments: arguments, runID: runID, onLine: onLine)
+        await run(
+            binary: "defenseclaw",
+            arguments: arguments,
+            environment: environment,
+            runID: runID,
+            onLine: onLine
+        )
     }
 
     /// Runs a DefenseClaw executable with optional stdin. `standardInput` is
@@ -176,6 +183,7 @@ actor CLIRunner {
         binary binaryName: String,
         arguments: [String],
         standardInput: String? = nil,
+        environment: [String: String] = [:],
         runID: UUID? = nil,
         onLine: (@Sendable (String) -> Void)? = nil
     ) async -> CLIResult {
@@ -210,6 +218,9 @@ actor CLIRunner {
         proc.arguments = arguments
         var env = Self.subprocessEnvironment()
         env["NO_COLOR"] = "1"
+        for (key, value) in environment where !key.isEmpty {
+            env[key] = value
+        }
         proc.environment = env
 
         let pipe = Pipe()
