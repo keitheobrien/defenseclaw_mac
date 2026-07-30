@@ -161,6 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         applyActivationPolicy()
+        DCToolbarQuickHelpMonitor.shared.start()
 
         // Optional hide-instead-of-minimize behavior. Standard macOS minimize is
         // the default; people can opt into a menu-bar-only transition in Settings.

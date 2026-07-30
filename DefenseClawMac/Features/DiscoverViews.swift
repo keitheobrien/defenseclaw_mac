@@ -175,6 +175,7 @@ struct InventoryView: View {
                     Label("Rescan All", systemImage: "arrow.triangle.2.circlepath")
                 }
                 .disabled(scanning)
+                .dcQuickHelp("Rescan connector inventories")
             }
         }
         .task { if items.isEmpty { scan() } }
@@ -479,12 +480,13 @@ struct AIDiscoveryView: View {
                     Label(primaryAction.label, systemImage: primaryAction.systemImage)
                 }
                 .disabled(scanning || !appState.gatewayReachable || !loaded)
-                .help(primaryAction.label)
+                .dcQuickHelp(primaryAction.label)
                 Button {
                     Task { await load() }
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
+                .dcQuickHelp("Refresh AI Discovery results")
             }
         }
         .task { await load() }
@@ -791,7 +793,7 @@ struct RegistriesView: View {
                     } label: {
                         Label("Add Source", systemImage: "plus")
                     }
-                    .help("Add Registry Source")
+                    .dcQuickHelp("Add Registry Source")
 
                     Button(role: .destructive) {
                         sourcePendingRemoval = selectedSource
@@ -799,7 +801,7 @@ struct RegistriesView: View {
                         Label("Remove Source", systemImage: "trash")
                     }
                     .disabled(selectedSource == nil || running)
-                    .help("Remove Selected Source")
+                    .dcQuickHelp("Remove Selected Source")
                 } else {
                     Button {
                         if let entry = selectedEntry { approve(entry) }
@@ -807,6 +809,7 @@ struct RegistriesView: View {
                         Label("Approve", systemImage: "checkmark.seal")
                     }
                     .disabled(selectedEntry == nil || running)
+                    .dcQuickHelp("Approve selected registry entry")
 
                     Button(role: .destructive) {
                         entryPendingRejection = selectedEntry
@@ -814,6 +817,7 @@ struct RegistriesView: View {
                         Label("Reject", systemImage: "xmark.seal")
                     }
                     .disabled(selectedEntry == nil || running)
+                    .dcQuickHelp("Reject selected registry entry")
 
                     Button {
                         if let entry = selectedEntry { toggleRequirement(for: entry) }
@@ -821,7 +825,7 @@ struct RegistriesView: View {
                         Label(requirementActionLabel, systemImage: "lock.shield")
                     }
                     .disabled(!selectedEntrySupportsRequirement || running)
-                    .help(requirementActionLabel)
+                    .dcQuickHelp(requirementActionLabel)
                 }
 
                 Button {
@@ -830,6 +834,7 @@ struct RegistriesView: View {
                     Label("Sync Selected", systemImage: "arrow.triangle.2.circlepath")
                 }
                 .disabled(running || selectedSourceForSync == nil)
+                .dcQuickHelp("Sync selected registry source")
 
                 Button {
                     syncAll()
@@ -837,6 +842,7 @@ struct RegistriesView: View {
                     Label("Sync All", systemImage: "arrow.triangle.2.circlepath.circle")
                 }
                 .disabled(running || snapshot.sources.isEmpty)
+                .dcQuickHelp("Sync all registry sources")
 
                 Button {
                     Task { await load() }
@@ -844,6 +850,7 @@ struct RegistriesView: View {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
                 .disabled(running)
+                .dcQuickHelp("Refresh registries")
             }
         }
         .task { await load() }

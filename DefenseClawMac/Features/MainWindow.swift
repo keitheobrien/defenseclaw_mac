@@ -81,7 +81,7 @@ struct MainWindow: View {
                 Button { appState.commandPalettePresented = true } label: {
                     Label("Command Palette", systemImage: "command")
                 }
-                .help("Command Palette (Command-Shift-P)")
+                .dcQuickHelp("Command Palette (Command-Shift-P)")
             }
         }
         .onAppear {

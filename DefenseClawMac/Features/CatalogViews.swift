@@ -45,6 +45,7 @@ struct SkillsView: View {
                 Button { showingInstall = true } label: {
                     Label("Install Skill", systemImage: "square.and.arrow.down")
                 }
+                .dcQuickHelp("Install a skill")
             }
             RefreshButton { await load() }
         }
@@ -124,7 +125,7 @@ struct MCPsView: View {
                 Button { showingSetForm = true } label: {
                     Label("Set MCP Server", systemImage: "plus")
                 }
-                .help("Scan and add or update an MCP server")
+                .dcQuickHelp("Scan and add or update an MCP server")
             }
             RefreshButton { await load() }
         }
@@ -199,6 +200,7 @@ struct PluginsView: View {
                 Button { showingInstall = true } label: {
                     Label("Install Plugin", systemImage: "square.and.arrow.down")
                 }
+                .dcQuickHelp("Install a plugin")
             }
             RefreshButton { await load() }
         }
@@ -742,6 +744,7 @@ struct RefreshButton: ToolbarContent {
             Button { Task { await action() } } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
+            .dcQuickHelp("Refresh catalog")
         }
     }
 }

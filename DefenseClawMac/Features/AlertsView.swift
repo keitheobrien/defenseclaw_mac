@@ -126,11 +126,13 @@ struct AlertsView: View {
                     Label("Acknowledge Selection", systemImage: "checkmark.circle")
                 }
                 .disabled(selectedRows.isEmpty || appState.ackInProgress)
+                .dcQuickHelp("Acknowledge selected alerts")
                 Button {
                     Task { await appState.refreshAlerts() }
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
+                .dcQuickHelp("Refresh alerts")
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in
