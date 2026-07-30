@@ -100,11 +100,13 @@ struct AuditView: View {
                     Label("Export JSON", systemImage: "square.and.arrow.up")
                 }
                 .keyboardShortcut("e", modifiers: .command)
+                .dcQuickHelp("Export audit events as JSON")
                 Button {
                     load(reset: true)
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
+                .dcQuickHelp("Refresh audit events")
             }
         }
         .task {

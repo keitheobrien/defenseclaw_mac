@@ -72,16 +72,19 @@ struct ActivityView: View {
                     } label: {
                         Label("Run Command", systemImage: "play.circle")
                     }
+                    .dcQuickHelp("Open Command Palette")
                     Button {
                         appState.activity.clearCompleted()
                     } label: {
                         Label("Clear Completed", systemImage: "trash")
                     }
                     .disabled(!appState.activity.entries.contains { !$0.status.isActive })
+                    .dcQuickHelp("Clear completed commands")
                 } else {
                     Button(action: loadMutations) {
                         Label("Refresh", systemImage: "arrow.clockwise")
                     }
+                    .dcQuickHelp("Refresh mutations")
                 }
             }
         }

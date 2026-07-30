@@ -87,11 +87,13 @@ struct LogsView: View {
                     Label("Auto-scroll", systemImage: "arrow.down.to.line")
                 }
                 .toggleStyle(.button)
+                .dcQuickHelp("Follow new log lines")
                 Button {
                     reload()
                 } label: {
                     Label("Reload from disk", systemImage: "arrow.clockwise")
                 }
+                .dcQuickHelp("Reload logs from disk")
             }
         }
         .task {
