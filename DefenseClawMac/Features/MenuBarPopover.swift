@@ -174,7 +174,7 @@ struct MenuBarPopover: View {
     }
 
     private func openMainWindow() {
-        AppDelegate.openMainWindow()
+        AppDelegate.prepareForMainWindowPresentation()
         openWindow(id: "main")
     }
 
