@@ -11,7 +11,7 @@ struct DefenseClawApp: App {
     @State private var appState = AppState()
 
     var body: some Scene {
-        WindowGroup("DefenseClaw", id: "main") {
+        Window("DefenseClaw", id: "main") {
             MainWindow()
                 .environment(appState)
                 .frame(minWidth: 980, minHeight: 640)
@@ -19,8 +19,8 @@ struct DefenseClawApp: App {
         }
         .defaultSize(width: 1180, height: 760)
         .commands {
-            // DefenseClaw has one primary dashboard; WindowGroup gives the menu
-            // bar a reliable recreation target without exposing duplicate windows.
+            // DefenseClaw has one primary dashboard. The singleton Window scene
+            // lets the menu bar restore it without creating duplicate dashboards.
             CommandGroup(replacing: .newItem) { }
             CommandGroup(after: .appSettings) {
                 Button("Check for Updates…") {
@@ -207,20 +207,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     static func openMainWindow() {
-        NSApp.setActivationPolicy(
-            (UserDefaults.standard.object(forKey: "showDockIcon") as? Bool ?? true) ? .regular : .accessory
-        )
-        NSApp.activate(ignoringOtherApps: true)
+        prepareForMainWindowPresentation()
         for window in NSApp.windows where window.identifier?.rawValue.contains("main") == true {
             if window.isMiniaturized { window.deminiaturize(nil) }
             window.makeKeyAndOrderFront(nil)
             return
         }
-        // Window was released — ask SwiftUI to recreate it via the openWindow URL scheme fallback.
+        // Window was released. SwiftUI recreates it through openWindow(id: "main")
+        // when the request originates from a scene with an OpenWindowAction.
         if let window = NSApp.windows.first(where: { $0.canBecomeKey && !($0 is NSPanel) }) {
             if window.isMiniaturized { window.deminiaturize(nil) }
             window.makeKeyAndOrderFront(nil)
         }
+    }
+
+    static func prepareForMainWindowPresentation() {
+        NSApp.setActivationPolicy(
+            (UserDefaults.standard.object(forKey: "showDockIcon") as? Bool ?? true) ? .regular : .accessory
+        )
+        NSApp.activate(ignoringOtherApps: true)
     }
 }
 
