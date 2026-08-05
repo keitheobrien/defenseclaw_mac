@@ -1,3 +1,19 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 // Reader for <data_dir>/doctor_cache.json — the cache `defenseclaw doctor`
 // rewrites atomically at the end of every run. The TUI (and this app) never
 // runs doctor automatically; the cache is the at-launch source for the DOCTOR
@@ -60,18 +76,18 @@ struct DoctorCache: Sendable, Equatable {
         guard capturedAt != nil else { return "never" }
         // Truncate before comparing (TUI int()) so sub-second clock skew
         // after a fresh run reads "just now", not "never".
-        let seconds = TimeInterval(Int(age(now: now)))
+        guard let seconds = DCSafeNumbers.intTruncating(age(now: now)) else { return "never" }
         if seconds < 0 { return "never" }
         if seconds < 30 { return "just now" }
-        if seconds < 60 { return "\(Int(seconds))s ago" }
-        if seconds < 3600 { return "\(Int(seconds) / 60)m ago" }
-        if seconds < 86_400 { return "\(Int(seconds) / 3600)h ago" }
-        return "\(Int(seconds) / 86_400)d ago"
+        if seconds < 60 { return "\(seconds)s ago" }
+        if seconds < 3600 { return "\(seconds / 60)m ago" }
+        if seconds < 86_400 { return "\(seconds / 3600)h ago" }
+        return "\(seconds / 86_400)d ago"
     }
 
     /// Load <data_dir>/doctor_cache.json; nil when missing/unparseable
     /// (callers keep their previous value — TUI keeps last-good on error).
-    static func load(dataDirectory: URL = ConfigStore.dataDirectory) -> DoctorCache? {
+    static func load(dataDirectory: URL) -> DoctorCache? {
         let url = dataDirectory.appendingPathComponent("doctor_cache.json")
         guard let data = try? Data(contentsOf: url),
               let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]

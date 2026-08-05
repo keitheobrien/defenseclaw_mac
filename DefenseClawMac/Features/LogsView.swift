@@ -1,3 +1,19 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 // Logs panel (spec §9.8): four source streams, filter chips (severity /
 // action / event type / presets ported from FILTER_PRESETS), live tail.
 
@@ -31,6 +47,14 @@ struct LogsView: View {
     private static let eventTypeOptions = ["all", "verdict", "judge", "lifecycle", "error", "diagnostic",
                                            "scan", "scan_finding", "activity", "audit", "hook", "egress",
                                            "skill", "mcp", "plugin"]
+    private static let humanMessageExpressions: [NSRegularExpression] = [
+        #"^\s*[-–—]?\s*\d{1,2}:\d{2}:\d{2}(?:\.\d+)?\s+"#,
+        #"<redacted(?:\s+[^>]*)?>"#,
+        #"\b(?:call_id|session|run_id|audit_id|content_hash|payload_hmac|sha(?:256)?|len|body_bytes|request_bytes|response_bytes)=[^\s]+"#,
+        #"\b(?:sha|a)=[A-Fa-f0-9]{8,}>"#,
+        #"\s+(?:cause|msg)=\s*$"#,
+    ].compactMap { try? NSRegularExpression(pattern: $0) }
+    private static let whitespaceExpression = try? NSRegularExpression(pattern: #"\s+"#)
 
     private func applyFilter() {
         let query = search.lowercased()
@@ -205,6 +229,7 @@ struct LogsView: View {
     private var redactionButton: some View {
         Button("Redaction…") { showRedactionToggle = true }
             .controlSize(.small)
+            .disabled(!appState.installationMutationsAllowed)
             .help("Toggle the redaction kill-switch (runs defenseclaw setup redaction on|off)")
     }
 
@@ -300,11 +325,11 @@ struct LogsView: View {
     private func sourceFilename(for stream: LogStream) -> String {
         switch stream {
         case .gateway:
-            ConfigStore.gatewayLogURL.lastPathComponent
+            appState.installationContext.gatewayLogURL.lastPathComponent
         case .watchdog:
-            ConfigStore.watchdogLogURL.lastPathComponent
+            appState.installationContext.watchdogLogURL.lastPathComponent
         case .verdicts, .otel:
-            ConfigStore.gatewayJSONLURL.lastPathComponent
+            appState.installationContext.gatewayJSONLURL.lastPathComponent
         }
     }
 
@@ -341,21 +366,15 @@ struct LogsView: View {
     }
 
     private func humanMessage(_ source: String) -> String {
-        let patterns = [
-            #"^\s*[-–—]?\s*\d{1,2}:\d{2}:\d{2}(?:\.\d+)?\s+"#,
-            #"<redacted(?:\s+[^>]*)?>"#,
-            #"\b(?:call_id|session|run_id|audit_id|content_hash|payload_hmac|sha(?:256)?|len|body_bytes|request_bytes|response_bytes)=[^\s]+"#,
-            #"\b(?:sha|a)=[A-Fa-f0-9]{8,}>"#,
-            #"\s+(?:cause|msg)=\s*$"#,
-        ]
         let range = { (value: String) in NSRange(value.startIndex..., in: value) }
         var result = source
-        for pattern in patterns {
-            guard let expression = try? NSRegularExpression(pattern: pattern) else { continue }
+        for expression in Self.humanMessageExpressions {
             result = expression.stringByReplacingMatches(in: result, range: range(result), withTemplate: "")
         }
-        result = result.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let expression = Self.whitespaceExpression {
+            result = expression.stringByReplacingMatches(in: result, range: range(result), withTemplate: " ")
+        }
+        result = result.trimmingCharacters(in: .whitespacesAndNewlines)
         return result
     }
 
@@ -414,7 +433,9 @@ struct LogsView: View {
     /// Refreshes from the stream buffer, but only publishes when the tail
     /// actually advanced — pulse ticks with no new lines are free.
     private func load(force: Bool = false) async {
+        let installationGeneration = appState.installationGeneration
         let fresh = await appState.stream.logBuffers[stream] ?? []
+        guard installationGeneration == appState.installationGeneration else { return }
         guard force || fresh.count != rows.count || fresh.last?.id != rows.last?.id else { return }
         rows = fresh
         applyFilter()
@@ -422,7 +443,9 @@ struct LogsView: View {
 
     private func reload() {
         Task {
+            let installationGeneration = appState.installationGeneration
             _ = await appState.stream.reload()
+            guard installationGeneration == appState.installationGeneration else { return }
             await load(force: true)
         }
     }
@@ -512,7 +535,7 @@ struct RedactionToggleSheet: View {
                 Button(running ? "Running…" : "Confirm") { confirm() }
                     .buttonStyle(.borderedProminent)
                     .tint(dangerous ? Cisco.red : Cisco.green)
-                    .disabled(running)
+                    .disabled(running || !appState.installationMutationsAllowed)
             }
         }
         .padding(16)

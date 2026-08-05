@@ -1,4 +1,70 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import SwiftUI
+
+/// Shared loading/search/refresh chrome for the four catalog panels. Each
+/// panel keeps its type-specific table and actions while lifecycle behavior
+/// stays consistent in one place.
+private struct CatalogListScaffold<Content: View, Action: View>: View {
+    @Binding var error: String?
+    let isEmpty: Bool
+    let emptyMessage: String
+    let searchPrompt: String
+    @Binding var search: String
+    let load: () async -> Void
+    @ViewBuilder let action: Action
+    @ViewBuilder let content: Content
+
+    init(
+        error: Binding<String?>,
+        isEmpty: Bool,
+        emptyMessage: String,
+        searchPrompt: String,
+        search: Binding<String>,
+        load: @escaping () async -> Void,
+        @ViewBuilder action: () -> Action,
+        @ViewBuilder content: () -> Content
+    ) {
+        _error = error
+        self.isEmpty = isEmpty
+        self.emptyMessage = emptyMessage
+        self.searchPrompt = searchPrompt
+        _search = search
+        self.load = load
+        self.action = action()
+        self.content = content()
+    }
+
+    var body: some View {
+        CatalogContainer(error: $error, isEmpty: isEmpty, emptyMessage: emptyMessage) {
+            content
+        }
+        .searchable(text: $search, placement: .toolbar, prompt: searchPrompt)
+        .toolbar {
+            ToolbarItem { CatalogConnectorChip() }
+            ToolbarItem { action }
+            RefreshButton { await load() }
+        }
+        .task { await load() }
+        .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in
+            Task { await load() }
+        }
+    }
+}
 
 // MARK: - Skills
 
@@ -18,8 +84,19 @@ struct SkillsView: View {
     }
 
     var body: some View {
-        CatalogContainer(error: $error, isEmpty: loaded && filtered.isEmpty,
-                         emptyMessage: "No skills were reported by `defenseclaw skill list --json`.") {
+        CatalogListScaffold(
+            error: $error,
+            isEmpty: loaded && filtered.isEmpty,
+            emptyMessage: "No skills were reported by `defenseclaw skill list --json`.",
+            searchPrompt: "Search skills",
+            search: $search,
+            load: load
+        ) {
+            Button { showingInstall = true } label: {
+                Label("Install Skill", systemImage: "square.and.arrow.down")
+            }
+            .dcQuickHelp("Install a skill")
+        } content: {
             Table(filtered) {
                 TableColumn("Status") { item in CatalogStatusLabel(status: item.status, verdict: item.verdict) }
                     .width(105)
@@ -38,19 +115,6 @@ struct SkillsView: View {
                 .width(34)
             }
         }
-        .searchable(text: $search, placement: .toolbar, prompt: "Search skills")
-        .toolbar {
-            ToolbarItem { CatalogConnectorChip() }
-            ToolbarItem {
-                Button { showingInstall = true } label: {
-                    Label("Install Skill", systemImage: "square.and.arrow.down")
-                }
-                .dcQuickHelp("Install a skill")
-            }
-            RefreshButton { await load() }
-        }
-        .task { await load() }
-        .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in Task { await load() } }
         .sheet(item: $invocation) { command in
             CatalogCommandSheet(invocation: command) { Task { await load() } }
                 .environment(appState)
@@ -98,8 +162,19 @@ struct MCPsView: View {
     }
 
     var body: some View {
-        CatalogContainer(error: $error, isEmpty: loaded && filtered.isEmpty,
-                         emptyMessage: "No MCP servers were reported by `defenseclaw mcp list --json`.") {
+        CatalogListScaffold(
+            error: $error,
+            isEmpty: loaded && filtered.isEmpty,
+            emptyMessage: "No MCP servers were reported by `defenseclaw mcp list --json`.",
+            searchPrompt: "Search MCPs",
+            search: $search,
+            load: load
+        ) {
+            Button { showingSetForm = true } label: {
+                Label("Set MCP Server", systemImage: "plus")
+            }
+            .dcQuickHelp("Scan and add or update an MCP server")
+        } content: {
             Table(filtered) {
                 TableColumn("Status") { item in CatalogStatusLabel(status: item.status, verdict: item.verdict) }
                     .width(105)
@@ -118,19 +193,6 @@ struct MCPsView: View {
                 .width(34)
             }
         }
-        .searchable(text: $search, placement: .toolbar, prompt: "Search MCPs")
-        .toolbar {
-            ToolbarItem { CatalogConnectorChip() }
-            ToolbarItem {
-                Button { showingSetForm = true } label: {
-                    Label("Set MCP Server", systemImage: "plus")
-                }
-                .dcQuickHelp("Scan and add or update an MCP server")
-            }
-            RefreshButton { await load() }
-        }
-        .task { await load() }
-        .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in Task { await load() } }
         .sheet(isPresented: $showingSetForm) {
             MCPSetSheet(connectors: appState.configuredConnectors()) { command in
                 showingSetForm = false
@@ -174,8 +236,19 @@ struct PluginsView: View {
     }
 
     var body: some View {
-        CatalogContainer(error: $error, isEmpty: loaded && filtered.isEmpty,
-                         emptyMessage: "No plugins were reported by `defenseclaw plugin list --json`.") {
+        CatalogListScaffold(
+            error: $error,
+            isEmpty: loaded && filtered.isEmpty,
+            emptyMessage: "No plugins were reported by `defenseclaw plugin list --json`.",
+            searchPrompt: "Search plugins",
+            search: $search,
+            load: load
+        ) {
+            Button { showingInstall = true } label: {
+                Label("Install Plugin", systemImage: "square.and.arrow.down")
+            }
+            .dcQuickHelp("Install a plugin")
+        } content: {
             Table(filtered) {
                 TableColumn("Status") { item in CatalogStatusLabel(status: item.status, verdict: item.verdict) }
                     .width(105)
@@ -193,19 +266,6 @@ struct PluginsView: View {
                 .width(34)
             }
         }
-        .searchable(text: $search, placement: .toolbar, prompt: "Search plugins")
-        .toolbar {
-            ToolbarItem { CatalogConnectorChip() }
-            ToolbarItem {
-                Button { showingInstall = true } label: {
-                    Label("Install Plugin", systemImage: "square.and.arrow.down")
-                }
-                .dcQuickHelp("Install a plugin")
-            }
-            RefreshButton { await load() }
-        }
-        .task { await load() }
-        .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in Task { await load() } }
         .sheet(item: $invocation) { command in
             CatalogCommandSheet(invocation: command) { Task { await load() } }
                 .environment(appState)
@@ -254,8 +314,16 @@ struct ToolsView: View {
     }
 
     var body: some View {
-        CatalogContainer(error: $error, isEmpty: loaded && filtered.isEmpty,
-                         emptyMessage: "No tool policy rows. Unblocked tools do not appear in this table.") {
+        CatalogListScaffold(
+            error: $error,
+            isEmpty: loaded && filtered.isEmpty,
+            emptyMessage: "No tool policy rows. Unblocked tools do not appear in this table.",
+            searchPrompt: "Search tools",
+            search: $search,
+            load: load
+        ) {
+            EmptyView()
+        } content: {
             Table(filtered) {
                 TableColumn("Status") { item in CatalogStatusLabel(status: item.status, verdict: "") }.width(90)
                 TableColumn("Tool", value: \.name)
@@ -272,13 +340,6 @@ struct ToolsView: View {
                 .width(34)
             }
         }
-        .searchable(text: $search, placement: .toolbar, prompt: "Search tools")
-        .toolbar {
-            ToolbarItem { CatalogConnectorChip() }
-            RefreshButton { await load() }
-        }
-        .task { await load() }
-        .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in Task { await load() } }
         .sheet(item: $invocation) { command in
             CatalogCommandSheet(invocation: command) { Task { await load() } }
                 .environment(appState)
@@ -286,14 +347,25 @@ struct ToolsView: View {
     }
 
     private func load() async {
+        let installationGeneration = appState.installationGeneration
         do {
             let cliItems = try await CatalogCLI.tools(using: appState.cli)
-            items = cliItems.isEmpty ? await appState.audit.toolOverrideRows() : cliItems
+            guard installationGeneration == appState.installationGeneration else { return }
+            let freshItems: [ToolItem]
+            if cliItems.isEmpty {
+                freshItems = await appState.audit.toolOverrideRows()
+                guard installationGeneration == appState.installationGeneration else { return }
+            } else {
+                freshItems = cliItems
+            }
+            items = freshItems
             error = nil
         } catch {
+            let failure = error.localizedDescription
             let fallback = await appState.audit.toolOverrideRows()
+            guard installationGeneration == appState.installationGeneration else { return }
             items = fallback
-            self.error = fallback.isEmpty ? error.localizedDescription : nil
+            self.error = fallback.isEmpty ? failure : nil
         }
         loaded = true
     }
@@ -394,6 +466,11 @@ private struct CatalogCommandSheet: View {
                       systemImage: "exclamationmark.shield")
                     .font(.caption)
                     .foregroundStyle(invocation.destructive ? Cisco.red : Cisco.orange)
+                if let reason = appState.installationReadOnlyReason {
+                    Label(reason, systemImage: "lock.shield")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Spacer()
@@ -405,6 +482,10 @@ private struct CatalogCommandSheet: View {
                         .buttonStyle(.borderedProminent)
                         .tint(invocation.destructive ? Cisco.red : Cisco.blue)
                         .keyboardShortcut(.defaultAction)
+                        .disabled(
+                            invocation.requiresConfirmation
+                                && !appState.installationMutationsAllowed
+                        )
                 } else if phase == .running {
                     Button(runningActionTitle) { cancel() }
                         .disabled(activityEntry?.status != .running)
@@ -483,6 +564,7 @@ private struct CatalogCommandSheet: View {
                 runID: commandID,
                 title: invocation.title,
                 arguments: invocation.arguments,
+                mutation: invocation.changesState,
                 category: "catalog",
                 origin: "Catalog",
                 refreshOnSuccess: true
@@ -520,6 +602,19 @@ private struct MCPSetSheet: View {
     @State private var connector = "all"
     @State private var skipScan = false
 
+    private var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var trimmedCommand: String { command.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var trimmedArguments: String { commandArguments.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var trimmedURL: String { url.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var inputIsValid: Bool {
+        guard !trimmedName.isEmpty else { return false }
+        switch transport {
+        case "stdio": return !trimmedCommand.isEmpty && trimmedURL.isEmpty
+        case "sse": return trimmedCommand.isEmpty && trimmedArguments.isEmpty && !trimmedURL.isEmpty
+        default: return false
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Set MCP Server").font(.headline)
@@ -549,7 +644,7 @@ private struct MCPSetSheet: View {
                     .buttonStyle(.borderedProminent)
                     .tint(Cisco.blue)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || (command.isEmpty && url.isEmpty))
+                    .disabled(!inputIsValid)
             }
         }
         .padding(18)
@@ -557,14 +652,17 @@ private struct MCPSetSheet: View {
     }
 
     private var invocation: CatalogInvocation {
-        var args = ["mcp", "set", name]
-        if !command.isEmpty { args += ["--command", command] }
-        if !commandArguments.isEmpty { args += ["--args", commandArguments] }
-        if !url.isEmpty { args += ["--url", url] }
+        var args = ["mcp", "set", trimmedName]
+        if transport == "stdio" {
+            args += ["--command", trimmedCommand]
+            if !trimmedArguments.isEmpty { args += ["--args", trimmedArguments] }
+        } else if transport == "sse" {
+            args += ["--url", trimmedURL]
+        }
         args += ["--transport", transport]
         if connector != "all" { args += ["--connector", connector] }
         if skipScan { args.append("--skip-scan") }
-        return CatalogInvocation(title: "Set MCP server \(name)", arguments: args,
+        return CatalogInvocation(title: "Set MCP server \(trimmedName)", arguments: args,
                                  detail: "Scan and write this MCP server to connector configuration.",
                                  requiresConfirmation: true, destructive: false)
     }
@@ -576,10 +674,13 @@ private struct CatalogInstallSheet: View {
     let onReview: (CatalogInvocation) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(AppState.self) private var appState
     @State private var target = ""
     @State private var connector = "all"
     @State private var force = false
     @State private var applyPolicy = false
+
+    private var trimmedTarget: String { target.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -598,6 +699,11 @@ private struct CatalogInstallSheet: View {
                 Toggle("Apply configured enforcement policy after scanning", isOn: $applyPolicy)
             }
             .formStyle(.grouped)
+            if let reason = appState.installationReadOnlyReason {
+                Label(reason, systemImage: "lock.shield")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Spacer()
             HStack {
                 Spacer()
@@ -606,7 +712,7 @@ private struct CatalogInstallSheet: View {
                     .buttonStyle(.borderedProminent)
                     .tint(Cisco.blue)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(target.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(trimmedTarget.isEmpty || !appState.installationMutationsAllowed)
             }
         }
         .padding(18)
@@ -614,12 +720,13 @@ private struct CatalogInstallSheet: View {
     }
 
     private var invocation: CatalogInvocation {
-        var args = [resource, "install", target]
+        var args = [resource, "install"]
         if connector != "all" { args += ["--connector", connector] }
         if force { args.append("--force") }
         if applyPolicy { args.append("--action") }
+        args += ["--", trimmedTarget]
         return CatalogInvocation(
-            title: "Install \(resource) \(target)",
+            title: "Install \(resource) \(trimmedTarget)",
             arguments: args,
             detail: "DefenseClaw installs the resource, scans it, and reports its admission decision.",
             requiresConfirmation: true,

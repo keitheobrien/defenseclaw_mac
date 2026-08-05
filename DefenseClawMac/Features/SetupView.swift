@@ -1,3 +1,19 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 // Setup panel (spec §9.13): TUI setup workflows as data-driven native forms,
 // each ending in a review step that shows the exact `defenseclaw setup …`
 // command before applying via CLIRunner. Plus a typed config editor whose
@@ -26,6 +42,8 @@ struct WizardField: Identifiable {
     /// Optional second condition, ANDed with visibleWhen (e.g. action==setup
     /// AND connector is a proxy connector).
     var visibleWhen2: (key: String, equals: [String])? = nil
+    /// Optional third driver for provider-family auth subgroups.
+    var visibleWhen3: (key: String, equals: [String])? = nil
     var help: String = ""
 
     var id: String { key }
@@ -51,10 +69,6 @@ struct WizardDefinition: Identifiable {
     /// True for subcommands with no flags — they only run as interactive
     /// terminal wizards, so the sheet offers Copy Command instead of Apply.
     var interactiveOnly: Bool = false
-    /// When set, this wizard applies via the gateway instead of the CLI:
-    /// each non-empty field becomes PATCH /config/patch on
-    /// "<prefix>.<field key>" — mirroring the TUI's config-editor sections.
-    var configPatchPrefix: String? = nil
     /// Optional exact argv builder for setup areas whose command shape is
     /// conditional or emits follow-up commands. The Bool requests masked
     /// secret values for review display.
@@ -82,6 +96,14 @@ struct SetupView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
+                if let reason = appState.installationReadOnlyReason {
+                    Label(reason, systemImage: "lock.shield")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Cisco.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+                }
                 Text("Setup Areas").font(.title3.weight(.semibold))
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 230), spacing: 12)], spacing: 12) {
                     ForEach(TUIWizards.all) { wizard in
@@ -107,6 +129,7 @@ struct SetupView: View {
                             .background(Cisco.surfacePanel, in: RoundedRectangle(cornerRadius: 10))
                         }
                         .buttonStyle(.plain)
+                        .disabled(!appState.installationMutationsAllowed)
                     }
                 }
 
@@ -145,7 +168,9 @@ struct WizardSheet: View {
 
     private var visibleFields: [WizardField] {
         wizard.fields.filter { field in
-            matches(field.visibleWhen) && matches(field.visibleWhen2)
+            matches(field.visibleWhen)
+                && matches(field.visibleWhen2)
+                && matches(field.visibleWhen3)
         }
     }
 
@@ -173,6 +198,9 @@ struct WizardSheet: View {
             case .flagOnly:
                 if value == "yes" { args.append("--\(field.key)") }
             case .secure:
+                // Secrets are transported only via stdin, a child-only
+                // environment variable, or an explicit command builder.
+                // Never let the generic argument builder place one in argv.
                 continue
             default:
                 guard !value.isEmpty else { continue }
@@ -201,15 +229,11 @@ struct WizardSheet: View {
 
     private var validationMessage: String? {
         if let message = wizard.validation?(values) { return message }
-        if let field = visibleFields.first(where: { field in
-               guard case .secure = field.kind else { return false }
-               return !(values[field.key] ?? "").isEmpty
-                   && wizard.secretInputField != field.key
-                   && wizard.secretEnvironment == nil
-           }) {
-            return "\(field.label) has no secure CLI transport configured."
-        }
-        return nil
+        return SetupSecretTransportPolicy.validationMessage(
+            wizard: wizard,
+            values: values,
+            visibleFields: visibleFields
+        )
     }
 
     private var replacesConnectorRoster: Bool {
@@ -218,34 +242,15 @@ struct WizardSheet: View {
                 || (values["action"] == "setup" && values["replace"] == "yes"))
     }
 
-    /// Gateway-applied wizards: one PATCH /config/patch per non-empty field.
-    private var patchOperations: [(path: String, value: String, secure: Bool)] {
-        guard let prefix = wizard.configPatchPrefix else { return [] }
-        return visibleFields.compactMap { field in
-            let value = values[field.key] ?? ""
-            guard !value.isEmpty else { return nil }
-            if case .secure = field.kind {
-                return ("\(prefix).\(field.key)", value, true)
-            }
-            return ("\(prefix).\(field.key)", value, false)
-        }
-    }
-
     private var displayCommand: String {
-        if wizard.configPatchPrefix != nil {
-            guard !patchOperations.isEmpty else { return "(no fields set — nothing to apply)" }
-            return patchOperations
-                .map { "PATCH /config/patch  \($0.path) = \($0.secure ? "••••••" : $0.value)" }
-                .joined(separator: "\n")
-        }
         let commands = buildCommands(maskSecrets: true)
         guard !commands.isEmpty else { return "(no changes selected — nothing to apply)" }
         return commands.enumerated()
-            .map { index, arguments in
+            .map { index, command in
                 let environment = index == 0
                     ? commandEnvironment.keys.sorted().map { "\($0)=••••••" }
                     : []
-                return (environment + ["defenseclaw"] + arguments).joined(separator: " ")
+                return (environment + ["defenseclaw"] + command).joined(separator: " ")
             }
             .joined(separator: "\n")
     }
@@ -367,9 +372,7 @@ struct WizardSheet: View {
     private var reviewBody: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Review").font(.subheadline.weight(.semibold))
-            Text(wizard.configPatchPrefix != nil
-                 ? "These values apply through the gateway (PATCH /config/patch), exactly like the TUI's config-editor section:"
-                 : wizard.interactiveOnly
+            Text(wizard.interactiveOnly
                  ? "This subcommand is an interactive terminal wizard (it takes no flags). Copy it and run it in your terminal:"
                  : "This exact command will run (matching the terminal TUI’s behavior):")
                 .font(.caption)
@@ -421,10 +424,6 @@ struct WizardSheet: View {
                             .keyboardShortcut(.defaultAction)
                             .buttonStyle(.borderedProminent)
                             .tint(Cisco.blue)
-                            .disabled(wizard.configPatchPrefix != nil && !appState.gatewayReachable)
-                            .help(wizard.configPatchPrefix != nil && !appState.gatewayReachable
-                                  ? "Gateway offline — config patches need the gateway running."
-                                  : "")
                     }
                 }
             }
@@ -467,8 +466,10 @@ struct WizardSheet: View {
     private func apply() {
         phase = .running
         output = ""
-        if wizard.configPatchPrefix != nil {
-            applyPatches()
+        if let validationMessage {
+            output = "Setup blocked: \(validationMessage)"
+            exitCode = 1
+            phase = .done
             return
         }
         Task {
@@ -509,31 +510,6 @@ struct WizardSheet: View {
         }
     }
 
-    private func applyPatches() {
-        let operations = patchOperations
-        guard !operations.isEmpty else {
-            output = "Nothing to apply — all fields are empty."
-            exitCode = 1
-            phase = .done
-            return
-        }
-        Task {
-            var failures = 0
-            for op in operations {
-                do {
-                    let value = dcCoerceConfigValue(op.value, forPath: op.path)
-                    try await appState.gateway.patchConfig(path: op.path, value: value)
-                    output += "✓ \(op.path)\n"
-                } catch {
-                    failures += 1
-                    output += "✗ \(op.path): \(error.localizedDescription)\n"
-                }
-            }
-            exitCode = failures == 0 ? 0 : Int32(failures)
-            phase = .done
-            if failures == 0 { appState.reloadConfig() }
-        }
-    }
 }
 
 // MARK: - Config editor
@@ -616,6 +592,7 @@ struct ConfigEditorView: View {
                         .foregroundStyle(Cisco.orange)
                     Button("Restart Gateway Now") { restartGateway() }
                         .controlSize(.small)
+                        .disabled(!appState.installationMutationsAllowed)
                     Button("Dismiss") { restartQueued = false }
                         .controlSize(.small)
                         .buttonStyle(.borderless)
@@ -709,11 +686,19 @@ struct ConfigEditorView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Cisco.blue)
-                .disabled(diffEntries.isEmpty || firstValidationError != nil || saving)
+                .disabled(
+                    !appState.installationMutationsAllowed
+                        || diffEntries.isEmpty
+                        || firstValidationError != nil
+                        || saving
+                )
                 .help("Review the pending config changes before saving (writes config.yaml via the DefenseClaw runtime)")
             }
         }
         .task { loadCatalog() }
+        .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in
+            loadCatalog()
+        }
         .sheet(isPresented: $showDiff) {
             ConfigDiffSheet(entries: diffEntries, saving: saving) { save in
                 if save { applyChanges() } else { showDiff = false }
@@ -767,6 +752,7 @@ struct ConfigEditorView: View {
                     .frame(width: 210, alignment: .leading)
                     .help(field.key)
                 fieldControl(field)
+                    .disabled(!appState.installationMutationsAllowed)
                 Spacer(minLength: 0)
             }
             .help(field.hint)
@@ -855,31 +841,47 @@ struct ConfigEditorView: View {
     /// catalog describes land in the "Other (uncatalogued)" section.
     private func loadCatalog() {
         Task {
+            let installationGeneration = appState.installationGeneration
+            let context = appState.installationContext
+            let cli = appState.cli
             let cfg = await appState.configStore.reload()
+            guard installationGeneration == appState.installationGeneration else { return }
             var values: [String: String] = [:]
             var active: [ConfigEditorSection]
-            if let dynamic = await DynamicConfigCatalog.load(using: appState.cli) {
-                dynamicSections = dynamic.sections
+            let freshDynamicSections: [ConfigEditorSection]?
+            let freshCatalogSource: String
+            if let dynamic = await DynamicConfigCatalog.load(
+                using: cli,
+                context: context
+            ) {
+                guard installationGeneration == appState.installationGeneration else { return }
+                freshDynamicSections = dynamic.sections
                 values = dynamic.values
                 active = dynamic.sections
                 let version = appState.installedRuntimeVersion.map { " \($0)" } ?? ""
-                catalogSource = "runtime catalog\(version) · \(dynamic.sections.count) sections"
+                freshCatalogSource = "runtime catalog\(version) · \(dynamic.sections.count) sections"
             } else {
-                dynamicSections = nil
+                guard installationGeneration == appState.installationGeneration else { return }
+                freshDynamicSections = nil
                 active = ConfigEditorCatalog.sections(activeConnectors: appState.activeConnectorNames)
-                catalogSource = "built-in catalog (runtime dump unavailable)"
+                freshCatalogSource = "built-in catalog (runtime dump unavailable)"
                 for field in active.flatMap(\.fields) where !field.key.isEmpty {
                     if field.kind == .password { continue }
                     values[field.key] = Self.displayValue(cfg.raw[field.key])
                 }
             }
             let known = Set(active.flatMap(\.fields).map(\.key).filter { !$0.isEmpty })
+            let freshUncatalogued: ConfigEditorSection?
             if let extra = DynamicConfigCatalog.uncataloguedSection(raw: cfg.raw, knownKeys: known) {
-                uncatalogued = extra.section
+                freshUncatalogued = extra.section
                 values.merge(extra.values) { current, _ in current }
             } else {
-                uncatalogued = nil
+                freshUncatalogued = nil
             }
+            guard installationGeneration == appState.installationGeneration else { return }
+            dynamicSections = freshDynamicSections
+            catalogSource = freshCatalogSource
+            uncatalogued = freshUncatalogued
             original = values
             edited = [:]
         }
@@ -914,7 +916,7 @@ struct ConfigEditorView: View {
     """
 
     private var runtimePython: String {
-        FileManager.default.homeDirectoryForCurrentUser.path + "/.defenseclaw/.venv/bin/python"
+        appState.installationContext.runtimePythonURL.path
     }
 
     private func applyChanges() {
@@ -922,7 +924,7 @@ struct ConfigEditorView: View {
         guard !entries.isEmpty else { return }
         guard FileManager.default.isExecutableFile(atPath: runtimePython) else {
             showDiff = false
-            status = "DefenseClaw runtime not found at ~/.defenseclaw/.venv — cannot write config."
+            status = "DefenseClaw runtime not found at \(appState.installationContext.venvURL.path) — cannot write config."
             statusOK = false
             return
         }
@@ -1029,23 +1031,5 @@ private struct ConfigDiffSheet: View {
     private func displayTruncated(_ value: String) -> String {
         let display = value.isEmpty ? "(empty)" : value
         return display.count <= 72 ? display : String(display.prefix(71)) + "…"
-    }
-}
-// MARK: - Shared helpers
-
-/// Coerce a string value typed into a wizard or config-editor field to the
-/// YAML scalar the gateway expects — int for *_ms / *_seconds keys, bool for
-/// "true"/"false". Wizard apply and direct config editor share this so the
-/// two write paths never drift on type-handling.
-fileprivate func dcCoerceConfigValue(_ raw: String, forPath path: String) -> Any {
-    let pathLower = path.lowercased()
-    if (pathLower.hasSuffix("_ms") || pathLower.hasSuffix("_seconds")),
-       let intValue = Int(raw) {
-        return intValue
-    }
-    switch raw.lowercased() {
-    case "true": return true
-    case "false": return false
-    default: return raw
     }
 }

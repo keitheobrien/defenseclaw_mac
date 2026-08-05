@@ -1,3 +1,19 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import Foundation
 
 enum CatalogCLIError: LocalizedError {
@@ -109,7 +125,7 @@ enum CatalogCLI {
         collection: String,
         using cli: CLIRunner
     ) async throws -> [(String, [String: Any])] {
-        let result = await cli.run(arguments: [resource, "list", "--json"])
+        let result = await cli.run(arguments: [resource, "list", "--json"], mutation: false)
         guard result.succeeded else {
             throw CatalogCLIError.commandFailed(result.output.trimmingCharacters(in: .whitespacesAndNewlines))
         }
@@ -131,10 +147,10 @@ enum CatalogCLI {
     }
 
     private static func jsonData(from output: String) throws -> Data {
-        guard let start = output.firstIndex(of: "["), let end = output.lastIndex(of: "]"), start <= end else {
+        guard let data = InventoryOutputParser.firstJSONArrayData(in: output) else {
             throw CatalogCLIError.invalidJSON(String(output.prefix(240)))
         }
-        return Data(output[start...end].utf8)
+        return data
     }
 
     private static func scan(_ value: Any?) -> CatalogScanState? {
@@ -205,6 +221,10 @@ struct CatalogResourceAction: Identifiable, Hashable {
     var detail: String
     var systemImage: String
     var readOnly: Bool = false
+    /// Whether running this action can change installation-owned state. This
+    /// is intentionally independent from confirmation: scans are one-click
+    /// operations, but they still refresh on-disk catalog caches.
+    var changesState: Bool = true
     var destructive: Bool = false
     var id: String { verb }
 }
@@ -215,22 +235,18 @@ struct CatalogInvocation: Identifiable {
     var arguments: [String]
     var detail: String
     var requiresConfirmation: Bool
+    var changesState: Bool = true
     var destructive: Bool
 
     var displayCommand: String {
-        (["defenseclaw"] + arguments).map(Self.quote).joined(separator: " ")
-    }
-
-    private static func quote(_ value: String) -> String {
-        guard value.contains(where: { $0.isWhitespace || "'\"\\".contains($0) }) else { return value }
-        return "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
+        (["defenseclaw"] + arguments).map(ShellQuoting.quote).joined(separator: " ")
     }
 }
 
 enum CatalogActions {
     static func skills(_ item: SkillItem) -> [CatalogResourceAction] {
         var actions = [
-            action("scan", "Scan", "Run the skill security scan", "shield.lefthalf.filled", readOnly: true),
+            action("scan", "Scan", "Run the skill security scan", "shield.lefthalf.filled", readOnly: true, changesState: true),
             action("info", "Info", "Show full skill details", "info.circle", readOnly: true),
         ]
         switch item.status.lowercased() {
@@ -259,7 +275,7 @@ enum CatalogActions {
 
     static func mcps(_ item: MCPItem) -> [CatalogResourceAction] {
         var actions = [
-            action("scan", "Scan", "Run the MCP security scan", "shield.lefthalf.filled", readOnly: true),
+            action("scan", "Scan", "Run the MCP security scan", "shield.lefthalf.filled", readOnly: true, changesState: true),
             action("info", "Info", "Show MCP list details", "info.circle", readOnly: true),
         ]
         switch item.status.lowercased() {
@@ -278,7 +294,7 @@ enum CatalogActions {
 
     static func plugins(_ item: PluginItem) -> [CatalogResourceAction] {
         var actions = [
-            action("scan", "Scan", "Run the plugin security scan", "shield.lefthalf.filled", readOnly: true),
+            action("scan", "Scan", "Run the plugin security scan", "shield.lefthalf.filled", readOnly: true, changesState: true),
             action("info", "Info", "Show full plugin details", "info.circle", readOnly: true),
         ]
         if item.verdict.lowercased() == "blocked" {
@@ -345,8 +361,11 @@ enum CatalogActions {
         target: String,
         connector: String
     ) -> CatalogInvocation {
-        var args = [resource, verb ?? action.verb, target]
+        var args = [resource, verb ?? action.verb]
         appendConnector(connector, to: &args)
+        // Catalog names originate outside the app and may start with "-".
+        // End option parsing before the positional target.
+        args += ["--", target]
         return make(action, arguments: args, target: target)
     }
 
@@ -364,6 +383,7 @@ enum CatalogActions {
             arguments: arguments,
             detail: action.detail,
             requiresConfirmation: !action.readOnly,
+            changesState: action.changesState,
             destructive: action.destructive
         )
     }
@@ -374,9 +394,11 @@ enum CatalogActions {
         _ detail: String,
         _ image: String,
         readOnly: Bool = false,
+        changesState: Bool? = nil,
         destructive: Bool = false
     ) -> CatalogResourceAction {
         CatalogResourceAction(verb: verb, label: label, detail: detail, systemImage: image,
-                              readOnly: readOnly, destructive: destructive)
+                              readOnly: readOnly, changesState: changesState ?? !readOnly,
+                              destructive: destructive)
     }
 }

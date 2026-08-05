@@ -1,3 +1,19 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 // Audit panel (spec §9.9): immutable trail with preset filters
 // (all/risk/blocks/scans/credentials), paging, detail inspector, JSON export.
 
@@ -10,13 +26,17 @@ struct AuditView: View {
     @State private var preset = "all"
     @State private var search = ""
     @State private var selection = Set<String>()
-    @State private var page = 0
     @State private var exporterPresented = false
     @State private var exportDocument: AuditExportDocument?
     @State private var correlationTarget = ""
     @State private var correlationRunID = ""
     @State private var relatedEvents: [AuditEvent] = []
     @State private var relatedFindings: [ScanFindingEvent] = []
+    @State private var loadTask: Task<Void, Never>?
+    @State private var detailTask: Task<Void, Never>?
+    @State private var loadGeneration = 0
+    @State private var isLoading = false
+    @State private var hasMore = true
 
     private static let pageSize = 200
     private static let presets: [(String, String)] = [
@@ -73,7 +93,7 @@ struct AuditView: View {
             if visibleEvents.isEmpty {
                 DCEmptyState(
                     title: "No audit events",
-                    message: "Nothing in \(ConfigStore.auditDBURL.path) matches. The gateway writes audit events as it enforces policy.",
+                    message: "Nothing in \(appState.installationContext.auditDBURL.path) matches. The gateway writes audit events as it enforces policy.",
                     systemImage: "checklist"
                 )
                 .frame(maxHeight: .infinity)
@@ -115,12 +135,19 @@ struct AuditView: View {
             }
         }
         .onChange(of: preset) { _, _ in load(reset: true) }
-        .onChange(of: search) { _, _ in load(reset: true) }
+        .onChange(of: search) { _, _ in load(reset: true, debounce: true) }
         .onChange(of: appState.auditPresetRequest) { _, _ in
             _ = applyPendingPanelRequest()
         }
         .onChange(of: selection) { _, _ in loadSelectedDetails() }
-        .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in load(reset: true) }
+        .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in
+            load(reset: true)
+            loadSelectedDetails()
+        }
+        .onDisappear {
+            loadTask?.cancel()
+            detailTask?.cancel()
+        }
         .fileExporter(
             isPresented: $exporterPresented,
             document: exportDocument,
@@ -179,10 +206,11 @@ struct AuditView: View {
             HStack {
                 Spacer()
                 Button("Load older events") {
-                    page += 1
                     load(reset: false)
                 }
                 .controlSize(.small)
+                .disabled(isLoading || !hasMore)
+                if isLoading { ProgressView().controlSize(.small) }
                 Spacer()
             }
             .padding(6)
@@ -296,31 +324,53 @@ struct AuditView: View {
     }
 
     private func loadSelectedDetails() {
+        detailTask?.cancel()
         guard let event = selectedEvent else {
             relatedEvents = []
             relatedFindings = []
             return
         }
-        Task {
-            relatedEvents = await appState.audit.relatedEvents(
+        let selectedID = event.id
+        detailTask = Task {
+            let installationGeneration = appState.installationGeneration
+            let freshEvents = await appState.audit.relatedEvents(
                 target: event.runID.isEmpty ? event.target : nil,
                 runID: event.runID.nonEmpty,
                 limit: 12
             )
-            relatedFindings = await appState.audit.scanFindings(
+            guard !Task.isCancelled,
+                  installationGeneration == appState.installationGeneration else { return }
+            let freshFindings = await appState.audit.scanFindings(
                 runID: event.runID.nonEmpty,
                 target: event.target.nonEmpty,
                 limit: 10
             )
+            guard !Task.isCancelled,
+                  installationGeneration == appState.installationGeneration,
+                  selectedEvent?.id == selectedID else { return }
+            relatedEvents = freshEvents
+            relatedFindings = freshFindings
         }
     }
 
-    private func load(reset: Bool) {
-        if reset { page = 0 }
-        Task {
+    private func load(reset: Bool, debounce: Bool = false) {
+        loadTask?.cancel()
+        loadGeneration += 1
+        let generation = loadGeneration
+        let requestedPreset = preset
+        let requestedSearch = search
+        let offset = reset ? 0 : events.count
+        let installationGeneration = appState.installationGeneration
+        isLoading = true
+        loadTask = Task {
+            if debounce {
+                try? await Task.sleep(for: .milliseconds(200))
+                guard !Task.isCancelled,
+                      installationGeneration == appState.installationGeneration else { return }
+            }
             var severities: [Severity]? = nil
             var actions: [String]? = nil
-            switch preset {
+            switch requestedPreset {
             case "risk": severities = [.high, .critical]
             case "blocks": actions = ["block", "reject", "enforce", "quarantine"]
             case "scans": actions = ["scan"]
@@ -328,12 +378,23 @@ struct AuditView: View {
             default: break
             }
             let fresh = await appState.audit.recentEvents(
-                limit: Self.pageSize * (page + 1),
-                search: search.isEmpty ? nil : search,
+                limit: Self.pageSize,
+                offset: offset,
+                search: requestedSearch.isEmpty ? nil : requestedSearch,
                 severities: severities,
                 actionLike: actions
             )
-            events = fresh
+            guard !Task.isCancelled,
+                  generation == loadGeneration,
+                  installationGeneration == appState.installationGeneration else { return }
+            if reset {
+                events = fresh
+            } else {
+                let existing = Set(events.map(\.id))
+                events.append(contentsOf: fresh.filter { !existing.contains($0.id) })
+            }
+            hasMore = fresh.count == Self.pageSize
+            isLoading = false
         }
     }
 

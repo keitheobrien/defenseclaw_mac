@@ -1,5 +1,46 @@
-import SwiftUI
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
 
+#if !CONNECTOR_DISCOVERY_SELECTION_TESTS
+import SwiftUI
+#endif
+
+struct ConnectorDiscoverySelection: Equatable {
+    let registered: Set<String>
+    let action: Set<String>
+
+    static func reconciling(
+        previouslyDetected: [String],
+        detected: [String],
+        registered: Set<String>,
+        action: Set<String>
+    ) -> ConnectorDiscoverySelection {
+        let detectedSet = Set(detected)
+        let newlyDetected = detectedSet.subtracting(previouslyDetected)
+        let reconciledRegistered = registered
+            .intersection(detectedSet)
+            .union(newlyDetected)
+        return ConnectorDiscoverySelection(
+            registered: reconciledRegistered,
+            action: action.intersection(reconciledRegistered)
+        )
+    }
+}
+
+#if !CONNECTOR_DISCOVERY_SELECTION_TESTS
 struct FirstRunView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
@@ -24,17 +65,14 @@ struct FirstRunView: View {
     @State private var verify = true
     @State private var runID: UUID?
     @State private var exitCode: Int32?
+    @State private var installerRelease: RuntimeInstallerInfo?
+    @State private var installerMetadataLoading = false
+    @State private var installerMetadataError: String?
 
     private static let connectors = [
         "codex", "claudecode", "zeptoclaw", "openclaw", "hermes", "cursor",
         "windsurf", "geminicli", "copilot", "openhands", "antigravity", "opencode", "omnigent",
     ]
-    private static let installerURL = URL(
-        string: "https://raw.githubusercontent.com/cisco-ai-defense/defenseclaw/main/scripts/install.sh"
-    )!
-    private static let downloadCommand = "curl -fL --proto '=https' --tlsv1.2 --output ~/Downloads/defenseclaw-install.sh \(installerURL.absoluteString)"
-    private static let runCommand = "bash ~/Downloads/defenseclaw-install.sh"
-
     private var runningEntry: CommandActivityEntry? {
         guard let runID else { return nil }
         return appState.activity.entries.first { $0.id == runID }
@@ -85,6 +123,12 @@ struct FirstRunView: View {
                 checkRow("Gateway", ok: appState.gatewayReachable)
             }
 
+            if let reason = appState.installationReadOnlyReason {
+                Label(reason, systemImage: "lock.shield")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             if cliFound { setupForm } else { installer }
 
             if let entry = runningEntry {
@@ -122,14 +166,25 @@ struct FirstRunView: View {
                     }
                     .disabled(isCancelling || isFinishing)
                 } else if cliFound {
-                    Button {
-                        initialize()
-                    } label: {
-                        Label(exitCode == 0 ? "Run Setup Again" : "Initialize DefenseClaw", systemImage: "play.fill")
+                    if detectedConnectors.isEmpty, !detectedProxyConnectors.isEmpty {
+                        Button {
+                            appState.selectedPanel = .setup
+                            dismiss()
+                        } label: {
+                            Label("Open Proxy Connector Setup", systemImage: "cable.connector")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.defaultAction)
+                    } else {
+                        Button {
+                            initialize()
+                        } label: {
+                            Label(exitCode == 0 ? "Run Setup Again" : "Initialize DefenseClaw", systemImage: "play.fill")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(setupInvalid || !appState.installationMutationsAllowed)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(setupInvalid)
                 }
             }
         }
@@ -143,6 +198,9 @@ struct FirstRunView: View {
             // until a config exists — never exec other binaries without an
             // explicit user action.
             cliFound = await appState.cli.locateBinary() != nil
+            if !cliFound {
+                await loadInstallerRelease()
+            }
         }
     }
 
@@ -200,8 +258,20 @@ struct FirstRunView: View {
                         }
                     }
                 } else {
-                    Picker("Fallback connector", selection: $connector) {
-                        ForEach(Self.connectors, id: \.self) { Text(friendlyConnectorName($0)).tag($0) }
+                    if detectedProxyConnectors.isEmpty {
+                        Picker("Fallback hook connector", selection: $connector) {
+                            ForEach(TUIWizards.hookConnectors, id: \.self) {
+                                Text(friendlyConnectorName($0)).tag($0)
+                            }
+                        }
+                    } else {
+                        LabeledContent("Detected proxy connectors") {
+                            Text(detectedProxyConnectors.map(friendlyConnectorName).joined(separator: ", "))
+                                .multilineTextAlignment(.trailing)
+                        }
+                        Text("Proxy connectors require their dedicated Setup flow. Continue with Open Proxy Connector Setup below.")
+                            .font(.caption)
+                            .foregroundStyle(Cisco.orange)
                     }
                     HStack(spacing: 8) {
                         Button {
@@ -211,15 +281,18 @@ struct FirstRunView: View {
                             Label(discoveryRequested ? "Detect Again" : "Detect Installed Agents",
                                   systemImage: "magnifyingglass")
                         }
+                        .disabled(!appState.installationMutationsAllowed)
                         Text("Runs `defenseclaw agent discover`, which executes each detected agent CLI's --version to identify it.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    Text(discoveryRequested
-                         ? "No installed hook connectors were returned by discovery. Setup will use this explicit fallback connector."
-                         : "Choose a connector directly, or detect the agents installed on this Mac.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    if detectedProxyConnectors.isEmpty {
+                        Text(discoveryRequested
+                             ? "No installed hook connectors were returned by discovery. Setup will use this explicit hook connector fallback."
+                             : "Choose a hook connector directly, or detect the agents installed on this Mac.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     if let connectorDiscoveryError {
                         Label(connectorDiscoveryError, systemImage: "exclamationmark.triangle.fill")
                             .font(.caption)
@@ -261,7 +334,7 @@ struct FirstRunView: View {
             VStack(alignment: .leading, spacing: 10) {
                 GroupBox("Install the Bundled DefenseClaw Runtime") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("This app includes DefenseClaw \(payload.version), verified against the upstream release at build time. Installing lays it into ~/.defenseclaw and ~/.local/bin — no remote script runs. Network is used to fetch the CLI's Python dependencies from PyPI, plus uv and Python 3.12 only if this Mac doesn't have them.")
+                        Text("This app includes DefenseClaw \(payload.version), verified against the upstream release at build time. Installing lays it into \(appState.installationContext.homeRoot.path) and ~/.local/bin — no remote script runs. Network is used to fetch the CLI's Python dependencies from PyPI, plus uv and Python 3.12 only if this Mac doesn't have them.")
                             .font(.callout).foregroundStyle(.secondary)
                         installStateRow
                         HStack {
@@ -274,7 +347,10 @@ struct FirstRunView: View {
                                 Label("Install DefenseClaw Runtime v\(payload.version)", systemImage: "arrow.down.circle.fill")
                             }
                             .buttonStyle(.borderedProminent)
-                            .disabled(appState.runtimeInstallState.isRunning)
+                            .disabled(
+                                appState.runtimeInstallState.isRunning
+                                    || !appState.installationMutationsAllowed
+                            )
                             Button("Open Activity") {
                                 appState.selectedPanel = .activity
                                 dismiss()
@@ -318,15 +394,56 @@ struct FirstRunView: View {
 
     private var scriptInstaller: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Download the installer, review its contents, then run it from Terminal. The Mac app does not execute a remote script automatically.")
+            Text("Download the release installer, verify its published SHA-256 digest, review the verified local file, then run it from Terminal. The Mac app does not execute a remote script automatically.")
                 .font(.callout).foregroundStyle(.secondary)
-            Link(destination: Self.installerURL) {
-                Label("Review Install Script", systemImage: "safari")
+            if installerMetadataLoading {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading authenticated release metadata...")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else if let installerRelease {
+                Link(destination: installerRelease.releaseURL) {
+                    Label("Open DefenseClaw \(installerRelease.tag) Release", systemImage: "safari")
+                }
+                installCommandRow("1. Download and Verify", command: installerRelease.downloadCommand)
+                installCommandRow("2. Review Verified Local File", command: installerRelease.reviewCommand)
+                installCommandRow("3. Verify Again and Run", command: installerRelease.runCommand)
+                Text("Expected SHA-256: \(installerRelease.assetSHA256)")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            } else {
+                Label(
+                    installerMetadataError
+                        ?? "Authenticated installer metadata is unavailable. No shell command was generated.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(Cisco.orange)
+                Link(
+                    "Open Official DefenseClaw Releases",
+                    destination: URL(
+                        string: "https://github.com/cisco-ai-defense/defenseclaw/releases"
+                    )!
+                )
             }
-            installCommandRow("1. Download", command: Self.downloadCommand)
-            installCommandRow("2. Run After Review", command: Self.runCommand)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @MainActor
+    private func loadInstallerRelease() async {
+        guard !installerMetadataLoading else { return }
+        installerMetadataLoading = true
+        installerMetadataError = nil
+        defer { installerMetadataLoading = false }
+        guard let release = await appState.updater.latestRuntimeInstaller() else {
+            installerMetadataError = "The latest release has no digest-bound install.sh asset. Use the official release page and verify its published checksum manually."
+            return
+        }
+        installerRelease = release
     }
 
     private func execution(_ entry: CommandActivityEntry) -> some View {
@@ -410,6 +527,7 @@ struct FirstRunView: View {
         Task {
             cliFound = await appState.cli.locateBinary() != nil
             appState.installDetected = await appState.configStore.installPresent
+            if !cliFound { await loadInstallerRelease() }
             // Re-discover only after the user opted into discovery — Check
             // Again must not become a back door into exec'ing agent CLIs.
             if cliFound, discoveryRequested { await discoverConnectors() }
@@ -417,23 +535,36 @@ struct FirstRunView: View {
     }
 
     private func discoverConnectors() async {
+        guard appState.installationMutationsAllowed else {
+            connectorDiscoveryError = appState.installationReadOnlyReason
+                ?? "This installation is read only."
+            return
+        }
         connectorDiscoveryInProgress = true
         connectorDiscoveryError = nil
         // --refresh: every call here follows an explicit user action, and the
         // runtime's discovery cache lives 24h — a stale hit would hide an
         // agent installed since the last scan.
-        let result = await appState.cli.run(arguments: ["agent", "discover", "--json", "--no-emit-otel", "--refresh"])
+        let result = await appState.cli.run(
+            arguments: ["agent", "discover", "--json", "--no-emit-otel", "--refresh"],
+            mutation: true
+        )
         let allDetected = result.succeeded
             ? ConnectorOnboarding.installedConnectors(from: result.output, supportedOrder: Self.connectors)
             : []
         let detected = allDetected.filter { TUIWizards.hookConnectors.contains($0) }
+        let selection = ConnectorDiscoverySelection.reconciling(
+            previouslyDetected: detectedConnectors,
+            detected: detected,
+            registered: registeredConnectors,
+            action: actionConnectors
+        )
         detectedProxyConnectors = allDetected.filter { TUIWizards.proxyConnectors.contains($0) }
-        if detected.isEmpty, let proxy = detectedProxyConnectors.first { connector = proxy }
         detectedConnectors = detected
-        // Pre-check everything detected (TUI first-run parity); the user
-        // unchecks what they don't want hooks installed into.
-        registeredConnectors = Set(detected)
-        actionConnectors.formIntersection(Set(detected))
+        // Pre-check the first discovery and later additions, while preserving
+        // explicit choices for connectors that remain installed.
+        registeredConnectors = selection.registered
+        actionConnectors = selection.action
         if allDetected.isEmpty {
             connectorDiscoveryError = result.succeeded
                 ? "Agent discovery completed but did not identify a supported connector."
@@ -495,3 +626,4 @@ struct FirstRunView: View {
         }
     }
 }
+#endif

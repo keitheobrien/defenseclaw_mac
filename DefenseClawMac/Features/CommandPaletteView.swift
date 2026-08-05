@@ -1,3 +1,19 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import SwiftUI
 
 struct CommandPaletteView: View {
@@ -6,7 +22,7 @@ struct CommandPaletteView: View {
 
     @State private var search = ""
     @State private var category = "all"
-    @State private var selectedID: Int? = CommandRegistry.all.first?.id
+    @State private var selectedID: String? = CommandRegistry.all.first?.id
     @State private var extraArguments = ""
     @State private var secretInput = ""
     @State private var output = ""
@@ -92,6 +108,10 @@ struct CommandPaletteView: View {
             titleVisibility: .visible
         ) {
             Button("Run Command", role: selected?.isDestructive == true ? .destructive : nil) { runSelected() }
+                .disabled(
+                    selected?.changesState == true
+                        && !appState.installationMutationsAllowed
+                )
             Button("Cancel", role: .cancel) { }
         } message: {
             Text(selected?.displayCommand(extraArguments: parsedExtraArguments ?? []) ?? "")
@@ -115,16 +135,21 @@ struct CommandPaletteView: View {
 
             if command.requiresInput {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(command.acceptsSecretInput ? "Credential name" : "Arguments")
+                    Text(command.requiresSecretStandardInput ? "Credential environment name" : "Arguments")
                         .font(.caption.weight(.semibold))
                     TextField(command.usage.isEmpty ? "Additional arguments" : command.usage,
                               text: $extraArguments)
                         .textFieldStyle(.roundedBorder)
                         .font(.body.monospaced())
                     Text(command.usage).font(.caption2).foregroundStyle(.secondary)
-                    if command.acceptsSecretInput {
-                        SecureField("Credential value", text: $secretInput)
+                    if command.requiresSecretStandardInput {
+                        Text("Secret value").font(.caption.weight(.semibold)).padding(.top, 4)
+                        SecureField("Secret value", text: $secretInput)
                             .textFieldStyle(.roundedBorder)
+                            .privacySensitive()
+                        Text("The secret is sent over standard input and is never included in the command preview or activity history.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
                     if let parseError {
                         Label(parseError, systemImage: "exclamationmark.triangle")
@@ -190,11 +215,16 @@ struct CommandPaletteView: View {
                     .keyboardShortcut(.defaultAction)
                     .disabled(
                         running
-                            || (command.requiresInput
-                                && extraArguments.trimmingCharacters(in: .whitespaces).isEmpty)
-                            || (command.acceptsSecretInput && secretInput.isEmpty)
+                            || (command.changesState && !appState.installationMutationsAllowed)
+                            || (command.requiresInput && extraArguments.trimmingCharacters(in: .whitespaces).isEmpty)
+                            || (command.requiresSecretStandardInput && secretInput.isEmpty)
                     )
                 }
+            }
+            if command.changesState, let reason = appState.installationReadOnlyReason {
+                Label(reason, systemImage: "lock.shield")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(18)
@@ -210,8 +240,7 @@ struct CommandPaletteView: View {
 
     private func requestRun(_ command: CommandDefinition) {
         do {
-            let extras = try CommandArgumentParser.parse(extraArguments)
-            _ = try command.invocation(extraArguments: extras, secretInput: secretInput)
+            _ = try executionPlan(for: command)
             parseError = nil
         } catch {
             parseError = error.localizedDescription
@@ -223,10 +252,9 @@ struct CommandPaletteView: View {
 
     private func runSelected() {
         guard let command = selected else { return }
-        let invocation: CommandInvocation
+        let plan: CommandExecutionPlan
         do {
-            let extras = try CommandArgumentParser.parse(extraArguments)
-            invocation = try command.invocation(extraArguments: extras, secretInput: secretInput)
+            plan = try executionPlan(for: command)
             parseError = nil
         } catch {
             parseError = error.localizedDescription
@@ -236,13 +264,14 @@ struct CommandPaletteView: View {
         running = true
         output = ""
         exitCode = nil
-        if command.acceptsSecretInput { secretInput = "" }
+        if plan.standardInput != nil { secretInput = "" }
         Task {
             let result = await appState.runCommand(
                 title: command.title,
                 binary: command.binary,
-                arguments: invocation.arguments,
-                standardInput: invocation.standardInput,
+                arguments: plan.arguments,
+                standardInput: plan.standardInput,
+                mutation: command.changesState || command.isDestructive,
                 category: command.category,
                 origin: "Command Palette",
                 refreshOnSuccess: command.changesState
@@ -255,50 +284,12 @@ struct CommandPaletteView: View {
             running = false
         }
     }
-}
 
-private enum CommandArgumentParser {
-    struct ParseError: LocalizedError {
-        let message: String
-        var errorDescription: String? { message }
-    }
-
-    static func parse(_ input: String) throws -> [String] {
-        var result: [String] = []
-        var current = ""
-        var quote: Character?
-        var escaped = false
-
-        for character in input {
-            if escaped {
-                current.append(character)
-                escaped = false
-                continue
-            }
-            if character == "\\" && quote != "'" {
-                escaped = true
-                continue
-            }
-            if let activeQuote = quote {
-                if character == activeQuote { quote = nil }
-                else { current.append(character) }
-                continue
-            }
-            if character == "'" || character == "\"" {
-                quote = character
-            } else if character.isWhitespace {
-                if !current.isEmpty {
-                    result.append(current)
-                    current = ""
-                }
-            } else {
-                current.append(character)
-            }
-        }
-
-        if escaped { throw ParseError(message: "The final backslash does not escape a character.") }
-        if quote != nil { throw ParseError(message: "A quoted argument is not closed.") }
-        if !current.isEmpty { result.append(current) }
-        return result
+    private func executionPlan(for command: CommandDefinition) throws -> CommandExecutionPlan {
+        let extras = try CommandArgumentParser.parse(extraArguments)
+        return try command.executionPlan(
+            extraArguments: extras,
+            secretInput: command.requiresSecretStandardInput ? secretInput : nil
+        )
     }
 }

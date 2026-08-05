@@ -1,9 +1,26 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 // Main window (spec §5.2): sidebar grouped Monitor / Govern / Discover / Configure.
 
 import SwiftUI
 
 struct MainWindow: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.openWindow) private var openWindow
     @SceneStorage("main.selectedPanel") private var selectedPanelRaw = PanelID.overview.rawValue
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @State private var inspectorCollapsedSidebar = false
@@ -85,7 +102,15 @@ struct MainWindow: View {
             }
         }
         .onAppear {
-            appState.selectedPanel = selectedPanel
+            // Deep links/menu actions may select a panel before SwiftUI
+            // restores SceneStorage. Preserve that explicit selection; only
+            // restore SceneStorage when AppState is still at its default.
+            if appState.selectedPanel != .overview || selectedPanelRaw == PanelID.overview.rawValue {
+                selectedPanelRaw = appState.selectedPanel.rawValue
+            } else {
+                appState.selectedPanel = selectedPanel
+            }
+            AppDelegate.recreateMainWindow = { openWindow(id: "main") }
         }
         .onChange(of: appState.selectedPanel) { _, panel in
             if panel != selectedPanel {
@@ -196,6 +221,7 @@ struct MainWindow: View {
                     Image(systemName: "xmark")
                 }
                 .buttonStyle(.borderless)
+                .accessibilityLabel("Dismiss app update")
             }
         }
         .padding(10)
@@ -209,12 +235,13 @@ struct MainWindow: View {
         case .idle, .checking: "Mac app update — installed: \(UpdateChecker.currentVersion). ⌘⇧U upgrades this app and restarts it."
         case .downloading: "Downloading release…"
         case .installing: "Installing and restarting…"
+        case .actionRequired(let guidance, _): "Action required: \(guidance)"
         case .failed(let why): "Upgrade failed: \(why)"
         }
     }
 
-    /// Distinct from the Mac-app banner: this upgrades the underlying
-    /// DefenseClaw runtime (CLI + gateway) via `defenseclaw upgrade`.
+    /// Distinct from the Mac-app banner: runtime mutation must happen through
+    /// the release-owned latest-mode resolver outside this app.
     private var runtimeUpdateBanner: some View {
         HStack(spacing: 10) {
             Image(systemName: "server.rack")
@@ -225,17 +252,18 @@ struct MainWindow: View {
                 Text(runtimeStatusText)
                     .font(.caption2)
                     .foregroundStyle(isRuntimeFailed ? Cisco.red : .secondary)
-                    .lineLimit(isRuntimeFailed ? 4 : 1)
+                    .lineLimit(isRuntimeFailed || isRuntimeActionRequired ? 4 : 1)
                     .fixedSize(horizontal: false, vertical: true)
             }
             switch appState.runtimeUpgradeState {
-            case .installing, .downloading:
+            case .checking, .installing, .downloading:
                 ProgressView().controlSize(.small).padding(.leading, 4)
-            default:
-                Button("Upgrade Runtime") { appState.performRuntimeUpgrade() }
+            case .actionRequired(_, let command):
+                Button("Copy Upgrade Command") { copyToPasteboard(command) }
                     .controlSize(.small)
                     .buttonStyle(.borderedProminent)
                     .tint(Cisco.green)
+                    .help("Copy the authenticated resolver command to run in Terminal")
                 if let url = appState.availableRuntimeUpdate.flatMap({ URL(string: $0.htmlURL) }) {
                     Link("Release notes", destination: url)
                         .font(.caption)
@@ -244,6 +272,22 @@ struct MainWindow: View {
                     Image(systemName: "xmark")
                 }
                 .buttonStyle(.borderless)
+                .accessibilityLabel("Dismiss runtime update")
+            default:
+                Button("Show Upgrade Command") { appState.performRuntimeUpgrade() }
+                    .controlSize(.small)
+                    .buttonStyle(.borderedProminent)
+                    .tint(Cisco.green)
+                    .disabled(!appState.installationMutationsAllowed)
+                if let url = appState.availableRuntimeUpdate.flatMap({ URL(string: $0.htmlURL) }) {
+                    Link("Release notes", destination: url)
+                        .font(.caption)
+                }
+                Button { appState.runtimeBannerDismissed = true } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Dismiss runtime update")
             }
         }
         .padding(10)
@@ -257,16 +301,25 @@ struct MainWindow: View {
         return false
     }
 
+    private var isRuntimeActionRequired: Bool {
+        if case .actionRequired = appState.runtimeUpgradeState { return true }
+        return false
+    }
+
     private var runtimeStatusText: String {
         switch appState.runtimeUpgradeState {
+        case .checking:
+            return "Checking for the latest DefenseClaw runtime…"
         case .installing, .downloading:
             return appState.runtimeUpgradeLogTail.isEmpty
-                ? "Running `defenseclaw upgrade` — gateway restarts when done…"
+                ? "Preparing release-owned resolver guidance…"
                 : appState.runtimeUpgradeLogTail
+        case .actionRequired(let guidance, _):
+            return guidance
         case .failed(let why):
             return why
         default:
-            return "Runtime update (CLI + gateway) — installed: \(appState.installedRuntimeVersion ?? "unknown"). Runs `defenseclaw upgrade`; your config is preserved."
+            return "Runtime update (CLI + gateway) — installed: \(appState.installedRuntimeVersion ?? "unknown"). Use the release-owned resolver in latest mode without --version."
         }
     }
 

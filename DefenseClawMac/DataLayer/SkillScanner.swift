@@ -1,3 +1,19 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 // Filesystem connector catalogs — ports of the CLI's canonical discovery:
 // skills from skill_list.py + connector_paths.skill_dirs, MCP servers from
 // connector_paths.mcp_servers. Used when the gateway catalogs are
@@ -80,15 +96,14 @@ enum SkillScanner {
     /// SKILL.md/README.md, else first non-empty line; bounded to 2 KiB.
     static func readDescription(at path: String) -> String {
         for marker in ["SKILL.md", "README.md"] {
-            guard let handle = FileHandle(forReadingAtPath: path + "/" + marker),
-                  let data = try? handle.read(upToCount: 2048)
-            else { continue }
-            try? handle.close()
+            guard let handle = FileHandle(forReadingAtPath: path + "/" + marker) else { continue }
+            defer { try? handle.close() }
+            guard let data = try? handle.read(upToCount: 2048) else { continue }
             let text = String(decoding: data, as: UTF8.self)
             if let desc = frontmatterDescription(text), !desc.isEmpty {
                 return String(desc.prefix(200))
             }
-            for line in text.split(separator: "\n") {
+            for line in contentWithoutFrontmatter(text).split(separator: "\n") {
                 let stripped = line.trimmingCharacters(in: .whitespaces)
                     .drop { $0 == "#" }
                     .trimmingCharacters(in: .whitespaces)
@@ -110,6 +125,17 @@ enum SkillScanner {
             }
         }
         return nil
+    }
+
+    private static func contentWithoutFrontmatter(_ text: String) -> Substring {
+        guard text.hasPrefix("---"),
+              let end = text.range(
+                  of: "\n---",
+                  range: text.index(text.startIndex, offsetBy: 3)..<text.endIndex
+              )
+        else { return text[...] }
+        let bodyStart = text.index(end.upperBound, offsetBy: 0)
+        return text[bodyStart...]
     }
 }
 

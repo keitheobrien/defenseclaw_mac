@@ -1,3 +1,19 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import Foundation
 
 struct InventoryOutputParseResult {
@@ -6,6 +22,12 @@ struct InventoryOutputParseResult {
 }
 
 enum InventoryOutputParser {
+    // Keep aligned with CLIOutputLimits.maximumOutputBytes. This parser is also
+    // compiled independently by its focused regression tests.
+    static let maximumInputBytes = 4 * 1_024 * 1_024
+    static let maximumCandidateCount = 64
+    private static let maximumNestingDepth = 512
+
     /// DefenseClaw 0.8.5+ serializes these expected connector limitations in
     /// `errors` and emits a failure warning for them. They explain empty
     /// categories; they do not represent failed inventory collection.
@@ -16,9 +38,10 @@ enum InventoryOutputParser {
         "memory": "memory backend is private to the framework",
     ]
 
-    /// Prefer structured errors so known capability notes can be separated
-    /// from real subprocess, permission, and configuration failures. Older
-    /// payloads without details retain their summary count.
+    /// Count failures that require user action. Prefer the structured error
+    /// list so known runtime capability notes can be distinguished from real
+    /// subprocess, permission, or configuration failures. Older payloads that
+    /// omit that list retain their summary count.
     static func actionableErrorCount(in document: [String: Any]) -> Int {
         if let errors = document["errors"] as? [Any] {
             return errors.reduce(into: 0) { count, error in
@@ -33,8 +56,8 @@ enum InventoryOutputParser {
         return 0
     }
 
-    /// Collapse per-connector aggregate warnings into one accurate warning,
-    /// preserving every unrelated diagnostic line.
+    /// Collapse the runtime's per-connector aggregate warnings into one
+    /// accurate warning while preserving every unrelated diagnostic line.
     static func userFacingDiagnostics(from result: InventoryOutputParseResult) -> String {
         var removedAggregateWarning = false
         var lines = result.diagnostics.components(separatedBy: .newlines).filter { line in
@@ -57,28 +80,30 @@ enum InventoryOutputParser {
         return lines.joined(separator: "\n")
     }
 
+    /// First syntactically valid top-level JSON array in mixed CLI output.
+    /// Diagnostics may contain stray brackets before the real payload.
+    static func firstJSONArrayData(in output: String) -> Data? {
+        guard output.utf8.count <= maximumInputBytes else { return nil }
+        let bytes = Array(output.utf8)
+        for candidate in candidateRanges(in: bytes) where bytes[candidate.start] == 0x5B {
+            let data = Data(bytes[candidate.start...candidate.end])
+            if (try? JSONSerialization.jsonObject(with: data)) is [Any] { return data }
+        }
+        return nil
+    }
+
     /// DefenseClaw emits one object for a single connector and an array for
     /// multiple connectors. CLI diagnostics may surround that JSON because the
     /// app combines stdout and stderr for Activity output.
     static func parse(_ output: String) -> InventoryOutputParseResult? {
+        guard output.utf8.count <= maximumInputBytes else { return nil }
         let bytes = Array(output.utf8)
-        var candidateStart = 0
-
-        while candidateStart < bytes.count {
-            guard bytes[candidateStart] == 0x7B || bytes[candidateStart] == 0x5B else {
-                candidateStart += 1
-                continue
-            }
-            guard let candidateEnd = matchingJSONEnd(in: bytes, from: candidateStart) else {
-                candidateStart += 1
-                continue
-            }
-
-            let data = Data(bytes[candidateStart...candidateEnd])
+        for candidate in candidateRanges(in: bytes) {
+            let data = Data(bytes[candidate.start...candidate.end])
             if let value = try? JSONSerialization.jsonObject(with: data),
                let documents = normalizedDocuments(from: value) {
-                let before = String(decoding: bytes[..<candidateStart], as: UTF8.self)
-                let afterStart = candidateEnd + 1
+                let before = String(decoding: bytes[..<candidate.start], as: UTF8.self)
+                let afterStart = candidate.end + 1
                 let after = afterStart < bytes.count
                     ? String(decoding: bytes[afterStart...], as: UTF8.self)
                     : ""
@@ -88,7 +113,6 @@ enum InventoryOutputParser {
                     .joined(separator: "\n")
                 return InventoryOutputParseResult(documents: documents, diagnostics: diagnostics)
             }
-            candidateStart += 1
         }
         return nil
     }
@@ -140,13 +164,62 @@ enum InventoryOutputParser {
         return Int(value[countStart..<countEnd]) != nil
     }
 
-    private static func matchingJSONEnd(in bytes: [UInt8], from start: Int) -> Int? {
-        var expectedClosers: [UInt8] = []
+    private struct CandidateRange {
+        var start: Int
+        var end: Int
+    }
+
+    private struct JSONFrame {
+        var start: Int
+        var closer: UInt8
+    }
+
+    /// Finds balanced object/array ranges in one byte traversal. Nested ranges
+    /// are retained so valid JSON after unmatched diagnostic openers remains
+    /// discoverable without rescanning the same suffix for every opener.
+    private static func candidateRanges(in bytes: [UInt8]) -> [CandidateRange] {
+        var stack: [JSONFrame] = []
+        var candidates: [CandidateRange] = []
+        var largestCandidateStart = -1
+        var largestCandidateIndex = 0
         var inString = false
         var escaped = false
 
-        for index in start..<bytes.count {
+        func retain(_ candidate: CandidateRange) {
+            if candidates.count < maximumCandidateCount {
+                candidates.append(candidate)
+                if candidate.start > largestCandidateStart {
+                    largestCandidateStart = candidate.start
+                    largestCandidateIndex = candidates.count - 1
+                }
+                return
+            }
+            guard candidate.start < largestCandidateStart else { return }
+            candidates[largestCandidateIndex] = candidate
+            if let replacement = candidates.indices.max(by: {
+                candidates[$0].start < candidates[$1].start
+            }) {
+                largestCandidateIndex = replacement
+                largestCandidateStart = candidates[replacement].start
+            }
+        }
+
+        for index in bytes.indices {
             let byte = bytes[index]
+            if stack.isEmpty {
+                switch byte {
+                case 0x7B:
+                    stack.append(JSONFrame(start: index, closer: 0x7D))
+                case 0x5B:
+                    stack.append(JSONFrame(start: index, closer: 0x5D))
+                default:
+                    continue
+                }
+                inString = false
+                escaped = false
+                continue
+            }
+
             if inString {
                 if escaped {
                     escaped = false
@@ -162,17 +235,35 @@ enum InventoryOutputParser {
             case 0x22:
                 inString = true
             case 0x7B:
-                expectedClosers.append(0x7D)
+                guard stack.count < maximumNestingDepth else {
+                    stack = [JSONFrame(start: index, closer: 0x7D)]
+                    inString = false
+                    escaped = false
+                    continue
+                }
+                stack.append(JSONFrame(start: index, closer: 0x7D))
             case 0x5B:
-                expectedClosers.append(0x5D)
+                guard stack.count < maximumNestingDepth else {
+                    stack = [JSONFrame(start: index, closer: 0x5D)]
+                    inString = false
+                    escaped = false
+                    continue
+                }
+                stack.append(JSONFrame(start: index, closer: 0x5D))
             case 0x7D, 0x5D:
-                guard expectedClosers.last == byte else { return nil }
-                expectedClosers.removeLast()
-                if expectedClosers.isEmpty { return index }
+                guard stack.last?.closer == byte, let frame = stack.popLast() else {
+                    stack.removeAll(keepingCapacity: true)
+                    inString = false
+                    escaped = false
+                    continue
+                }
+                retain(CandidateRange(start: frame.start, end: index))
             default:
                 break
             }
         }
-        return nil
+        return candidates.sorted {
+            $0.start == $1.start ? $0.end > $1.end : $0.start < $1.start
+        }
     }
 }

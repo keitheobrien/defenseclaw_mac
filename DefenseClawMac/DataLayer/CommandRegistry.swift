@@ -1,10 +1,36 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 // Synchronized with DefenseClaw mainline cli/defenseclaw/tui/registry_data.py.
 // Keep these entries aligned when the TUI command palette changes.
 
 import Foundation
 
+enum ShellQuoting {
+    private static let safeCharacters = CharacterSet(
+        charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_@%+=:,./-"
+    )
+
+    static func quote(_ value: String) -> String {
+        guard value.isEmpty || !value.unicodeScalars.allSatisfy(safeCharacters.contains) else { return value }
+        return "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
+    }
+}
+
 struct CommandDefinition: Identifiable, Hashable, Sendable {
-    let id: Int
     let title: String
     let binary: String
     let arguments: [String]
@@ -13,13 +39,44 @@ struct CommandDefinition: Identifiable, Hashable, Sendable {
     let requiresInput: Bool
     let usage: String
 
+    /// Stable command identity derived from the command itself. The legacy
+    /// numeric initializer argument is accepted for source-table parity but
+    /// cannot create duplicate SwiftUI identifiers when rows are reordered.
+    var id: String { ([binary] + arguments + [title]).joined(separator: "\u{1F}") }
+
+    init(
+        id _: Int,
+        title: String,
+        binary: String,
+        arguments: [String],
+        summary: String,
+        category: String,
+        requiresInput: Bool,
+        usage: String
+    ) {
+        self.title = title
+        self.binary = binary
+        self.arguments = arguments
+        self.summary = summary
+        self.category = category
+        self.requiresInput = requiresInput
+        self.usage = usage
+    }
+
     var isDestructive: Bool {
         let tokens = arguments.map { $0.lowercased() }
         return !Set(tokens).isDisjoint(with: ["remove", "delete", "reset", "uninstall", "quarantine", "teardown", "destroy"])
     }
 
     var changesState: Bool {
-        !["info", "scan"].contains(category)
+        let tokens = arguments.map { $0.lowercased() }
+        // Scan commands refresh on-disk caches, and doctor always rewrites
+        // doctor_cache.json even when it only reports checks. Treat those as
+        // mutations so managed/invalid installations cannot bypass the
+        // lower-level CLIRunner gate through the command palette.
+        if category == "scan" || tokens.first == "doctor" { return true }
+        if tokens.starts(with: ["agent", "discover"]) { return true }
+        return category != "info"
     }
 
     var requiresTerminal: Bool {
@@ -35,11 +92,11 @@ struct CommandDefinition: Identifiable, Hashable, Sendable {
     func invocation(extraArguments: [String], secretInput: String) throws -> CommandInvocation {
         guard acceptsSecretInput else {
             let invocationArguments = arguments + extraArguments
+            let suppliesAlertConfirmation = invocationArguments.starts(with: ["alerts", "acknowledge"])
+                || invocationArguments.starts(with: ["alerts", "dismiss"])
             return CommandInvocation(
                 arguments: invocationArguments,
-                standardInput: AlertDispositionCommand.suppliesConfirmation(
-                    for: invocationArguments
-                ) ? AlertDispositionCommand.confirmationInput : nil
+                standardInput: suppliesAlertConfirmation ? "y" : nil
             )
         }
         guard extraArguments.count == 1,
@@ -58,14 +115,65 @@ struct CommandDefinition: Identifiable, Hashable, Sendable {
         )
     }
 
-    func displayCommand(extraArguments: [String] = []) -> String {
-        ([binary] + arguments + extraArguments).map(Self.quote).joined(separator: " ")
+    /// `keys set` must receive its credential over stdin. Keeping this
+    /// property on the registry entry gives every command-palette surface the
+    /// same source of truth for rendering, validation, and execution.
+    var requiresSecretStandardInput: Bool {
+        binary == "defenseclaw" && arguments == ["keys", "set"]
     }
 
-    private static func quote(_ value: String) -> String {
-        guard value.contains(where: { $0.isWhitespace || "'\"\\".contains($0) }) else { return value }
-        return "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
+    func displayCommand(extraArguments: [String] = []) -> String {
+        // Never echo legacy `--value <secret>` input into the preview or the
+        // pasteboard. The execution plan below rejects it as well.
+        let visibleArguments = requiresSecretStandardInput
+            ? Array(extraArguments.prefix(1))
+            : extraArguments
+        return ([binary] + arguments + visibleArguments).map(ShellQuoting.quote).joined(separator: " ")
     }
+
+    func executionPlan(
+        extraArguments: [String] = [],
+        secretInput: String? = nil
+    ) throws -> CommandExecutionPlan {
+        guard requiresSecretStandardInput else {
+            return CommandExecutionPlan(arguments: arguments + extraArguments, standardInput: nil)
+        }
+        let environmentName = extraArguments.first ?? ""
+        let environmentNameRange = environmentName.startIndex..<environmentName.endIndex
+        guard extraArguments.count == 1,
+              environmentName.range(
+                  of: #"^[A-Za-z_][A-Za-z0-9_]*$"#,
+                  options: .regularExpression
+              ) == environmentNameRange else {
+            throw CommandExecutionPlan.Error.invalidCredentialName
+        }
+        guard let secretInput, !secretInput.isEmpty else {
+            throw CommandExecutionPlan.Error.missingSecret
+        }
+        return CommandExecutionPlan(
+            arguments: arguments + [environmentName],
+            standardInput: secretInput
+        )
+    }
+}
+
+struct CommandExecutionPlan: Equatable, Sendable {
+    enum Error: LocalizedError {
+        case invalidCredentialName
+        case missingSecret
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidCredentialName:
+                "Enter one environment name using letters, digits, and underscores."
+            case .missingSecret:
+                "Enter the secret value."
+            }
+        }
+    }
+
+    let arguments: [String]
+    let standardInput: String?
 }
 
 struct CommandInvocation: Equatable, Sendable {
@@ -322,4 +430,59 @@ enum CommandRegistry {
         CommandDefinition(id: 229, title: "readiness", binary: "defenseclaw", arguments: ["doctor"], summary: "Run health checks that feed Setup Readiness", category: "info", requiresInput: false, usage: ""),
         CommandDefinition(id: 230, title: "help", binary: "defenseclaw", arguments: ["--help"], summary: "Show CLI help", category: "info", requiresInput: false, usage: ""),
     ]
+}
+
+enum CommandArgumentParser {
+    struct ParseError: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+
+    static func parse(_ input: String) throws -> [String] {
+        var result: [String] = []
+        var current = ""
+        var quote: Character?
+        var escaped = false
+        var tokenStarted = false
+
+        for character in input {
+            if escaped {
+                current.append(character)
+                escaped = false
+                tokenStarted = true
+                continue
+            }
+            if character == "\\" && quote != "'" {
+                escaped = true
+                tokenStarted = true
+                continue
+            }
+            if let activeQuote = quote {
+                if character == activeQuote { quote = nil }
+                else {
+                    current.append(character)
+                    tokenStarted = true
+                }
+                continue
+            }
+            if character == "'" || character == "\"" {
+                quote = character
+                tokenStarted = true
+            } else if character.isWhitespace {
+                if tokenStarted {
+                    result.append(current)
+                    current = ""
+                    tokenStarted = false
+                }
+            } else {
+                current.append(character)
+                tokenStarted = true
+            }
+        }
+
+        if escaped { throw ParseError(message: "The final backslash does not escape a character.") }
+        if quote != nil { throw ParseError(message: "A quoted argument is not closed.") }
+        if tokenStarted { result.append(current) }
+        return result
+    }
 }

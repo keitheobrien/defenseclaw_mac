@@ -1,3 +1,19 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import Foundation
 import Observation
 
@@ -51,6 +67,8 @@ struct CommandActivityEntry: Identifiable, Sendable {
 @MainActor
 final class CommandActivityStore {
     private static let maximumOutputCharacters = 300_000
+    private static let maximumEntries = 500
+    private static let omittedPrefix = "[Earlier output omitted]\n"
 
     @ObservationIgnored private let runner: CLIRunner
     var entries: [CommandActivityEntry] = []
@@ -68,6 +86,7 @@ final class CommandActivityStore {
         arguments: [String],
         standardInput: String? = nil,
         environment: [String: String] = [:],
+        mutation: Bool = true,
         category: String = "other",
         origin: String,
         successEffects: [String] = [],
@@ -99,15 +118,20 @@ final class CommandActivityStore {
             at: 0
         )
         selectedID = id
+        while entries.count > Self.maximumEntries,
+              let removable = entries.lastIndex(where: { $0.status != .running }) {
+            entries.remove(at: removable)
+        }
 
         let result = await runner.run(
             binary: binary,
             arguments: arguments,
             standardInput: standardInput,
             environment: environment,
+            mutation: mutation,
             runID: id
         ) { [weak self] line in
-            Task { @MainActor in self?.append(line: line, to: id) }
+            await self?.append(line: line, to: id)
         }
 
         guard let index = entries.firstIndex(where: { $0.id == id }) else { return result }
@@ -159,7 +183,8 @@ final class CommandActivityStore {
         guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
         entries[index].output += line + "\n"
         if entries[index].output.count > Self.maximumOutputCharacters {
-            entries[index].output = "[Earlier output omitted]\n" + entries[index].output.suffix(Self.maximumOutputCharacters)
+            let available = Self.maximumOutputCharacters - Self.omittedPrefix.count
+            entries[index].output = Self.omittedPrefix + entries[index].output.suffix(max(available, 0))
         }
     }
 
@@ -169,9 +194,7 @@ final class CommandActivityStore {
         maskedEnvironmentKeys: [String] = []
     ) -> String {
         let environment = maskedEnvironmentKeys.map { "\($0)=••••••" }
-        return (environment + [binary] + arguments).map { value in
-            value.contains(where: { $0.isWhitespace }) ? "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'" : value
-        }.joined(separator: " ")
+        return (environment + [binary] + arguments).map(ShellQuoting.quote).joined(separator: " ")
     }
 
     private static func inferredEffects(binary: String, arguments: [String], category: String) -> [String] {

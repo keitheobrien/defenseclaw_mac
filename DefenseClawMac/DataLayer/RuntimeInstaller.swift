@@ -1,6 +1,22 @@
-// Bundled-runtime installer. scripts/build_unified_dmg.sh embeds the
-// DefenseClaw release (Developer-ID re-signed gateway + wheel + manifest) in
-// Contents/Resources/RuntimePayload; this is the native port of
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+// Bundled-runtime installer. scripts/build-macos-app-release.sh embeds the
+// DefenseClaw release (Developer-ID or ad-hoc signed gateway + wheel +
+// manifest) in Contents/Resources/RuntimePayload; this is the native port of
 // scripts/install.sh's darwin flow that lays it down — no remote script is
 // ever executed. Every mutating step runs through the shared activity store
 // so its exact argv, live output, and exit status appear in the Activity
@@ -49,10 +65,15 @@ struct RuntimePayload: Sendable {
     var wheelSHA256: String
     /// Optional dependency overrides — upstream pyproject's [tool.uv]
     /// override-dependencies (CVE floors + the textual>=8.2.7 pin the
-    /// wheel's own scanner constraint would defeat). Applied with
-    /// `uv pip install --overrides` to reproduce upstream's resolution.
+    /// wheel's own scanner constraint would defeat). Retained as provenance
+    /// for the build-generated dependency lock; never resolved again on-device.
     var overridesURL: URL?
     var overridesSHA256: String?
+    /// Build-time resolution output for the target macOS/Python platform.
+    /// Every dependency is version-pinned and includes accepted SHA-256
+    /// distribution hashes; the root wheel remains separately authenticated.
+    var dependencyLockURL: URL
+    var dependencyLockSHA256: String
 
     /// Loaded once per launch — the bundle is immutable while running.
     static let bundled: RuntimePayload? = load()
@@ -70,6 +91,10 @@ struct RuntimePayload: Sendable {
               let wheel = root["wheel"] as? [String: Any],
               let wheelFile = wheel["file"] as? String,
               let wheelSHA = wheel["sha256"] as? String,
+              let dependencyLock = root["dependency_lock"] as? [String: Any],
+              let dependencyLockFile = dependencyLock["file"] as? String,
+              let dependencyLockSHA = dependencyLock["sha256"] as? String,
+              dependencyLockFile == "runtime-requirements.lock",
               wheelFile == "defenseclaw-\(version)-2-py3-none-any.dcwheel"
         else { return nil }
         let overrides = root["overrides"] as? [String: Any]
@@ -83,7 +108,9 @@ struct RuntimePayload: Sendable {
             wheelURL: payloadDir.appendingPathComponent(wheelFile),
             wheelSHA256: wheelSHA,
             overridesURL: overridesFile.map(payloadDir.appendingPathComponent),
-            overridesSHA256: overrides?["sha256"] as? String
+            overridesSHA256: overrides?["sha256"] as? String,
+            dependencyLockURL: payloadDir.appendingPathComponent(dependencyLockFile),
+            dependencyLockSHA256: dependencyLockSHA
         )
     }
 
@@ -107,10 +134,19 @@ struct RuntimePayload: Sendable {
         guard Self.protectedPayloadSHA256(of: wheelURL) != nil else {
             return "Bundled wheel is not a valid protected release artifact."
         }
-        if let overridesURL, let overridesSHA256 {
+        if let overridesURL {
+            guard let overridesSHA256 else {
+                return "Bundled dependency overrides are missing a manifest checksum."
+            }
             guard let actual = Self.sha256(of: overridesURL), actual == overridesSHA256 else {
                 return "Bundled dependency overrides do not match their manifest checksum."
             }
+        }
+        guard let lockActual = Self.sha256(of: dependencyLockURL) else {
+            return "Bundled runtime dependency lock is missing or unreadable."
+        }
+        guard lockActual == dependencyLockSHA256 else {
+            return "Bundled runtime dependency lock does not match its manifest checksum."
         }
         return nil
     }
@@ -140,7 +176,6 @@ struct RuntimePayload: Sendable {
         defer { try? handle.close() }
         guard (try? handle.read(upToCount: protectedArtifactMagic.count))
                 == protectedArtifactMagic else { return nil }
-
         var hasher = SHA256()
         var sawPayload = false
         var encodedBytesRead = Int64(protectedArtifactMagic.count)
@@ -158,7 +193,6 @@ struct RuntimePayload: Sendable {
         guard sawPayload else { return nil }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
-
     /// Decode a protected release artifact into a private installer input.
     /// The encoded checksum is revalidated while streaming so a development
     /// build cannot swap the artifact between the initial integrity check and
@@ -247,21 +281,27 @@ enum RuntimeInstallState: Equatable {
     var isRunning: Bool { if case .running = self { true } else { false } }
 }
 
-// MARK: - Install / repair
+// MARK: - Fresh install
 
 extension AppState {
     private static let installerOrigin = "Runtime Installer"
 
-    /// Lays the bundled runtime down following scripts/install.sh's darwin
+    /// Lays the bundled runtime down following scripts/install.sh's fresh-install
     /// flow: uv → Python 3.12 → venv → wheel → gateway binary → CLI symlink →
-    /// verify → gateway restart when one was running. Never touches
-    /// config.yaml, .env, or audit.db, so the same call serves first install,
-    /// upgrade-from-older, and repair. The venv is built in a staging path
-    /// and swapped in only after the wheel install succeeds, so a failure
-    /// (the dependency download needs PyPI) leaves an existing runtime
-    /// working. Configuration happens afterwards through `defenseclaw init`.
+    /// verify. Existing and partial installations must use the release-owned
+    /// upgrade resolver so schema policy, bridge selection, rollback custody,
+    /// migrations, and health checks cannot be bypassed by the app payload.
+    /// The venv is built in a staging path and activated only after the wheel
+    /// install succeeds. Configuration happens afterwards through
+    /// `defenseclaw init`.
     func installBundledRuntime() async {
         guard !runtimeInstallState.isRunning else { return }
+        guard installationMutationsAllowed else {
+            runtimeInstallState = .failed(
+                installationReadOnlyReason ?? "This installation is read only."
+            )
+            return
+        }
         // `defenseclaw upgrade` mutates the same venv and gateway binary —
         // never run both at once.
         switch runtimeUpgradeState {
@@ -273,6 +313,10 @@ extension AppState {
         }
         defer { runtimeInstallRunID = nil }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let dataHome = installationContext.homeRoot.path
+        let venvDir = installationContext.venvURL.path
+        let binDir = home + "/.local/bin"
+        let activationJournal = dataHome + "/.fresh-install-activation-journal.json"
 
         guard let payload = RuntimePayload.bundled else {
             runtimeInstallState = .failed("This build has no bundled runtime payload.")
@@ -283,37 +327,84 @@ extension AppState {
             return
         }
 
+        // A prior process may have died between the three canonical no-replace
+        // moves. Recover the exact, inode-bound plan before the ordinary
+        // existing-install gate sees that partial activation.
+        do {
+            let preserved = try RuntimeInstallFilesystem.recoverFreshInstallActivation(
+                journalPath: activationJournal,
+                dataHome: dataHome,
+                binDir: binDir,
+                venvDir: venvDir
+            )
+            guard preserved.isEmpty else {
+                runtimeInstallState = .failed(
+                    "Recovered an interrupted fresh install while preserving concurrent state at \(preserved.joined(separator: ", ")). Resolve those paths before retrying."
+                )
+                return
+            }
+        } catch {
+            runtimeInstallState = .failed(
+                "An interrupted fresh install could not be recovered safely: \(error.localizedDescription). No unverified path was removed."
+            )
+            return
+        }
+
+        // This surface is deliberately fresh-install-only. Check every
+        // standard managed target lexically (lstat, so dangling symlinks
+        // count) to catch incomplete installs that cannot answer `--version`.
+        // The read-only binary probes also catch Homebrew, pipx, custom-path,
+        // and configured installs outside the standard per-user layout. Keep
+        // this gate before locating/bootstraping uv, dependency downloads,
+        // process stops, or any filesystem mutation.
+        let dataHomeExistedBeforeInstall = RuntimeInstallFilesystem.lexicalPathExists(dataHome)
+        if let marker = RuntimeInstallFilesystem.existingManagedRuntimeMarker(home: home) {
+            runtimeInstallState = .failed(Self.existingRuntimeRefusal(marker: marker, payload: payload))
+            return
+        }
+        if let marker = RuntimeInstallFilesystem.existingSelectedRuntimeMarker(
+            dataHome: dataHome,
+            venvDir: venvDir
+        ) {
+            runtimeInstallState = .failed(Self.existingRuntimeRefusal(marker: marker, payload: payload))
+            return
+        }
+        if let installedCLI = await cli.locateBinary() {
+            runtimeInstallState = .failed(
+                Self.existingRuntimeRefusal(marker: installedCLI, payload: payload)
+            )
+            return
+        }
+        if let installedGateway = await cli.locateBinary(named: "defenseclaw-gateway") {
+            runtimeInstallState = .failed(
+                Self.existingRuntimeRefusal(marker: installedGateway, payload: payload)
+            )
+            return
+        }
+
         runtimeInstallState = .running("Verifying bundled payload")
         if let problem = payload.verifyIntegrity() {
             runtimeInstallState = .failed(problem)
             return
         }
 
-        // A ~/.local/bin/defenseclaw symlink resolving outside ~/.defenseclaw
-        // is a source-checkout (dev) install — never clobber it.
-        if let devTarget = Self.devInstallTarget(home: home) {
+        let binDirectoryIdentity: RuntimeInstallFilesystem.PathIdentity
+        do {
+            let reservations = try RuntimeInstallFilesystem.ensureRealDirectoryTree(
+                root: home,
+                components: [".local", "bin"]
+            )
+            guard let reservation = reservations.last else {
+                throw RuntimeInstallFilesystem.ActivationError.parentChanged(binDir)
+            }
+            binDirectoryIdentity = reservation.identity
+        } catch {
             runtimeInstallState = .failed(
-                "~/.local/bin/defenseclaw points at \(devTarget) — this looks like a development install. Refusing to overwrite it; remove the symlink first if you want the bundled runtime."
+                "Fresh runtime installation refused an unsafe ~/.local/bin ancestor: \(error.localizedDescription). No existing state was changed."
             )
             return
         }
-
-        // Newer-installed guard: the payload only moves versions forward.
-        // Only a healthy CLI's answer counts — a broken venv prints a
-        // traceback whose paths contain "3.12", which must not be mistaken
-        // for a version and block its own repair.
-        let venvCLI = home + "/.defenseclaw/.venv/bin/defenseclaw"
-        if FileManager.default.isExecutableFile(atPath: venvCLI) {
-            let probe = await cli.run(binary: venvCLI, arguments: ["--version"])
-            if probe.succeeded,
-               let installed = UpdateChecker.parseVersion(probe.output),
-               UpdateChecker.isNewer(installed, than: payload.version) {
-                runtimeInstallState = .failed(
-                    "Installed runtime \(installed) is newer than the bundled \(payload.version). Use Upgrade Runtime (defenseclaw upgrade) or update the Mac app for a newer payload."
-                )
-                return
-            }
-        }
+        let venvCLI = installationContext.runtimeCLIURL.path
 
         // ── uv ────────────────────────────────────────────────────────────
         runtimeInstallState = .running("Locating uv")
@@ -322,7 +413,7 @@ extension AppState {
             uv = home + "/.cargo/bin/uv"
         }
         if uv == nil {
-            uv = await bootstrapUV(home: home)
+            uv = await bootstrapUV(home: home, binDirectoryIdentity: binDirectoryIdentity)
         }
         guard let uv else { return } // bootstrapUV already set the failure state
 
@@ -330,7 +421,7 @@ extension AppState {
         runtimeInstallState = .running("Ensuring Python 3.12")
         // Expected to miss on Macs without 3.12 (install.sh probes silently
         // too) — a miss is not a failure, so it stays out of Activity.
-        let find = await cli.run(binary: uv, arguments: ["python", "find", "3.12"])
+        let find = await cli.run(binary: uv, arguments: ["python", "find", "3.12"], mutation: false)
         if !find.succeeded {
             runtimeInstallState = .running("Downloading Python 3.12 (network)")
             let install = await installerStep(
@@ -348,8 +439,41 @@ extension AppState {
         // ── venv + wheel, staged (mirrors install.sh install_python_cli,
         // but never destroys a working venv before the network-dependent
         // dependency resolution has succeeded) ────────────────────────────
-        let venvDir = home + "/.defenseclaw/.venv"
-        let stagingDir = venvDir + ".staging"
+        let stagingDir = venvDir + ".staging-" + UUID().uuidString
+        let dataHomeIdentity: RuntimeInstallFilesystem.PathIdentity
+        do {
+            if dataHome == home + "/.defenseclaw" {
+                let reservations = try RuntimeInstallFilesystem.ensureRealDirectoryTree(
+                    root: home,
+                    components: [".defenseclaw"]
+                )
+                guard let reservation = reservations.last else {
+                    throw RuntimeInstallFilesystem.ActivationError.parentChanged(dataHome)
+                }
+                dataHomeIdentity = reservation.identity
+            } else {
+                dataHomeIdentity = try RuntimeInstallFilesystem.ensureRealDirectoryPath(dataHome)
+            }
+            let venvParent = URL(fileURLWithPath: venvDir)
+                .deletingLastPathComponent().path
+            if venvParent != dataHome {
+                _ = try RuntimeInstallFilesystem.ensureRealDirectoryPath(venvParent)
+            }
+        } catch {
+            runtimeInstallState = .failed(
+                "Fresh runtime installation refused an unsafe selected home or virtual-environment ancestor: \(error.localizedDescription). No existing state was changed."
+            )
+            return
+        }
+        let stagingIdentity: RuntimeInstallFilesystem.PathIdentity
+        do {
+            stagingIdentity = try RuntimeInstallFilesystem.createOwnedDirectory(stagingDir)
+        } catch {
+            runtimeInstallState = .failed(
+                "Could not reserve installer-owned runtime staging: \(error.localizedDescription)"
+            )
+            return
+        }
 
         runtimeInstallState = .running("Creating Python environment")
         let venv = await installerStep(
@@ -361,106 +485,341 @@ extension AppState {
             successEffects: ["Virtual environment staged"]
         )
         guard venv.succeeded else {
+            RuntimeInstallFilesystem.cleanupFailedFreshInstall(
+                stagingDir: stagingDir,
+                stagingIdentity: stagingIdentity,
+                dataHome: dataHome,
+                removeDataHomeIfEmpty: !dataHomeExistedBeforeInstall
+            )
             fail(venv, step: "Virtual environment creation")
+            return
+        }
+        guard RuntimeInstallFilesystem.pathIdentity(stagingDir) == stagingIdentity else {
+            runtimeInstallState = .failed(
+                "Runtime staging was replaced during environment creation; concurrent state was preserved and nothing was activated."
+            )
             return
         }
 
         runtimeInstallState = .running("Materializing authenticated runtime wheel")
-        let wheelStage = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "DefenseClaw-runtime-\(UUID().uuidString)",
-            isDirectory: true
-        )
-        let decodedWheel = wheelStage.appendingPathComponent(
-            "defenseclaw-\(payload.version)-py3-none-any.whl"
-        )
+        let materializedWheel = dataHome + "/defenseclaw-\(payload.version)-py3-none-any.whl"
+        let materializedDependencyLock = dataHome + "/runtime-requirements-\(payload.version).lock"
+        var materializedWheelIdentity: RuntimeInstallFilesystem.PathIdentity?
+        var materializedDependencyLockIdentity: RuntimeInstallFilesystem.PathIdentity?
         do {
-            try FileManager.default.createDirectory(
-                at: wheelStage,
-                withIntermediateDirectories: false,
-                attributes: [.posixPermissions: 0o700]
+            materializedWheelIdentity = try RuntimeInstallFilesystem.installRegularFileNoReplace(
+                source: payload.wheelURL.path,
+                destination: materializedWheel,
+                expectedParentIdentity: dataHomeIdentity,
+                mode: 0o600,
+                stripPrefix: RuntimePayload.protectedArtifactMagic,
+                decodeXORByte: RuntimePayload.protectedArtifactXORByte,
+                expectedSourceSHA256: payload.wheelSHA256
             )
-            try RuntimePayload.decodeProtectedArtifact(
-                from: payload.wheelURL,
-                to: decodedWheel,
-                expectedEncodedSHA256: payload.wheelSHA256
+            materializedDependencyLockIdentity = try RuntimeInstallFilesystem.installRegularFileNoReplace(
+                source: payload.dependencyLockURL.path,
+                destination: materializedDependencyLock,
+                expectedParentIdentity: dataHomeIdentity,
+                mode: 0o600,
+                expectedSourceSHA256: payload.dependencyLockSHA256
             )
         } catch {
-            try? FileManager.default.removeItem(at: wheelStage)
-            try? FileManager.default.removeItem(atPath: stagingDir)
+            if let materializedWheelIdentity {
+                _ = RuntimeInstallFilesystem.cleanupOwnedPath(
+                    materializedWheel,
+                    identity: materializedWheelIdentity
+                )
+            }
+            RuntimeInstallFilesystem.cleanupFailedFreshInstall(
+                stagingDir: stagingDir,
+                stagingIdentity: stagingIdentity,
+                dataHome: dataHome,
+                removeDataHomeIfEmpty: !dataHomeExistedBeforeInstall
+            )
             runtimeInstallState = .failed(
-                "Could not materialize the authenticated runtime wheel: \(error.localizedDescription)"
+                "Could not materialize the authenticated runtime install inputs privately: \(error.localizedDescription)"
             )
             return
         }
-        defer { try? FileManager.default.removeItem(at: wheelStage) }
 
-        runtimeInstallState = .running("Installing DefenseClaw CLI \(payload.version) (network: PyPI dependencies)")
-        var wheelArguments = ["pip", "install", "--python", stagingDir + "/bin/python"]
-        if let overridesURL = payload.overridesURL {
-            // Upstream's own override-dependencies: without them a fresh
-            // resolve honors the scanner's textual<8 cap and the TUI
-            // crashes, and the CVE-driven floors are lost.
-            wheelArguments += ["--overrides", overridesURL.path]
-        }
-        wheelArguments.append(decodedWheel.path)
-        let wheel = await installerStep(
-            "Install DefenseClaw CLI \(payload.version) (bundled wheel + PyPI dependencies)",
+        runtimeInstallState = .running("Installing hash-locked Python dependencies (network: PyPI)")
+        let dependencies = await installerStep(
+            "Install DefenseClaw CLI \(payload.version) hash-locked dependencies",
             binary: uv,
-            arguments: wheelArguments,
-            successEffects: ["DefenseClaw CLI \(payload.version) installed"]
+            arguments: [
+                "pip", "install", "--python", stagingDir + "/bin/python",
+                "--require-hashes",
+                "--requirements", materializedDependencyLock,
+            ],
+            successEffects: ["Authenticated Python dependency set installed"]
         )
-        do {
-            try FileManager.default.removeItem(at: wheelStage)
-        } catch {
-            try? FileManager.default.removeItem(atPath: stagingDir)
+        var wheel = dependencies
+        if dependencies.succeeded {
+            runtimeInstallState = .running("Installing authenticated DefenseClaw CLI \(payload.version)")
+            wheel = await installerStep(
+                "Install authenticated DefenseClaw CLI \(payload.version) wheel",
+                binary: uv,
+                arguments: [
+                    "pip", "install", "--python", stagingDir + "/bin/python",
+                    "--no-deps", materializedWheel,
+                ],
+                successEffects: ["DefenseClaw CLI \(payload.version) installed"]
+            )
+        }
+        let wheelCleanupSucceeded = materializedWheelIdentity.map {
+            RuntimeInstallFilesystem.cleanupOwnedPath(
+                materializedWheel,
+                identity: $0
+            )
+        } ?? false
+        let dependencyLockCleanupSucceeded = materializedDependencyLockIdentity.map {
+            RuntimeInstallFilesystem.cleanupOwnedPath(
+                materializedDependencyLock,
+                identity: $0
+            )
+        } ?? false
+        guard wheelCleanupSucceeded, dependencyLockCleanupSucceeded else {
+            RuntimeInstallFilesystem.cleanupFailedFreshInstall(
+                stagingDir: stagingDir,
+                stagingIdentity: stagingIdentity,
+                dataHome: dataHome,
+                removeDataHomeIfEmpty: !dataHomeExistedBeforeInstall
+            )
             runtimeInstallState = .failed(
-                "Could not remove the private decoded runtime wheel; the staged installation was not activated."
+                "Private runtime input cleanup could not prove ownership; installation was not activated."
             )
             return
         }
-        guard wheel.succeeded else {
-            try? FileManager.default.removeItem(atPath: stagingDir)
-            if wheel.cancelled {
-                runtimeInstallState = .failed("Installation cancelled. An existing runtime was left untouched.")
+        guard dependencies.succeeded else {
+            RuntimeInstallFilesystem.cleanupFailedFreshInstall(
+                stagingDir: stagingDir,
+                stagingIdentity: stagingIdentity,
+                dataHome: dataHome,
+                removeDataHomeIfEmpty: !dataHomeExistedBeforeInstall
+            )
+            if dependencies.cancelled {
+                runtimeInstallState = .failed("Installation cancelled. No pre-existing runtime was changed; retry when ready.")
             } else {
                 runtimeInstallState = .failed(
-                    "CLI wheel install failed (exit \(wheel.exitCode)). This step downloads Python dependencies from pypi.org / files.pythonhosted.org — check network or proxy access. An existing runtime was left untouched; see Activity for output."
+                    "Hash-locked dependency install failed (exit \(dependencies.exitCode)). Only distributions matching the signed runtime lock are accepted from pypi.org / files.pythonhosted.org. Check network or proxy access; no pre-existing runtime was changed. See Activity for output."
                 )
             }
             return
         }
-
-        runtimeInstallState = .running("Activating new environment")
-        for (title, binary, arguments) in [
-            ("Remove previous runtime environment", "/bin/rm", ["-rf", venvDir]),
-            ("Activate new runtime environment", "/bin/mv", [stagingDir, venvDir]),
-        ] {
-            let result = await installerStep(title, binary: binary, arguments: arguments)
-            guard result.succeeded else {
-                fail(result, step: title)
-                return
+        guard wheel.succeeded else {
+            RuntimeInstallFilesystem.cleanupFailedFreshInstall(
+                stagingDir: stagingDir,
+                stagingIdentity: stagingIdentity,
+                dataHome: dataHome,
+                removeDataHomeIfEmpty: !dataHomeExistedBeforeInstall
+            )
+            if wheel.cancelled {
+                runtimeInstallState = .failed("Installation cancelled. No pre-existing runtime was changed; retry when ready.")
+            } else {
+                runtimeInstallState = .failed(
+                    "Authenticated CLI wheel install failed (exit \(wheel.exitCode)). Dependency resolution was not retried or widened. No pre-existing runtime was changed; see Activity for output."
+                )
             }
+            return
+        }
+        let stagedVerify = await installerStep(
+            "Verify staged DefenseClaw CLI",
+            binary: stagingDir + "/bin/defenseclaw",
+            arguments: ["--version"],
+            category: "info"
+        )
+        guard stagedVerify.succeeded,
+              UpdateChecker.parseVersion(stagedVerify.output) == payload.version
+        else {
+            RuntimeInstallFilesystem.cleanupFailedFreshInstall(
+                stagingDir: stagingDir,
+                stagingIdentity: stagingIdentity,
+                dataHome: dataHome,
+                removeDataHomeIfEmpty: !dataHomeExistedBeforeInstall
+            )
+            runtimeInstallState = .failed(
+                "Staged CLI did not report the expected version \(payload.version). No pre-existing runtime was changed."
+            )
+            return
         }
 
-        // ── Gateway binary (mirrors install_gateway, minus the ad-hoc
-        // codesign: the bundled gateway already carries a Developer ID
-        // signature that an ad-hoc re-sign would destroy) ──────────────────
-        runtimeInstallState = .running("Installing gateway \(payload.version)")
-        let binDir = home + "/.local/bin"
+        // ── Gateway binary + CLI link, staged ─────────────────────────────
+        // The native no-replace copy re-authenticates the exact opened source
+        // descriptor against the bundle manifest. The release build already
+        // signed those exact bytes with the fixed gateway identifier; never
+        // rewrite the staging inode with the install host's codesign version.
+        // All three canonical targets remain absent until every component is
+        // staged and ready for no-replace activation.
+        runtimeInstallState = .running("Staging gateway \(payload.version)")
         let gatewayDest = binDir + "/defenseclaw-gateway"
-        for (title, binary, arguments) in [
-            ("Prepare ~/.local/bin", "/bin/mkdir", ["-p", binDir]),
-            // Unlink first so a running gateway keeps executing its old inode.
-            ("Remove previous gateway binary", "/bin/rm", ["-f", gatewayDest]),
-            ("Install gateway \(payload.version)", "/bin/cp", [payload.gatewayURL.path, gatewayDest]),
-            ("Mark gateway executable", "/bin/chmod", ["755", gatewayDest]),
-            ("Link defenseclaw CLI", "/bin/ln", ["-sfh", venvDir + "/bin/defenseclaw", binDir + "/defenseclaw"]),
-        ] {
-            let result = await installerStep(title, binary: binary, arguments: arguments)
-            guard result.succeeded else {
-                fail(result, step: title)
-                return
+        let cliDest = binDir + "/defenseclaw"
+        let gatewayStage = gatewayDest + ".install-" + UUID().uuidString
+        let cliStage = cliDest + ".install-" + UUID().uuidString
+        var gatewayStageIdentity: RuntimeInstallFilesystem.PathIdentity?
+        do {
+            gatewayStageIdentity = try RuntimeInstallFilesystem.installRegularFileNoReplace(
+                source: payload.gatewayURL.path,
+                destination: gatewayStage,
+                expectedParentIdentity: binDirectoryIdentity,
+                mode: 0o755,
+                expectedSourceSHA256: payload.gatewaySHA256
+            )
+        } catch {
+            RuntimeInstallFilesystem.cleanupFailedFreshInstall(
+                stagingDir: stagingDir,
+                stagingIdentity: stagingIdentity,
+                dataHome: dataHome,
+                removeDataHomeIfEmpty: !dataHomeExistedBeforeInstall
+            )
+            runtimeInstallState = .failed(
+                "Could not stage the authenticated gateway bytes: \(error.localizedDescription)"
+            )
+            return
+        }
+        var cliStageIdentity: RuntimeInstallFilesystem.PathIdentity?
+        func cleanupKnownStages() {
+            if let gatewayStageIdentity {
+                RuntimeInstallFilesystem.cleanupOwnedPath(
+                    gatewayStage,
+                    identity: gatewayStageIdentity
+                )
             }
+            if let cliStageIdentity {
+                RuntimeInstallFilesystem.cleanupOwnedPath(
+                    cliStage,
+                    identity: cliStageIdentity
+                )
+            }
+            RuntimeInstallFilesystem.cleanupFailedFreshInstall(
+                stagingDir: stagingDir,
+                stagingIdentity: stagingIdentity,
+                dataHome: dataHome,
+                removeDataHomeIfEmpty: !dataHomeExistedBeforeInstall
+            )
+        }
+        guard let attestedGatewayIdentity = gatewayStageIdentity else {
+            cleanupKnownStages()
+            runtimeInstallState = .failed("Release-attested gateway staging identity is unavailable.")
+            return
+        }
+        let signatureVerify = await installerStep(
+            "Verify release-attested gateway signature and identifier",
+            binary: "/usr/bin/codesign",
+            arguments: [
+                "--verify", "--strict", "-R",
+                #"=identifier "com.cisco.defenseclaw.gateway""#,
+                "--verbose=4", gatewayStage,
+            ],
+            category: "info"
+        )
+        guard signatureVerify.succeeded,
+              RuntimeInstallFilesystem.pathIdentity(binDir) == binDirectoryIdentity,
+              RuntimeInstallFilesystem.pathIdentity(gatewayStage) == attestedGatewayIdentity,
+              RuntimePayload.sha256(of: URL(fileURLWithPath: gatewayStage))
+                == payload.gatewaySHA256
+        else {
+            cleanupKnownStages()
+            runtimeInstallState = .failed(
+                "Release-attested gateway signature requirement, parent, or hash verification failed; nothing was activated."
+            )
+            return
+        }
+        let stagedGatewayVersion = await installerStep(
+            "Verify staged DefenseClaw gateway",
+            binary: gatewayStage,
+            arguments: ["--version"],
+            category: "info"
+        )
+        guard stagedGatewayVersion.succeeded,
+              UpdateChecker.parseVersion(stagedGatewayVersion.output) == payload.version,
+              RuntimeInstallFilesystem.pathIdentity(binDir) == binDirectoryIdentity,
+              RuntimeInstallFilesystem.pathIdentity(gatewayStage) == attestedGatewayIdentity,
+              RuntimePayload.sha256(of: URL(fileURLWithPath: gatewayStage))
+                == payload.gatewaySHA256
+        else {
+            cleanupKnownStages()
+            runtimeInstallState = .failed(
+                "Staged gateway did not report expected version \(payload.version), or its parent/inode changed; nothing was activated."
+            )
+            return
+        }
+
+        runtimeInstallState = .running("Staging DefenseClaw CLI link")
+        do {
+            cliStageIdentity = try RuntimeInstallFilesystem.createOwnedSymbolicLink(
+                cliStage,
+                target: venvDir + "/bin/defenseclaw",
+                expectedParentIdentity: binDirectoryIdentity
+            )
+        } catch {
+            cleanupKnownStages()
+            runtimeInstallState = .failed(
+                "Staged CLI link creation was refused: \(error.localizedDescription). Concurrent state was preserved and nothing was activated."
+            )
+            return
+        }
+        guard RuntimeInstallFilesystem.pathIdentity(binDir) == binDirectoryIdentity,
+              RuntimeInstallFilesystem.pathIdentity(gatewayStage) == attestedGatewayIdentity,
+              RuntimePayload.sha256(of: URL(fileURLWithPath: gatewayStage))
+                == payload.gatewaySHA256
+        else {
+            cleanupKnownStages()
+            runtimeInstallState = .failed(
+                "Runtime staging changed while creating the CLI link; concurrent state was preserved and nothing was activated."
+            )
+            return
+        }
+
+        guard let gatewayStageIdentity, let cliStageIdentity,
+              let venvStageIdentity = RuntimeInstallFilesystem.pathIdentity(stagingDir),
+              venvStageIdentity == stagingIdentity
+        else {
+            // Retire every stage whose inode this attempt captured. The final
+            // venv identity check can fail after gateway and CLI staging have
+            // succeeded; cleaning only the venv would strand those two known
+            // installer-owned entries and make a retry fail closed.
+            cleanupKnownStages()
+            runtimeInstallState = .failed("Runtime staging identity could not be verified; nothing was activated.")
+            return
+        }
+
+        runtimeInstallState = .running("Activating complete runtime")
+        let activationTargets: [RuntimeInstallFilesystem.ActivationTarget]
+        let activation: RuntimeInstallFilesystem.ActivationReceipt
+        do {
+            activationTargets = try RuntimeInstallFilesystem.prepareActivationTargets([
+                (staged: stagingDir, destination: venvDir),
+                (staged: gatewayStage, destination: gatewayDest),
+                (staged: cliStage, destination: cliDest),
+            ])
+            // Ensure preparation captured exactly the inodes created by this
+            // attempt before entering the no-replace transaction.
+            guard activationTargets.map(\.stagedIdentity) == [
+                venvStageIdentity, gatewayStageIdentity, cliStageIdentity,
+            ] else {
+                throw RuntimeInstallFilesystem.ActivationError.missingOrChangedStage(stagingDir)
+            }
+            activation = try RuntimeInstallFilesystem.activateNoReplace(
+                activationTargets,
+                journalPath: activationJournal
+            )
+        } catch {
+            _ = RuntimeInstallFilesystem.cleanupOwnedPath(
+                stagingDir,
+                identity: venvStageIdentity
+            )
+            _ = RuntimeInstallFilesystem.cleanupOwnedPath(
+                gatewayStage,
+                identity: gatewayStageIdentity
+            )
+            _ = RuntimeInstallFilesystem.cleanupOwnedPath(
+                cliStage,
+                identity: cliStageIdentity
+            )
+            runtimeInstallState = .failed(
+                "Fresh runtime activation was refused: \(error.localizedDescription). Retry after resolving the named concurrent or existing path."
+            )
+            return
         }
 
         // ── Verify ────────────────────────────────────────────────────────
@@ -474,31 +833,55 @@ extension AppState {
             suggestedNextAction: "Run Initialize DefenseClaw to create the configuration."
         )
         guard verify.succeeded, let reported = UpdateChecker.parseVersion(verify.output) else {
-            fail(verify, step: "Installed CLI version check")
+            let preserved = RuntimeInstallFilesystem.rollbackActivation(activation)
+            runtimeInstallState = .failed(
+                preserved.isEmpty
+                    ? "Installed CLI version check failed (exit \(verify.exitCode)); this attempt was removed and can be retried."
+                    : "Installed CLI version check failed and concurrent state was preserved at \(preserved.joined(separator: ", "))."
+            )
             return
         }
         guard reported == payload.version else {
-            runtimeInstallState = .failed("Installed CLI reports \(reported), expected \(payload.version).")
+            let preserved = RuntimeInstallFilesystem.rollbackActivation(activation)
+            runtimeInstallState = .failed(
+                preserved.isEmpty
+                    ? "Installed CLI reports \(reported), expected \(payload.version); this attempt was removed and can be retried."
+                    : "Installed CLI reports \(reported), expected \(payload.version), and concurrent state was preserved at \(preserved.joined(separator: ", "))."
+            )
+            return
+        }
+        let gatewayVerify = await installerStep(
+            "Verify DefenseClaw gateway",
+            binary: gatewayDest,
+            arguments: ["--version"],
+            category: "info"
+        )
+        guard gatewayVerify.succeeded,
+              UpdateChecker.parseVersion(gatewayVerify.output) == payload.version
+        else {
+            let preserved = RuntimeInstallFilesystem.rollbackActivation(activation)
+            runtimeInstallState = .failed(
+                preserved.isEmpty
+                    ? "Installed gateway did not report expected version \(payload.version); this attempt was removed and can be retried."
+                    : "Installed gateway version check failed and concurrent state was preserved at \(preserved.joined(separator: ", "))."
+            )
             return
         }
 
-        // ── Restart a live gateway so it runs the new binary (upgrade-in-
-        // place parity with `defenseclaw upgrade`); fresh installs have no
-        // gateway yet and skip this. ──────────────────────────────────────
-        if Self.liveGatewayPID(home: home) != nil {
-            runtimeInstallState = .running("Restarting gateway")
-            let restart = await installerStep(
-                "Restart gateway (\(payload.version))",
-                binary: gatewayDest,
-                arguments: ["restart"],
-                successEffects: ["Gateway restarted on \(payload.version)"]
+        do {
+            try RuntimeInstallFilesystem.commitActivation(activation)
+        } catch {
+            let preserved = RuntimeInstallFilesystem.rollbackActivation(activation)
+            runtimeInstallState = .failed(
+                preserved.isEmpty
+                    ? "Runtime health checks passed, but activation could not be committed durably; this attempt was removed and can be retried."
+                    : "Runtime health checks passed, but activation commit failed and concurrent state was preserved at \(preserved.joined(separator: ", "))."
             )
-            guard restart.succeeded else {
-                fail(restart, step: "Gateway restart")
-                return
-            }
+            return
         }
 
+        // No restart path belongs here: any pre-existing gateway was refused
+        // before mutation, while a true fresh install has no process to stop.
         runtimeInstallState = .succeeded
         await refreshInstalledRuntimeVersion()
         reloadConfig()
@@ -537,40 +920,86 @@ extension AppState {
     /// Fetch uv from astral-sh GitHub releases as a checksum-verified binary
     /// download — deliberately not `curl | sh` (install.sh's approach) per
     /// the no-remote-scripts policy.
-    private func bootstrapUV(home: String) async -> String? {
+    private func bootstrapUV(
+        home: String,
+        binDirectoryIdentity: RuntimeInstallFilesystem.PathIdentity
+    ) async -> String? {
         runtimeInstallState = .running("Downloading uv (network)")
+        let uvVersion = "0.11.28"
         let asset = "uv-aarch64-apple-darwin.tar.gz"
-        let base = "https://github.com/astral-sh/uv/releases/latest/download/"
-        let stage = FileManager.default.temporaryDirectory.appendingPathComponent("dc-uv-bootstrap")
-        try? FileManager.default.removeItem(at: stage)
-        try? FileManager.default.createDirectory(at: stage, withIntermediateDirectories: true)
-        let tarball = stage.appendingPathComponent(asset).path
-        let shaFile = stage.appendingPathComponent(asset + ".sha256").path
-
-        for (title, target, url) in [
-            ("Download uv (astral-sh, latest)", tarball, base + asset),
-            ("Download uv checksum", shaFile, base + asset + ".sha256"),
-        ] {
-            let fetch = await installerStep(
-                title,
-                binary: "/usr/bin/curl",
-                arguments: ["-fsSL", "--proto", "=https", "--tlsv1.2", "-o", target, url]
+        // Pinned from the immutable astral-sh/uv GitHub release. Updating uv
+        // requires reviewing that release and replacing both values together.
+        let expectedSHA256 = "33540eb7c883ab857eff79bd5ac2aa31fe27b595abecb4a9c003a2c998447232"
+        let base = "https://github.com/astral-sh/uv/releases/download/\(uvVersion)/"
+        let temporaryRoot = FileManager.default.temporaryDirectory
+        let stageName = "dc-uv-bootstrap-" + UUID().uuidString
+        let stage = temporaryRoot.appendingPathComponent(stageName)
+        let stageIdentity: RuntimeInstallFilesystem.PathIdentity
+        do {
+            let reservations = try RuntimeInstallFilesystem.ensureRealDirectoryTree(
+                root: temporaryRoot.path,
+                components: [stageName]
             )
-            guard fetch.succeeded else {
-                runtimeInstallState = fetch.cancelled
-                    ? .failed("Installation cancelled during: uv download.")
-                    : .failed("uv download failed (exit \(fetch.exitCode)). Install uv manually (brew install uv) and retry.")
+            guard let reservation = reservations.last else {
+                runtimeInstallState = .failed("Could not reserve private uv bootstrap staging.")
                 return nil
             }
+            stageIdentity = reservation.identity
+        } catch {
+            runtimeInstallState = .failed(
+                "Could not reserve private uv bootstrap staging: \(error.localizedDescription)"
+            )
+            return nil
+        }
+        defer {
+            _ = RuntimeInstallFilesystem.cleanupOwnedPath(
+                stage.path,
+                identity: stageIdentity
+            )
+        }
+        let tarball = stage.appendingPathComponent(asset).path
+
+        let fetch = await installerStep(
+            "Download pinned uv \(uvVersion) (astral-sh)",
+            binary: "/usr/bin/curl",
+            arguments: [
+                "-fsSL", "--proto", "=https", "--tlsv1.2",
+                "--connect-timeout", "15", "--max-time", "300",
+                "--retry", "3", "--retry-connrefused",
+                "-o", tarball, base + asset,
+            ]
+        )
+        guard fetch.succeeded else {
+            runtimeInstallState = fetch.cancelled
+                ? .failed("Installation cancelled during: uv download.")
+                : .failed("uv download failed (exit \(fetch.exitCode)). Install uv manually (brew install uv) and retry.")
+            return nil
         }
 
-        guard let shaLine = try? String(contentsOfFile: shaFile, encoding: .utf8),
-              let expected = shaLine.split(separator: " ").first.map(String.init),
-              expected.count == 64,
-              let actual = RuntimePayload.sha256(of: URL(fileURLWithPath: tarball)),
-              actual == expected
+        guard let actual = RuntimePayload.sha256(of: URL(fileURLWithPath: tarball)),
+              actual == expectedSHA256
         else {
             runtimeInstallState = .failed("uv download failed checksum verification — not installing it.")
+            return nil
+        }
+
+        let list = await installerStep(
+            "Inspect uv archive",
+            binary: "/usr/bin/tar",
+            arguments: ["-tzf", tarball],
+            category: "info"
+        )
+        let archiveRoot = "uv-aarch64-apple-darwin"
+        let entriesAreSafe = list.succeeded && !list.output.split(separator: "\n").isEmpty
+            && list.output.split(separator: "\n").allSatisfy { rawEntry in
+                let entry = rawEntry.trimmingCharacters(in: .whitespacesAndNewlines)
+                let components = entry.split(separator: "/", omittingEmptySubsequences: false)
+                return !entry.hasPrefix("/")
+                    && !components.contains("..")
+                    && (entry == archiveRoot || entry.hasPrefix(archiveRoot + "/"))
+            }
+        guard entriesAreSafe else {
+            runtimeInstallState = .failed("uv archive contains an unexpected or unsafe path — not extracting it.")
             return nil
         }
 
@@ -590,55 +1019,75 @@ extension AppState {
         }
 
         let destination = home + "/.local/bin/uv"
-        for (title, binary, arguments) in [
-            ("Prepare ~/.local/bin", "/bin/mkdir", ["-p", home + "/.local/bin"]),
-            ("Install uv", "/bin/cp", [unpackedUV, destination]),
-            ("Mark uv executable", "/bin/chmod", ["755", destination]),
-        ] {
-            let result = await installerStep(
-                title,
-                binary: binary,
-                arguments: arguments,
-                successEffects: title == "Mark uv executable" ? ["uv installed to ~/.local/bin"] : []
+        runtimeInstallState = .running("Activating pinned uv")
+        do {
+            _ = try RuntimeInstallFilesystem.installRegularFileNoReplace(
+                source: unpackedUV,
+                destination: destination,
+                expectedParentIdentity: binDirectoryIdentity,
+                mode: 0o755
             )
-            guard result.succeeded else {
-                fail(result, step: title)
-                return nil
-            }
+        } catch {
+            runtimeInstallState = .failed(
+                "uv activation refused an existing, concurrent, or redirected ~/.local/bin/uv: \(error.localizedDescription). The existing path was preserved."
+            )
+            return nil
         }
         return destination
     }
 
-    /// Absolute target of a ~/.local/bin/defenseclaw symlink that resolves to
-    /// an existing location outside ~/.defenseclaw — the marker of a dev
-    /// (source checkout) install. nil for release installs, broken links, or
-    /// no link at all.
-    private static func devInstallTarget(home: String) -> String? {
-        let link = home + "/.local/bin/defenseclaw"
-        guard let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: link) else {
-            return nil
+    private static func existingRuntimeRefusal(marker: String, payload: RuntimePayload) -> String {
+        guard let resolverCommand = authenticatedRuntimeUpgradeResolverCommand(
+            releaseTag: payload.tag
+        ) else {
+            return """
+            Bundled runtime installation is fresh-install-only. An existing or partial DefenseClaw runtime was detected at \(marker).
+
+            No installed files or services were changed. The bundled release identifier is not canonical, so no copy/paste upgrade command was produced. Use the authenticated resolver instructions at https://github.com/cisco-ai-defense/defenseclaw/blob/main/docs/CLI.md#upgrade.
+            """
         }
-        let resolved = destination.hasPrefix("/")
-            ? destination
-            : home + "/.local/bin/" + destination
-        let standardized = (resolved as NSString).standardizingPath
-        guard FileManager.default.fileExists(atPath: standardized) else { return nil }
-        return standardized.hasPrefix(home + "/.defenseclaw/") ? nil : standardized
+        return """
+        Bundled runtime installation is fresh-install-only. An existing or partial DefenseClaw runtime was detected at \(marker).
+
+        No installed files or services were changed. Quit DefenseClaw, then authenticate and run the release-owned resolver in Terminal without --version so tested-source policy, the 0.8.4 bridge, rollback, migrations, and health checks remain mandatory (requires cosign):
+
+        \(resolverCommand)
+        """
     }
 
-    /// PID from ~/.defenseclaw/gateway.pid when that process is alive.
-    private static func liveGatewayPID(home: String) -> Int32? {
-        let url = URL(fileURLWithPath: home + "/.defenseclaw/gateway.pid")
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        var pid: Int32?
-        if let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-           let value = object["pid"] as? Int {
-            pid = Int32(value)
-        } else if let text = String(data: data, encoding: .utf8),
-                  let value = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
-            pid = value
-        }
-        guard let pid, pid > 0, kill(pid, 0) == 0 else { return nil }
-        return pid
+    /// Produce only the runnable, signed-release resolver command shared by
+    /// every native-app refusal surface. Returning nil prevents a release tag
+    /// from being interpolated into a URL unless it is canonical SemVer.
+    static func authenticatedRuntimeUpgradeResolverCommand(releaseTag: String) -> String? {
+        let tag = releaseTag.hasPrefix("v") ? String(releaseTag.dropFirst()) : releaseTag
+        guard tag.range(
+            of: #"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$"#,
+            options: .regularExpression
+        ) != nil else { return nil }
+        let assetBase = "https://github.com/cisco-ai-defense/defenseclaw/releases/download/\(tag)"
+        return """
+        (
+          set -eu
+          umask 077
+          command -v cosign >/dev/null
+          checksums="$(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 '\(assetBase)/checksums.txt')"
+          signature="$(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 '\(assetBase)/checksums.txt.sig')"
+          certificate="$(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 '\(assetBase)/checksums.txt.pem')"
+          resolver="$(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 '\(assetBase)/defenseclaw-upgrade.sh')"
+          cosign verify-blob --certificate <(printf '%s\\n' "$certificate") --signature <(printf '%s\\n' "$signature") --certificate-identity 'https://github.com/cisco-ai-defense/defenseclaw/.github/workflows/release.yaml@refs/heads/main' --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' <(printf '%s\\n' "$checksums")
+          line="$(printf '%s\\n' "$checksums" | grep -E '^[0-9a-f]{64}  defenseclaw-upgrade[.]sh$')"
+          [ "$(printf '%s\\n' "$line" | wc -l | tr -d ' ')" = 1 ]
+          expected="${line%% *}"
+          if command -v sha256sum >/dev/null; then
+            actual="$(printf '%s\\n' "$resolver" | sha256sum | awk '{print $1}')"
+          else
+            actual="$(printf '%s\\n' "$resolver" | shasum -a 256 | awk '{print $1}')"
+          fi
+          [ "$actual" = "$expected" ]
+          [ "$(printf '%s\\n' "$resolver" | tail -n 1)" = '# DefenseClaw upgrade resolver complete v1' ]
+          bash -n <(printf '%s\\n' "$resolver")
+          bash <(printf '%s\\n' "$resolver") --yes
+        )
+        """
     }
 }

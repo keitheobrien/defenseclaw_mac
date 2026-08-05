@@ -1,3 +1,19 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 // Shared UI components (spec §6.2): badges, pills, cards, chips, diff view.
 // Color is never the only signal — every colored element carries a label.
 
@@ -35,13 +51,28 @@ extension View {
 
 struct SeverityBadge: View {
     let severity: Severity
+
+    private var foreground: Color {
+        switch severity {
+        case .critical: .white
+        case .high, .medium, .low: .black
+        case .info: .primary
+        }
+    }
+
+    private var background: Color {
+        severity == .info
+            ? Cisco.severityColor(severity).opacity(0.18)
+            : Cisco.severityColor(severity).opacity(0.88)
+    }
+
     var body: some View {
         Text(severity.rawValue)
             .font(.caption2.weight(.semibold))
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(Cisco.severityColor(severity).opacity(severity == .medium ? 0.85 : 0.18))
-            .foregroundStyle(severity == .medium ? Color.black : Cisco.severityColor(severity))
+            .background(background)
+            .foregroundStyle(foreground)
             .clipShape(Capsule())
     }
 }
@@ -277,13 +308,16 @@ struct DCEmptyState: View {
 
 struct ConfidenceGauge: View {
     let value: Double // 0...1
+
+    private var normalizedValue: Double { AIConfidence.clampedUnit(value) }
+
     var body: some View {
         HStack(spacing: 6) {
-            ProgressView(value: max(0, min(1, value)))
+            ProgressView(value: normalizedValue)
                 .progressViewStyle(.linear)
-                .tint(value > 0.8 ? Cisco.green : value > 0.5 ? Cisco.orange : Cisco.red)
+                .tint(normalizedValue > 0.8 ? Cisco.green : normalizedValue > 0.5 ? Cisco.orange : Cisco.red)
                 .frame(width: 70)
-            Text("\(Int(value * 100))%")
+            Text("\(AIConfidence.percent(normalizedValue))%")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
         }

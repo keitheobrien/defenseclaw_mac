@@ -1,3 +1,19 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 // Alerts panel (spec §9.2): unified findings with severity chips, multi-select,
 // acknowledge (POST /enforce/allow) with consequence confirmation, export.
 
@@ -5,6 +21,8 @@ import SwiftUI
 import Charts
 
 struct AlertsView: View {
+    private static let alertSeverities: [Severity] = [.critical, .high, .medium, .low]
+
     @Environment(AppState.self) private var appState
     @State private var search = ""
     @State private var severityFilter: Severity? = nil
@@ -15,9 +33,12 @@ struct AlertsView: View {
     @State private var findingHistory: [AuditEvent] = []
     @State private var hydratedAuditEvent: AuditEvent?
 
+    private var connectorScopedAlerts: [AlertRow] {
+        appState.unackedAlerts.filter { appState.connectorFilterAllows($0.connectorName) }
+    }
+
     private var rows: [AlertRow] {
-        appState.unackedAlerts.filter { row in
-            if !appState.connectorFilterAllows(row.connectorName) { return false }
+        connectorScopedAlerts.filter { row in
             if let severityFilter, row.severity != severityFilter { return false }
             if kindFilter == "blocks" {
                 guard isBlock(row) else { return false }
@@ -125,7 +146,12 @@ struct AlertsView: View {
                 } label: {
                     Label("Acknowledge Selection", systemImage: "checkmark.circle")
                 }
-                .disabled(selectedRows.isEmpty || appState.ackInProgress)
+                .disabled(
+                    selectedRows.isEmpty
+                        || appState.ackInProgress
+                        || (!selectedAuditSeverities.isEmpty
+                            && !appState.installationMutationsAllowed)
+                )
                 .dcQuickHelp("Acknowledge selected alerts")
                 Button {
                     Task { await appState.refreshAlerts() }
@@ -136,7 +162,10 @@ struct AlertsView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in
-            Task { await appState.refreshAlerts() }
+            Task {
+                await appState.refreshAlerts()
+                loadSelectedDetail()
+            }
         }
         .task { applyPendingPanelRequest() }
         .onChange(of: appState.alertPanelRequest) { _, _ in applyPendingPanelRequest() }
@@ -154,6 +183,10 @@ struct AlertsView: View {
                     selection = []
                 }
             }
+            .disabled(
+                !selectedAuditSeverities.isEmpty
+                    && !appState.installationMutationsAllowed
+            )
         } message: {
             Text(acknowledgmentMessage)
         }
@@ -173,6 +206,7 @@ struct AlertsView: View {
                     Spacer()
                     Button { selection = [] } label: { Image(systemName: "xmark.circle.fill") }
                         .buttonStyle(.borderless)
+                        .accessibilityLabel("Close alert details")
                 }
                 KeyValueGrid(pairs: [
                     ("Target", row.target),
@@ -267,6 +301,7 @@ struct AlertsView: View {
         hydratedAuditEvent = nil
         let rowID = row.id
         Task {
+            let installationGeneration = appState.installationGeneration
             var detailRow = row
             var selectedAuditID: String?
             if case .audit(let event) = row {
@@ -274,15 +309,18 @@ struct AlertsView: View {
                 if let fullEvent = await appState.audit.event(id: event.id) {
                     detailRow = .audit(fullEvent)
                 }
+                guard installationGeneration == appState.installationGeneration else { return }
             }
             let details = await appState.audit.scanFindings(
                 runID: detailRow.runID.nonEmpty,
                 target: detailRow.target.nonEmpty,
                 limit: 20
             )
+            guard installationGeneration == appState.installationGeneration else { return }
             let history = await appState.audit.relatedEvents(target: detailRow.target, limit: 10)
                 .filter { $0.id != selectedAuditID }
-            guard selectedRow?.id == rowID else { return }
+            guard installationGeneration == appState.installationGeneration,
+                  selectedRow?.id == rowID else { return }
             if case .audit(let fullEvent) = detailRow {
                 hydratedAuditEvent = fullEvent
             }
@@ -296,8 +334,8 @@ struct AlertsView: View {
         @Bindable var state = appState
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
-                ForEach([Severity.critical, .high, .medium, .low], id: \.self) { sev in
-                    let count = appState.unackedAlerts.filter { $0.severity == sev }.count
+                ForEach(Self.alertSeverities, id: \.self) { sev in
+                    let count = connectorScopedAlerts.filter { $0.severity == sev }.count
                     StatCard(title: sev.rawValue, value: "\(count)", tint: Cisco.severityColor(sev))
                 }
             }
@@ -306,7 +344,7 @@ struct AlertsView: View {
                 FilterChipRow(
                     "Severity",
                     options: [("All", Optional<Severity>.none)] +
-                        [Severity.critical, .high, .medium, .low].map { ($0.rawValue, Optional($0)) },
+                        Self.alertSeverities.map { ($0.rawValue, Optional($0)) },
                     selection: $severityFilter
                 )
                 Spacer()

@@ -11,7 +11,7 @@
 # build/unified/out/.
 #
 # Env overrides:
-#   RUNTIME_TAG=0.8.9    pin the runtime release (default: latest)
+#   RUNTIME_TAG=0.8.10   pin the runtime release (default: latest)
 #   SKIP_NOTARIZE=1      skip notarization/stapling/spctl (iteration builds)
 set -euo pipefail
 
@@ -62,6 +62,7 @@ command -v gh >/dev/null || die "gh CLI is required"
 command -v cosign >/dev/null || die "cosign is required (brew install cosign) — checksums.txt provenance is verified fail-closed"
 command -v git >/dev/null || die "git is required to verify the signed runtime source tree"
 command -v python3 >/dev/null || die "python3 is required"
+command -v uv >/dev/null || die "uv is required to produce the hash-locked runtime dependency set"
 command -v xattr >/dev/null || die "xattr is required to clear stale macOS provenance metadata"
 
 rm -rf "$WORK"
@@ -192,7 +193,8 @@ cp "$RUNTIME_DIR/checksums.txt" "$RUNTIME_ATTESTATION"
 # archive. The protected wheel remains protected in RuntimePayload.
 step "Validating schema-2 runtime policy and protected artifacts"
 GATEWAY="$RUNTIME_DIR/defenseclaw-gateway"
-python3 - "$UPGRADE_MANIFEST" "$RUNTIME_ATTESTATION" "$PROTECTED_GATEWAY" "$WHEEL" "$RUNTIME_VERSION" "$ARCH" "$GATEWAY" <<'PYEOF'
+DECODED_WHEEL="$RUNTIME_DIR/defenseclaw-${RUNTIME_VERSION}-py3-none-any.whl"
+python3 - "$UPGRADE_MANIFEST" "$RUNTIME_ATTESTATION" "$PROTECTED_GATEWAY" "$WHEEL" "$RUNTIME_VERSION" "$ARCH" "$GATEWAY" "$DECODED_WHEEL" <<'PYEOF'
 import hashlib
 import io
 import json
@@ -205,6 +207,7 @@ import zipfile
 manifest_path, checksums_path, gateway_path, wheel_path = map(Path, sys.argv[1:5])
 version, arch = sys.argv[5:7]
 output_path = Path(sys.argv[7])
+decoded_wheel_path = Path(sys.argv[8])
 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 expected_gateways = {
     os_name: {
@@ -256,6 +259,8 @@ def decode(path):
 wheel = decode(wheel_path)
 if zipfile.is_zipfile(wheel_path) or not zipfile.is_zipfile(io.BytesIO(wheel)):
     raise SystemExit("protected runtime wheel payload is invalid")
+decoded_wheel_path.write_bytes(wheel)
+decoded_wheel_path.chmod(0o600)
 
 gateway_archive = decode(gateway_path)
 with tarfile.open(fileobj=io.BytesIO(gateway_archive), mode="r:gz") as archive:
@@ -331,6 +336,29 @@ grep -q '^textual' "$OVERRIDES" \
     || die "override extraction produced no textual pin — check pyproject format: $(head -3 "$OVERRIDES")"
 printf '    %s overrides (incl. %s)\n' "$(wc -l < "$OVERRIDES" | tr -d ' ')" "$(grep '^textual' "$OVERRIDES")"
 
+# Resolve dependencies once in the authenticated release build. The protected
+# root wheel remains separately authenticated and is installed with --no-deps;
+# every downloaded dependency must match a hash sealed into the app bundle.
+step "Generating hash-locked macOS arm64 dependency set"
+DEPENDENCY_LOCK="$RUNTIME_DIR/runtime-requirements.lock"
+RUNTIME_REQUIREMENTS_IN="$RUNTIME_DIR/runtime-requirements.in"
+printf 'defenseclaw @ file://%s\n' "$DECODED_WHEEL" > "$RUNTIME_REQUIREMENTS_IN"
+uv pip compile "$RUNTIME_REQUIREMENTS_IN" \
+    --overrides "$OVERRIDES" \
+    --no-emit-package defenseclaw \
+    --python-version 3.12 \
+    --generate-hashes \
+    --no-header \
+    --no-annotate \
+    --output-file "$DEPENDENCY_LOCK"
+grep -q -- '--hash=sha256:' "$DEPENDENCY_LOCK" \
+    || die "dependency lock contains no authenticated distribution hashes"
+grep -q '^defenseclaw==' "$DEPENDENCY_LOCK" \
+    && die "dependency lock unexpectedly contains the separately authenticated root wheel"
+grep -Eq '(^|[[:space:]])(@|https?://|file:)' "$DEPENDENCY_LOCK" \
+    && die "dependency lock contains an untrusted direct URL or local path"
+printf '    %s locked dependency lines\n' "$(grep -c '==' "$DEPENDENCY_LOCK")"
+
 # ── 4. Archive + export the app ──────────────────────────────────────────────
 APP_VERSION="$(sed -n 's/.*MARKETING_VERSION = \([0-9.]*\);.*/\1/p' "$REPO_ROOT/$APP_NAME.xcodeproj/project.pbxproj" | head -1)"
 [[ -n "$APP_VERSION" ]] || die "could not read MARKETING_VERSION"
@@ -404,13 +432,15 @@ cp "$GATEWAY" "$PAYLOAD/defenseclaw-gateway"
 cp "$WHEEL" "$PAYLOAD/$(basename "$WHEEL")"
 GATEWAY_SIGNED_SHA="$(shasum -a 256 "$PAYLOAD/defenseclaw-gateway" | awk '{print $1}')"
 cp "$OVERRIDES" "$PAYLOAD/overrides.txt"
+cp "$DEPENDENCY_LOCK" "$PAYLOAD/runtime-requirements.lock"
 cp "$UPGRADE_MANIFEST" "$PAYLOAD/upgrade-manifest.json"
 cp "$RUNTIME_ATTESTATION" "$PAYLOAD/runtime-candidate-checksums.txt"
 OVERRIDES_SHA="$(shasum -a 256 "$PAYLOAD/overrides.txt" | awk '{print $1}')"
+DEPENDENCY_LOCK_SHA="$(shasum -a 256 "$PAYLOAD/runtime-requirements.lock" | awk '{print $1}')"
 UPGRADE_MANIFEST_SHA="$(shasum -a 256 "$PAYLOAD/upgrade-manifest.json" | awk '{print $1}')"
 RUNTIME_ATTESTATION_SHA="$(shasum -a 256 "$PAYLOAD/runtime-candidate-checksums.txt" | awk '{print $1}')"
 python3 - "$PAYLOAD/payload-manifest.json" "$RUNTIME_VERSION" "$RUNTIME_TAG" "$ARCH" \
-    "$GATEWAY_SIGNED_SHA" "$(basename "$WHEEL")" "$WHEEL_SHA" "$OVERRIDES_SHA" \
+    "$GATEWAY_SIGNED_SHA" "$(basename "$WHEEL")" "$WHEEL_SHA" "$OVERRIDES_SHA" "$DEPENDENCY_LOCK_SHA" \
     "$UPGRADE_MANIFEST_SHA" "$RUNTIME_ATTESTATION_SHA" "$SOURCE_COMMIT" "$SOURCE_TREE" \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" <<'PYEOF'
 import json
@@ -419,7 +449,7 @@ import sys
 
 (
     path, version, tag, arch, gateway_sha, wheel_name, wheel_sha,
-    overrides_sha, policy_sha, attestation_sha, source_commit, source_tree, built_at,
+    overrides_sha, dependency_lock_sha, policy_sha, attestation_sha, source_commit, source_tree, built_at,
 ) = sys.argv[1:]
 payload = {
     "runtime_version": version,
@@ -435,6 +465,10 @@ payload = {
     },
     "wheel": {"file": wheel_name, "sha256": wheel_sha},
     "overrides": {"file": "overrides.txt", "sha256": overrides_sha},
+    "dependency_lock": {
+        "file": "runtime-requirements.lock",
+        "sha256": dependency_lock_sha,
+    },
     "upgrade_manifest": {"file": "upgrade-manifest.json", "sha256": policy_sha},
     "runtime_attestation": {
         "file": "runtime-candidate-checksums.txt",

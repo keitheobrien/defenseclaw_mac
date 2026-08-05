@@ -1,3 +1,19 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import Foundation
 
 @main
@@ -9,11 +25,15 @@ struct ConnectorOnboardingTests {
         fallsBackToLegacySingleConnectorOnlyWhenDiscoveryIsEmpty()
         singleRegisteredConnectorUsesLegacyContract()
         subsetRegistrationEmitsInitPlusAdditiveSetup()
+        multipleAdditiveSetupsRestartOnlyAfterTheFinalConnector()
         subsetActionLeadsWithAnEnforcedConnector()
         subsetWithoutGatewayStartNeverRestarts()
         emptyRegistrationDefensivelyRegistersEverything()
         setupCommandNameHyphenatesOnlyClaudeCode()
-        print("ConnectorOnboardingTests passed")
+        parsesCommandArguments()
+        rejectsMalformedCommandArguments()
+        quotesDisplayedShellArguments()
+        print("ConnectorOnboardingTests, CommandArgumentParser, and ShellQuoting tests passed")
     }
 
     private static func parsesInstalledConnectorsInSupportedOrder() {
@@ -123,6 +143,27 @@ struct ConnectorOnboardingTests {
                "non-enforced peer is added in observe mode")
     }
 
+    private static func multipleAdditiveSetupsRestartOnlyAfterTheFinalConnector() {
+        let plan = makePlan(
+            detected: ["codex", "claudecode", "cursor", "openclaw"],
+            registered: ["codex", "claudecode", "cursor"],
+            action: [],
+            profile: "observe"
+        )
+        expect(plan.count == 3, "three selected connectors produce init plus two follow-ups")
+        expect(
+            plan[1].starts(with: ["setup", "claude-code", "--yes", "--mode", "observe"]),
+            "first additive setup preserves connector order and alias"
+        )
+        expect(plan[1].contains("--no-restart"), "intermediate additive setup does not restart")
+        expect(
+            plan[2].starts(with: ["setup", "cursor", "--yes", "--mode", "observe"]),
+            "final additive setup preserves connector order"
+        )
+        expect(!plan[2].contains("--no-restart"), "final additive setup performs the restart")
+        expect(!plan.contains { $0.contains("openclaw") }, "unregistered connector stays absent")
+    }
+
     private static func subsetWithoutGatewayStartNeverRestarts() {
         let plan = makePlan(
             detected: ["codex", "claudecode", "cursor"],
@@ -150,6 +191,44 @@ struct ConnectorOnboardingTests {
         expect(ConnectorOnboarding.setupCommandName("claudecode") == "claude-code", "claudecode maps to claude-code")
         expect(ConnectorOnboarding.setupCommandName("claude-code") == "claude-code", "claude-code stays hyphenated")
         expect(ConnectorOnboarding.setupCommandName("codex") == "codex", "other connectors map to themselves")
+    }
+
+    private static func parsesCommandArguments() {
+        expect(
+            (try? CommandArgumentParser.parse(#""" ''"#)) == ["", ""],
+            "empty quoted command arguments"
+        )
+        expect(
+            (try? CommandArgumentParser.parse(#"hello\ world"#)) == ["hello world"],
+            "escaped command whitespace"
+        )
+        expect(
+            (try? CommandArgumentParser.parse(#"pre"mid dle"post tail"#)) == ["premid dlepost", "tail"],
+            "quoted and unquoted command token boundaries"
+        )
+    }
+
+    private static func rejectsMalformedCommandArguments() {
+        expectParseFailure(#""unclosed"#, "unclosed command quote")
+        expectParseFailure("trailing\\", "trailing command backslash")
+    }
+
+    private static func quotesDisplayedShellArguments() {
+        expect(ShellQuoting.quote("defenseclaw") == "defenseclaw", "safe shell token")
+        expect(ShellQuoting.quote("") == "''", "empty shell token")
+        expect(ShellQuoting.quote("two words") == "'two words'", "shell whitespace")
+        expect(ShellQuoting.quote("can't") == "'can'\\''t'", "embedded shell quote")
+        expect(ShellQuoting.quote("$(whoami)") == "'$(whoami)'", "shell command substitution")
+        expect(ShellQuoting.quote("allow;rm") == "'allow;rm'", "shell command separator")
+    }
+
+    private static func expectParseFailure(_ input: String, _ label: String) {
+        do {
+            _ = try CommandArgumentParser.parse(input)
+            expect(false, label)
+        } catch {
+            expect(true, label)
+        }
     }
 
     private static func makePlan(
