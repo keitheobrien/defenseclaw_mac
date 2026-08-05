@@ -95,6 +95,7 @@ struct SkillsView: View {
             Button { showingInstall = true } label: {
                 Label("Install Skill", systemImage: "square.and.arrow.down")
             }
+            .dcQuickHelp("Install a skill")
         } content: {
             Table(filtered) {
                 TableColumn("Status") { item in CatalogStatusLabel(status: item.status, verdict: item.verdict) }
@@ -172,7 +173,7 @@ struct MCPsView: View {
             Button { showingSetForm = true } label: {
                 Label("Set MCP Server", systemImage: "plus")
             }
-            .help("Scan and add or update an MCP server")
+            .dcQuickHelp("Scan and add or update an MCP server")
         } content: {
             Table(filtered) {
                 TableColumn("Status") { item in CatalogStatusLabel(status: item.status, verdict: item.verdict) }
@@ -246,6 +247,7 @@ struct PluginsView: View {
             Button { showingInstall = true } label: {
                 Label("Install Plugin", systemImage: "square.and.arrow.down")
             }
+            .dcQuickHelp("Install a plugin")
         } content: {
             Table(filtered) {
                 TableColumn("Status") { item in CatalogStatusLabel(status: item.status, verdict: item.verdict) }
@@ -849,6 +851,7 @@ struct RefreshButton: ToolbarContent {
             Button { Task { await action() } } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
+            .dcQuickHelp("Refresh catalog")
         }
     }
 }

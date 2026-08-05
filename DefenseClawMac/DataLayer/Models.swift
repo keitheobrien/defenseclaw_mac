@@ -1348,13 +1348,32 @@ enum GatewayError: LocalizedError {
         switch self {
         case .offline: "Gateway unreachable — is the DefenseClaw gateway running?"
         case .unauthorized: "Gateway token rejected. The token in config.yaml may have been rotated."
-        case .degraded(let status, _):
-            status == 502
-                ? "The gateway could not reach the connector agent (HTTP 502). Skill and tool catalogs need a running OpenClaw agent."
-                : "Gateway error (HTTP \(status))."
+        case .degraded(let status, let body):
+            if let message = GatewayErrorBody.userFacingMessage(status: status, body: body) {
+                message
+            } else if status == 502 {
+                "The gateway could not reach the connector agent (HTTP 502). Skill and tool catalogs need a running OpenClaw agent."
+            } else {
+                "Gateway error (HTTP \(status))."
+            }
         case .timeout: "Gateway request timed out."
         case .badResponse(let why): "Unexpected gateway response: \(why)"
         }
+    }
+}
+
+enum GatewayErrorBody {
+    static func userFacingMessage(status: Int, body: String) -> String? {
+        guard status == 503,
+              let data = body.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let message = object["error"] as? String,
+              message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                == "ai discovery disabled"
+        else {
+            return nil
+        }
+        return "AI Discovery is disabled. Enable it before starting a scan."
     }
 }
 

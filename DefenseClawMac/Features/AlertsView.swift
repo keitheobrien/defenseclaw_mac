@@ -134,9 +134,10 @@ struct AlertsView: View {
         )) {
             if let row = selectedInspectorRow {
                 alertInspector(row)
-                    .inspectorColumnWidth(min: 340, ideal: 440)
+                    .dcInspectorColumnWidth()
             }
         }
+        .reportsDetailInspector(selectedRow != nil)
         .searchable(text: $search, placement: .toolbar, prompt: "Search action, target, details")
         .toolbar {
             ToolbarItemGroup {
@@ -147,14 +148,17 @@ struct AlertsView: View {
                 }
                 .disabled(
                     selectedRows.isEmpty
+                        || appState.ackInProgress
                         || (!selectedAuditSeverities.isEmpty
                             && !appState.installationMutationsAllowed)
                 )
+                .dcQuickHelp("Acknowledge selected alerts")
                 Button {
                     Task { await appState.refreshAlerts() }
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
+                .dcQuickHelp("Refresh alerts")
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in

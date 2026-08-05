@@ -51,6 +51,7 @@ struct WizardDefinition: Identifiable {
     var interactiveOnly = false
     var commandBuilder: (([String: String], Bool) -> [[String]])? = nil
     var secretInputField: String? = nil
+    var secretEnvironment: (([String: String]) -> [String: String])? = nil
     var validation: (([String: String]) -> String?)? = nil
     var liveDefaults: ((YAMLNode) -> [String: String])? = nil
     let fields: [WizardField]
@@ -110,7 +111,7 @@ struct SetupDefinitionsParityTests {
         customProviderValidationCatchesUnsafeInputs()
         observabilityBuilderCoversPresetSpecificInputs()
         splunkHECDefaultsToVerifiedTLS()
-        unsupportedSetupSecretsFailClosed()
+        secureSetupSecretsUseChildEnvironment()
         webhookBuilderCoversCurrentNotifierOptions()
         webhookValidationRequiresProviderCredentials()
         print("Setup definition parity tests passed")
@@ -447,12 +448,12 @@ struct SetupDefinitionsParityTests {
         }
     }
 
-    private static func unsupportedSetupSecretsFailClosed() {
-        let cases: [(id: String, field: String, values: [String: String])] = [
-            ("splunk", "access-token", ["mode": "splunk-o11y", "access-token": "private-value"]),
-            ("splunk", "hec-token", ["mode": "splunk-enterprise", "hec-token": "private-value"]),
-            ("observability", "token", ["action": "add", "preset": "datadog", "token": "private-value"]),
-            ("splunk-dashboards", "o11y-api-token", ["action": "apply", "o11y-api-token": "private-value"]),
+    private static func secureSetupSecretsUseChildEnvironment() {
+        let cases: [(id: String, field: String, environmentKey: String, values: [String: String])] = [
+            ("splunk", "access-token", "SPLUNK_ACCESS_TOKEN", ["mode": "splunk-o11y", "access-token": "private-value"]),
+            ("splunk", "hec-token", "DEFENSECLAW_SPLUNK_HEC_TOKEN", ["mode": "splunk-enterprise", "hec-token": "private-value"]),
+            ("observability", "token", "DEFENSECLAW_SETUP_OBSERVABILITY_TOKEN", ["action": "add", "preset": "datadog", "token": "private-value"]),
+            ("splunk-dashboards", "o11y-api-token", "SFX_AUTH_TOKEN", ["action": "apply", "o11y-api-token": "private-value"]),
         ]
 
         for item in cases {
@@ -466,7 +467,9 @@ struct SetupDefinitionsParityTests {
                 values: item.values,
                 visibleFields: [field]
             )
-            expect(message != nil, "\(item.id) rejects an unsupported secret transport")
+            expect(message == nil, "\(item.id) accepts its child-environment secret transport")
+            let environment = wizard.secretEnvironment?(item.values) ?? [:]
+            expect(environment[item.environmentKey] == "private-value", "\(item.id) exports its documented child environment key")
             let arguments = wizard.commandBuilder?(item.values, false).flatMap { $0 } ?? []
             expect(!arguments.contains("private-value"), "\(item.id) secret never enters argv")
 

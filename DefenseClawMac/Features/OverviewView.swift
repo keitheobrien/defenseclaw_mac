@@ -75,18 +75,23 @@ struct OverviewView: View {
         .toolbar {
             ToolbarItemGroup {
                 connectorScopeChip
-                StaleBadge(date: appState.health.fetchedAt)
+            }
+            ToolbarItem {
                 Button {
                     runDoctor()
                 } label: {
                     Label("Run Health Check", systemImage: "stethoscope")
                 }
                 .disabled(doctorRunning || !appState.installationMutationsAllowed)
+                .dcQuickHelp("Run DefenseClaw Doctor")
+            }
+            ToolbarItem {
                 Button {
                     refresh()
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
+                .dcQuickHelp("Refresh overview")
             }
         }
         .task { refresh() }

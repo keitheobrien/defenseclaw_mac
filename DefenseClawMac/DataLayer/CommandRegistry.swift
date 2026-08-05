@@ -15,7 +15,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Synchronized with DefenseClaw mainline cli/defenseclaw/tui/registry_data.py.
-// Keep these 226 entries aligned when the TUI command palette changes.
+// Keep these entries aligned when the TUI command palette changes.
 
 import Foundation
 
@@ -82,6 +82,37 @@ struct CommandDefinition: Identifiable, Hashable, Sendable {
     var requiresTerminal: Bool {
         summary.localizedCaseInsensitiveContains("interactive")
             || arguments.last == "shell"
+            || title == "setup galileo"
+    }
+
+    var acceptsSecretInput: Bool {
+        title == "keys set"
+    }
+
+    func invocation(extraArguments: [String], secretInput: String) throws -> CommandInvocation {
+        guard acceptsSecretInput else {
+            let invocationArguments = arguments + extraArguments
+            let suppliesAlertConfirmation = invocationArguments.starts(with: ["alerts", "acknowledge"])
+                || invocationArguments.starts(with: ["alerts", "dismiss"])
+            return CommandInvocation(
+                arguments: invocationArguments,
+                standardInput: suppliesAlertConfirmation ? "y" : nil
+            )
+        }
+        guard extraArguments.count == 1,
+              extraArguments[0].range(
+                  of: "^[A-Za-z_][A-Za-z0-9_]*$",
+                  options: .regularExpression
+              ) != nil else {
+            throw CommandInvocationError.invalidCredentialName
+        }
+        guard !secretInput.isEmpty else {
+            throw CommandInvocationError.missingCredentialValue
+        }
+        return CommandInvocation(
+            arguments: arguments + extraArguments,
+            standardInput: secretInput
+        )
     }
 
     /// `keys set` must receive its credential over stdin. Keeping this
@@ -143,6 +174,25 @@ struct CommandExecutionPlan: Equatable, Sendable {
 
     let arguments: [String]
     let standardInput: String?
+}
+
+struct CommandInvocation: Equatable, Sendable {
+    let arguments: [String]
+    let standardInput: String?
+}
+
+enum CommandInvocationError: LocalizedError, Equatable {
+    case invalidCredentialName
+    case missingCredentialValue
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidCredentialName:
+            return "Enter one credential environment name."
+        case .missingCredentialValue:
+            return "Enter the credential value."
+        }
+    }
 }
 
 enum CommandRegistry {

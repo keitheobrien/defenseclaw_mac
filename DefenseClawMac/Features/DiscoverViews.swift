@@ -191,6 +191,7 @@ struct InventoryView: View {
                     Label("Rescan All", systemImage: "arrow.triangle.2.circlepath")
                 }
                 .disabled(scanning || !appState.installationMutationsAllowed)
+                .dcQuickHelp("Rescan connector inventories")
             }
         }
         .task {
@@ -443,6 +444,7 @@ struct AIDiscoveryView: View {
     @State private var scanning = false
     @State private var error: String?
     @State private var loaded = false
+    @State private var scanRequested = false
 
     /// Grouped rows filtered like the TUI's `_apply_filter`, including local
     /// model identity without treating status/format as search dimensions.
@@ -452,25 +454,32 @@ struct AIDiscoveryView: View {
         return rows.filter { AIDiscoveryGrouping.matches($0, query: search) }
     }
 
-    private var emptyState: (title: String, message: String) {
+    private var primaryAction: AIDiscoveryPrimaryAction {
+        .resolve(enabled: snapshot.enabled)
+    }
+
+    private var emptyState: (title: String, message: String, systemImage: String) {
         if !appState.gatewayReachable || !loaded {
             return (
                 "AI discovery unavailable",
-                "Ensure the gateway is running and the macOS app is connected to it."
+                "Ensure the gateway is running and the macOS app is connected to it.",
+                "sparkle.magnifyingglass"
             )
         }
         if !snapshot.enabled {
             return (
                 "AI discovery disabled",
-                "Enable AI discovery in Setup or run: defenseclaw agent discovery enable"
+                "Use Enable AI Discovery above to enable the service, restart the gateway, and run the first scan.",
+                "power"
             )
         }
         if !search.isEmpty {
-            return ("No matching signals", "Clear or change the current product/model filter.")
+            return ("No matching signals", "Clear or change the current product/model filter.", "line.3.horizontal.decrease.circle")
         }
         return (
             "No AI agents or local models",
-            "Run a scan to detect AI agents, SDKs, frameworks, and local models on this Mac."
+            "Run a scan to detect AI agents, SDKs, frameworks, and local models on this Mac.",
+            "sparkle.magnifyingglass"
         )
     }
 
@@ -499,7 +508,7 @@ struct AIDiscoveryView: View {
                 DCEmptyState(
                     title: emptyState.title,
                     message: emptyState.message,
-                    systemImage: "sparkle.magnifyingglass"
+                    systemImage: emptyState.systemImage
                 )
                 .frame(maxHeight: .infinity)
             } else {
@@ -519,33 +528,35 @@ struct AIDiscoveryView: View {
         .toolbar {
             ToolbarItemGroup {
                 Button {
-                    scan()
+                    run(primaryAction)
                 } label: {
-                    Label("Scan Now", systemImage: "wand.and.rays")
+                    Label(primaryAction.label, systemImage: primaryAction.systemImage)
                 }
                 .disabled(
                     scanning
                         || !appState.gatewayReachable
+                        || !loaded
                         || !appState.installationMutationsAllowed
                 )
+                .dcQuickHelp(primaryAction.label)
                 Button {
                     Task { await load() }
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
+                .dcQuickHelp("Refresh AI Discovery results")
             }
         }
         .task { await load() }
         // Pulse-fed retry: a transient gateway failure (restart mid-fetch,
         // token rotation) must not freeze the panel on a stale error.
-        .task(id: appState.health.fetchedAt) { if error != nil || !loaded { await load() } }
+        .task(id: appState.health.fetchedAt) {
+            if error != nil || !loaded || scanRequested { await load() }
+            if scanRequested { await fulfillScanRequest() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in Task { await load() } }
         .onReceive(NotificationCenter.default.publisher(for: .dcScanAIDiscovery)) { _ in
-            guard !scanning,
-                  appState.gatewayReachable,
-                  appState.installationMutationsAllowed
-            else { return }
-            scan()
+            requestScan()
         }
     }
 
@@ -767,7 +778,6 @@ struct AIDiscoveryView: View {
     }
 
     private func load() async {
-        guard appState.gatewayReachable else { return }
         let installationGeneration = appState.installationGeneration
         do {
             let freshSnapshot = try await appState.gateway.aiUsage()
@@ -777,22 +787,67 @@ struct AIDiscoveryView: View {
             error = nil
         } catch {
             guard installationGeneration == appState.installationGeneration else { return }
+            loaded = false
             self.error = error.localizedDescription
         }
     }
 
-    private func scan() {
+    private func requestScan() {
+        guard !scanning else { return }
+        scanRequested = true
+        Task { await fulfillScanRequest() }
+    }
+
+    private func fulfillScanRequest() async {
+        guard scanRequested, !scanning else { return }
+        switch AIDiscoveryScanRequestStep.resolve(
+            statusLoaded: loaded && error == nil,
+            enabled: snapshot.enabled
+        ) {
+        case .loadStatus:
+            await load()
+            guard loaded else { return }
+            await fulfillScanRequest()
+        case .showDisabled:
+            scanRequested = false
+            error = "AI Discovery is disabled. Use Enable AI Discovery above before scanning."
+        case .scan:
+            scanRequested = false
+            run(.scan)
+        }
+    }
+
+    private func run(_ action: AIDiscoveryPrimaryAction) {
         guard appState.installationMutationsAllowed else {
             error = appState.installationReadOnlyReason ?? "This installation is read only."
             return
         }
+        guard !scanning else { return }
         scanning = true
         appState.scanInFlight = true
+        error = nil
         Task {
-            do {
-                try await appState.gateway.aiScan()
+            let result = await appState.runCommand(
+                title: action.title,
+                arguments: action.arguments,
+                mutation: true,
+                category: action.category,
+                origin: "AI Discovery",
+                successEffects: action.successEffects,
+                suggestedNextAction: "Review the refreshed AI Discovery inventory.",
+                refreshOnSuccess: true
+            )
+            if result.succeeded {
+                await appState.pulse()
                 await load()
-            } catch { self.error = "Scan failed: \(error.localizedDescription)" }
+            } else {
+                let detail = result.output
+                    .split(separator: "\n")
+                    .last(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+                    .map(String.init)
+                error = detail.map { "\(action.title) failed: \($0)" }
+                    ?? "\(action.title) failed with exit \(result.exitCode)."
+            }
             scanning = false
             appState.scanInFlight = false
         }
@@ -891,7 +946,7 @@ struct RegistriesView: View {
                         Label("Add Source", systemImage: "plus")
                     }
                     .disabled(!appState.installationMutationsAllowed)
-                    .help("Add Registry Source")
+                    .dcQuickHelp("Add Registry Source")
 
                     Button(role: .destructive) {
                         sourcePendingRemoval = selectedSource
@@ -903,7 +958,7 @@ struct RegistriesView: View {
                             || running
                             || !appState.installationMutationsAllowed
                     )
-                    .help("Remove Selected Source")
+                    .dcQuickHelp("Remove Selected Source")
                 } else {
                     Button {
                         if let entry = selectedEntry { approve(entry) }
@@ -915,6 +970,7 @@ struct RegistriesView: View {
                             || running
                             || !appState.installationMutationsAllowed
                     )
+                    .dcQuickHelp("Approve selected registry entry")
 
                     Button(role: .destructive) {
                         entryPendingRejection = selectedEntry
@@ -926,6 +982,7 @@ struct RegistriesView: View {
                             || running
                             || !appState.installationMutationsAllowed
                     )
+                    .dcQuickHelp("Reject selected registry entry")
 
                     Button {
                         if let entry = selectedEntry { toggleRequirement(for: entry) }
@@ -937,7 +994,7 @@ struct RegistriesView: View {
                             || running
                             || !appState.installationMutationsAllowed
                     )
-                    .help(requirementActionLabel)
+                    .dcQuickHelp(requirementActionLabel)
                 }
 
                 Button {
@@ -950,6 +1007,7 @@ struct RegistriesView: View {
                         || selectedSourceForSync == nil
                         || !appState.installationMutationsAllowed
                 )
+                .dcQuickHelp("Sync selected registry source")
 
                 Button {
                     syncAll()
@@ -961,6 +1019,7 @@ struct RegistriesView: View {
                         || snapshot.sources.isEmpty
                         || !appState.installationMutationsAllowed
                 )
+                .dcQuickHelp("Sync all registry sources")
 
                 Button {
                     Task { await load() }
@@ -968,6 +1027,7 @@ struct RegistriesView: View {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
                 .disabled(running)
+                .dcQuickHelp("Refresh registries")
             }
         }
         .task { await load() }

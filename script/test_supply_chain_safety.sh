@@ -34,7 +34,7 @@ updater = (root / "DefenseClawMac/DataLayer/UpdateChecker.swift").read_text(enco
 checks = {
     "release source map is downloaded": 'release-source-map.json' in build,
     "release source map is checksum verified": 'verify_sha256 "$RELEASE_SOURCE_MAP"' in build,
-    "pyproject is fetched by authenticated source commit": '${SOURCE_COMMIT}/pyproject.toml' in build,
+    "pyproject is read from the authenticated source commit": '${SOURCE_COMMIT}:pyproject.toml' in build,
     "mutable runtime tag does not select pyproject": '${RUNTIME_TAG}/pyproject.toml' not in build,
     "dependency lock includes artifact hashes": '--generate-hashes' in build,
     "dependency lock excludes the separately authenticated root wheel": '--no-emit-package defenseclaw' in build,

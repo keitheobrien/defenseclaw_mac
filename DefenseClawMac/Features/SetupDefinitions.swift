@@ -22,9 +22,13 @@ enum SetupSecretTransportPolicy {
         values: [String: String],
         visibleFields: [WizardField]
     ) -> String? {
+        let environmentValues = Set<String>((wizard.secretEnvironment?(values) ?? [:]).values)
         guard let field = visibleFields.first(where: { field in
             guard case .secure = field.kind else { return false }
-            return !(values[field.key] ?? "").isEmpty && wizard.secretInputField != field.key
+            let secret = values[field.key] ?? ""
+            return !secret.isEmpty
+                && wizard.secretInputField != field.key
+                && !environmentValues.contains(secret)
         }) else { return nil }
         return "\(field.label) cannot be submitted securely by the installed DefenseClaw runtime. "
             + "Leave it blank to use an existing credential, or save it separately in Setup > Credentials."
@@ -614,6 +618,14 @@ enum TUIWizards {
         id: "splunk", title: "Splunk", icon: "waveform.path.ecg.rectangle",
         blurb: "Configure Splunk O11y, local logs, or Enterprise HEC pipelines.",
         baseArgs: ["setup", "splunk"], commandBuilder: splunkCommands,
+        secretEnvironment: { v in
+            var environment: [String: String] = [:]
+            let accessToken = value(v, "access-token")
+            let hecToken = value(v, "hec-token")
+            if !accessToken.isEmpty { environment["SPLUNK_ACCESS_TOKEN"] = accessToken }
+            if !hecToken.isEmpty { environment["DEFENSECLAW_SPLUNK_HEC_TOKEN"] = hecToken }
+            return environment
+        },
         validation: { v in
             if value(v, "mode", "splunk-o11y") == "local-docker", !yes(v, "accept-splunk-license") {
                 return "Local Docker mode requires accepting the Splunk license."
@@ -635,8 +647,12 @@ enum TUIWizards {
 
     private static let observability = WizardDefinition(
         id: "observability", title: "Observability", icon: "chart.xyaxis.line",
-        blurb: "Add, list, enable, disable, or remove OTel and audit destinations.",
+        blurb: "Add, list, enable, disable, remove, or test OTel and audit destinations.",
         baseArgs: ["setup", "observability"], commandBuilder: observabilityCommands,
+        secretEnvironment: { v in
+            let token = value(v, "token")
+            return token.isEmpty ? [:] : ["DEFENSECLAW_SETUP_OBSERVABILITY_TOKEN": token]
+        },
         validation: observabilityValidation,
         fields: [
             WizardField(key: "action", label: "Action", kind: .choice(options: ["add", "list", "enable", "disable", "remove", "test"]), defaultValue: "add"),
@@ -787,6 +803,10 @@ enum TUIWizards {
         id: "splunk-dashboards", title: "Splunk Dashboards", icon: "rectangle.3.group.bubble.left",
         blurb: "Apply or destroy the DefenseClaw Splunk O11y dashboards and detectors.",
         baseArgs: ["setup", "splunk", "dashboards"], commandBuilder: splunkDashboardCommands,
+        secretEnvironment: { v in
+            let token = value(v, "o11y-api-token")
+            return token.isEmpty ? [:] : ["SFX_AUTH_TOKEN": token]
+        },
         fields: [
             WizardField(key: "action", label: "Action", kind: .choice(options: ["apply", "destroy"]), defaultValue: "apply"),
             WizardField(key: "with-detectors", label: "Include detectors", kind: .bool, defaultValue: "no"),

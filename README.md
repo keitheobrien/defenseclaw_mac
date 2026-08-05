@@ -88,7 +88,7 @@ The menu bar shield reflects live state (healthy / alert count / degraded / offl
 
 ## Verified TUI parity
 
-The app is checked feature-for-feature against `defenseclaw tui` 0.8.3 on a live install, with an adversarial review pass over each area. Highlights of the shared semantics:
+The app is checked feature-for-feature against the DefenseClaw 0.8.10 runtime contract, with an adversarial review pass over each area. Highlights of the shared semantics:
 
 - **Enforcement counts** — Hook Calls and Blocks count within the latest-500 audit window; Findings = severity-bearing rows from the audit alert queue plus scan blocks grouped by `scan_id` from the `gateway.jsonl` tail; per-connector totals fall back to all-time aggregates so counts don't freeze at the window size.
 - **Alerts** — the unified queue (audit DB + scan blocks + egress) with the TUI's severity buckets; Acknowledge shells to `defenseclaw alerts acknowledge --severity …` (class-wide, sets severity → ACK in the DB), and scan/egress rows hide locally.

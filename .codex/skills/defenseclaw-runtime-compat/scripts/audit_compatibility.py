@@ -17,24 +17,6 @@ from pathlib import Path
 
 
 UPSTREAM_URL = "https://github.com/cisco-ai-defense/defenseclaw.git"
-TEST_SCRIPTS = (
-    "test_setup_definitions_parity.sh",
-    "test_installation_context.sh",
-    "test_local_model_discovery.sh",
-    "test_runtime_install_filesystem.sh",
-    "test_update_checker_safety.sh",
-    "test_update_checker_verification.sh",
-    "test_output_safety.sh",
-    "test_secret_file_safety.sh",
-    "test_numeric_safety.sh",
-    "test_app_state_signal_safety.sh",
-    "test_connector_onboarding.sh",
-    "test_first_run_connector_selection.sh",
-    "test_cli_cancellation.sh",
-    "test_structured_detail_parser.sh",
-)
-
-
 class Audit:
     def __init__(self) -> None:
         self.rows: list[tuple[str, str]] = []
@@ -229,6 +211,20 @@ def runtime_source_checkout(runtime: Path) -> Path | None:
     return None
 
 
+def dependency_probe_mode(installed_version: str, source_version: str) -> str:
+    return "upstream" if installed_version == source_version else "installed"
+
+
+def has_shell_assignment(source: str, variable: str, value: str) -> bool:
+    return bool(
+        re.search(
+            rf"(?m)^[ \t]*(?:export[ \t]+)?{re.escape(variable)}[ \t]*=[ \t]*"
+            rf"{re.escape(value)}[ \t]*(?:#.*)?$",
+            source,
+        )
+    )
+
+
 def probe_runtime(
     audit: Audit,
     runtime: Path,
@@ -242,9 +238,13 @@ def probe_runtime(
     if version.returncode != 0 or installed == "unknown":
         audit.fail(f"installed runtime version probe failed at {runtime}")
     elif installed != upstream_version:
-        audit.fail(f"installed runtime {installed} does not match upstream {upstream_version} ({runtime})")
+        audit.warn(
+            f"installed runtime {installed} differs from source metadata {upstream_version} "
+            f"({runtime}); validating executable contracts and installed package metadata"
+        )
     else:
         audit.pass_(f"installed runtime {installed} matches upstream ({runtime})")
+    dependency_mode = dependency_probe_mode(installed, upstream_version)
 
     source_checkout = runtime_source_checkout(runtime)
     if source_checkout is not None:
@@ -294,7 +294,7 @@ def probe_runtime(
 
     resolved = runtime.resolve()
     python = resolved.parent / "python"
-    dependency_script = r'''
+    upstream_dependency_script = r'''
 import importlib.metadata
 import json
 import sys
@@ -334,8 +334,34 @@ for requirement in effective.values():
         issues.append(f"{requirement.name} {installed} does not satisfy {requirement.specifier}")
 print(json.dumps(issues))
 '''
+    installed_dependency_script = r'''
+import importlib.metadata
+import json
+from packaging.requirements import Requirement
+
+issues = []
+for raw in importlib.metadata.requires("defenseclaw") or []:
+    requirement = Requirement(raw)
+    if requirement.marker is not None and not requirement.marker.evaluate():
+        continue
+    try:
+        installed = importlib.metadata.version(requirement.name)
+    except importlib.metadata.PackageNotFoundError:
+        issues.append(f"{requirement.name} is not installed")
+        continue
+    if requirement.specifier and installed not in requirement.specifier:
+        issues.append(f"{requirement.name} {installed} does not satisfy {requirement.specifier}")
+print(json.dumps(issues))
+'''
     dependencies = (
-        run([str(python), "-c", dependency_script, str(upstream / "pyproject.toml")])
+        run(
+            [
+                str(python),
+                "-c",
+                upstream_dependency_script if dependency_mode == "upstream" else installed_dependency_script,
+                *([str(upstream / "pyproject.toml")] if dependency_mode == "upstream" else []),
+            ]
+        )
         if python.is_file()
         else None
     )
@@ -349,7 +375,11 @@ print(json.dumps(issues))
         if dependency_issues:
             audit.fail("installed runtime dependencies differ: " + "; ".join(dependency_issues))
         else:
-            audit.pass_("installed runtime dependencies satisfy upstream requirements")
+            if dependency_mode == "upstream":
+                audit.pass_("installed runtime dependencies satisfy upstream requirements")
+            else:
+                audit.pass_("installed runtime dependencies satisfy packaged runtime requirements")
+                audit.warn("upstream resolver overrides were not compared across the source-version skew")
 
     catalog_script = (
         "from defenseclaw import config as c; "
@@ -396,13 +426,18 @@ def check_release_protocol(audit: Audit, mac_root: Path) -> None:
         "runtime-candidate-checksums.txt",
         '--certificate-identity "https://github.com/${RUNTIME_REPO}/.github/workflows/release.yaml@refs/heads/main"',
     )
-    forbidden = (
-        'TARBALL="$RUNTIME_DIR/defenseclaw_${RUNTIME_VERSION}_darwin_${ARCH}.tar.gz"',
-        'WHEEL="$RUNTIME_DIR/defenseclaw-${RUNTIME_VERSION}-py3-none-any.whl"',
-        "--certificate-identity-regexp",
-    )
+    forbidden_assignments = {
+        "TARBALL": '"$RUNTIME_DIR/defenseclaw_${RUNTIME_VERSION}_darwin_${ARCH}.tar.gz"',
+        "WHEEL": '"$RUNTIME_DIR/defenseclaw-${RUNTIME_VERSION}-py3-none-any.whl"',
+    }
+    forbidden_tokens = ("--certificate-identity-regexp",)
     missing = [token for token in required if token not in source]
-    stale = [token for token in forbidden if token in source]
+    stale = [
+        f"{variable}={value}"
+        for variable, value in forbidden_assignments.items()
+        if has_shell_assignment(source, variable, value)
+    ]
+    stale.extend(token for token in forbidden_tokens if token in source)
     runtime_installer = (
         mac_root / "DefenseClawMac/DataLayer/RuntimeInstaller.swift"
     ).read_text(encoding="utf-8")
@@ -480,11 +515,12 @@ def check_source_baseline(
 
 
 def run_tests(audit: Audit, mac_root: Path) -> None:
-    for name in TEST_SCRIPTS:
-        script = mac_root / "script" / name
-        if not script.is_file():
-            audit.fail(f"required compatibility test is missing: script/{name}")
-            continue
+    scripts = sorted((mac_root / "script").glob("test_*.sh"))
+    if not scripts:
+        audit.fail("no compatibility tests were found in script/")
+        return
+    for script in scripts:
+        name = script.name
         result = run([str(script)], cwd=mac_root, timeout=180)
         if result.returncode == 0:
             audit.pass_(f"script/{name}")

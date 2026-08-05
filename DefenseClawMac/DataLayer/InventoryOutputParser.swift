@@ -22,11 +22,13 @@ struct InventoryOutputParseResult {
 }
 
 enum InventoryOutputParser {
-    static let maximumInputBytes = CLIOutputLimits.maximumOutputBytes
+    // Keep aligned with CLIOutputLimits.maximumOutputBytes. This parser is also
+    // compiled independently by its focused regression tests.
+    static let maximumInputBytes = 4 * 1_024 * 1_024
     static let maximumCandidateCount = 64
     private static let maximumNestingDepth = 512
 
-    /// DefenseClaw 0.8.5 serializes these expected connector limitations in
+    /// DefenseClaw 0.8.5+ serializes these expected connector limitations in
     /// `errors` and emits a failure warning for them. They explain empty
     /// categories; they do not represent failed inventory collection.
     private static let nonActionableCapabilityNotes: [String: String] = [

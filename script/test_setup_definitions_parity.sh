@@ -32,9 +32,10 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE" xcrun swiftc \
 
 "$BUILD_DIR/SetupDefinitionsParityTests"
 
-if grep -R -F -- 'secretEnvironment' \
-  "$ROOT/DefenseClawMac/Features/SetupView.swift" \
-  "$ROOT/DefenseClawMac/Features/SetupDefinitions.swift"; then
-  echo "setup secrets can still be exported through a child environment" >&2
-  exit 1
-fi
+for required in SPLUNK_ACCESS_TOKEN DEFENSECLAW_SPLUNK_HEC_TOKEN \
+  DEFENSECLAW_SETUP_OBSERVABILITY_TOKEN SFX_AUTH_TOKEN; do
+  if ! grep -Fq "$required" "$ROOT/DefenseClawMac/Features/SetupDefinitions.swift"; then
+    echo "setup secret is missing its runtime-defined child environment: $required" >&2
+    exit 1
+  fi
+done

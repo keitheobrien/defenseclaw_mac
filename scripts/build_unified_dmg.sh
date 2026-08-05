@@ -11,7 +11,7 @@
 # build/unified/out/.
 #
 # Env overrides:
-#   RUNTIME_TAG=0.8.4    pin the runtime release (default: latest)
+#   RUNTIME_TAG=0.8.10   pin the runtime release (default: latest)
 #   SKIP_NOTARIZE=1      skip notarization/stapling/spctl (iteration builds)
 set -euo pipefail
 
@@ -37,6 +37,15 @@ fi
 step() { printf '\n==> %s\n' "$*"; }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
+# macOS may attach com.apple.provenance while exported binaries are still being
+# assembled. If that cached metadata predates the final Developer ID signature,
+# an otherwise byte-valid app can fail verification after a ZIP round trip.
+# Remove only that cache; notarization tickets and other extended attributes
+# remain intact.
+strip_stale_provenance() {
+    xattr -rd com.apple.provenance "$1" 2>/dev/null || true
+}
+
 # notarytool's exit code on an Invalid verdict is not reliable across
 # versions — require an explicit "status: Accepted" in the output.
 notarize() {
@@ -51,9 +60,10 @@ notarize() {
 
 command -v gh >/dev/null || die "gh CLI is required"
 command -v cosign >/dev/null || die "cosign is required (brew install cosign) — checksums.txt provenance is verified fail-closed"
+command -v git >/dev/null || die "git is required to verify the signed runtime source tree"
 command -v python3 >/dev/null || die "python3 is required"
-command -v curl >/dev/null || die "curl is required"
 command -v uv >/dev/null || die "uv is required to produce the hash-locked runtime dependency set"
+command -v xattr >/dev/null || die "xattr is required to clear stale macOS provenance metadata"
 
 rm -rf "$WORK"
 mkdir -p "$RUNTIME_DIR" "$OUT"
@@ -70,19 +80,22 @@ step "Runtime release: $RUNTIME_TAG"
 PROTECTED_GATEWAY="$RUNTIME_DIR/defenseclaw_${RUNTIME_VERSION}_protocol2_darwin_${ARCH}.dcgateway"
 WHEEL="$RUNTIME_DIR/defenseclaw-${RUNTIME_VERSION}-2-py3-none-any.dcwheel"
 UPGRADE_MANIFEST="$RUNTIME_DIR/upgrade-manifest.json"
+RELEASE_PROVENANCE="$RUNTIME_DIR/release-provenance.json"
 RELEASE_SOURCE_MAP="$RUNTIME_DIR/release-source-map.json"
 RUNTIME_ATTESTATION="$RUNTIME_DIR/runtime-candidate-checksums.txt"
 gh release download "$RUNTIME_TAG" --repo "$RUNTIME_REPO" --dir "$RUNTIME_DIR" \
     --pattern "$(basename "$PROTECTED_GATEWAY")" \
     --pattern "$(basename "$WHEEL")" \
     --pattern "upgrade-manifest.json" \
+    --pattern "release-provenance.json" \
     --pattern "release-source-map.json" \
     --pattern "checksums.txt" \
     --pattern "checksums.txt.sig" \
     --pattern "checksums.txt.pem"
 
-[[ -f "$PROTECTED_GATEWAY" && -f "$WHEEL" && -f "$UPGRADE_MANIFEST" && -f "$RELEASE_SOURCE_MAP" ]] \
-    || die "release $RUNTIME_TAG did not provide its protected macOS runtime and upgrade policy"
+[[ -f "$PROTECTED_GATEWAY" && -f "$WHEEL" && -f "$UPGRADE_MANIFEST" \
+   && -f "$RELEASE_PROVENANCE" && -f "$RELEASE_SOURCE_MAP" ]] \
+    || die "release $RUNTIME_TAG did not provide its protected runtime, policy, and source provenance"
 for f in checksums.txt checksums.txt.sig checksums.txt.pem; do
     [[ -f "$RUNTIME_DIR/$f" ]] || die "release is missing $f — refusing to trust unsigned/unverifiable checksums"
 done
@@ -114,46 +127,74 @@ step "Verifying artifact checksums"
 verify_sha256 "$PROTECTED_GATEWAY"
 verify_sha256 "$WHEEL"
 verify_sha256 "$UPGRADE_MANIFEST"
+verify_sha256 "$RELEASE_PROVENANCE"
 verify_sha256 "$RELEASE_SOURCE_MAP"
 WHEEL_SHA="$(shasum -a 256 "$WHEEL" | awk '{print $1}')"
 
-# The signed release source map binds the public release version to the exact
-# source commit that produced it. Any supplemental source input must be fetched
-# by that authenticated commit, never by a mutable/movable release tag.
-SOURCE_COMMIT="$(python3 - "$RELEASE_SOURCE_MAP" "$RUNTIME_VERSION" <<'PYEOF'
+# Bind every source-derived input to the immutable commit authenticated by the
+# signed release provenance. Tags are convenient selectors, but mutable Git
+# refs are not a sufficient trust boundary for a release build.
+SOURCE_BINDING="$(python3 - "$RELEASE_PROVENANCE" "$RELEASE_SOURCE_MAP" "$RUNTIME_VERSION" <<'PYEOF'
+import hashlib
 import json
-import re
 from pathlib import Path
+import re
 import sys
 
-source_map = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-version = sys.argv[2]
-commit = source_map.get("source_commit", "")
-tree = source_map.get("source_tree", "")
-if (
-    source_map.get("schema_version") != 1
-    or source_map.get("release_version") != version
-    or re.fullmatch(r"[0-9a-f]{40}", commit) is None
-    or re.fullmatch(r"[0-9a-f]{40}", tree) is None
-):
-    raise SystemExit("authenticated release source map is invalid")
-print(commit)
+provenance_path, source_map_path = map(Path, sys.argv[1:3])
+version = sys.argv[3]
+provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+source_map_bytes = source_map_path.read_bytes()
+source_map = json.loads(source_map_bytes)
+
+if provenance.get("schema_version") != 1 or source_map.get("schema_version") != 1:
+    raise SystemExit("unsupported release provenance schema")
+if provenance.get("release_version") != version or source_map.get("release_version") != version:
+    raise SystemExit("release provenance version does not match the selected runtime")
+
+source_commit = provenance.get("source_commit")
+if not isinstance(source_commit, str) or re.fullmatch(r"[0-9a-f]{40}", source_commit) is None:
+    raise SystemExit("release provenance has no valid immutable source commit")
+source_tree = provenance.get("source_tree")
+if not isinstance(source_tree, str) or re.fullmatch(r"[0-9a-f]{40}", source_tree) is None:
+    raise SystemExit("release provenance has no valid source tree")
+for key in ("source_commit", "source_tree", "policy_commit", "policy_tree"):
+    if source_map.get(key) != provenance.get(key):
+        raise SystemExit(f"release source map disagrees with provenance for {key}")
+
+expected_map_sha = provenance.get("release_source_map_sha256")
+actual_map_sha = hashlib.sha256(source_map_bytes).hexdigest()
+if expected_map_sha != actual_map_sha:
+    raise SystemExit("release source map hash does not match signed provenance")
+
+for document in (provenance, source_map):
+    identity = document.get("source_install_identity")
+    if not isinstance(identity, dict) or identity.get("source_release") != version:
+        raise SystemExit("release source identity does not match the selected runtime")
+    if identity.get("runtime_config_version") != 8:
+        raise SystemExit("unsupported DefenseClaw runtime config version")
+
+print(source_commit, source_tree)
 PYEOF
 )"
-[[ -n "$SOURCE_COMMIT" ]] || die "release source map did not identify an authenticated source commit"
+read -r SOURCE_COMMIT SOURCE_TREE <<< "$SOURCE_BINDING"
+[[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ && "$SOURCE_TREE" =~ ^[0-9a-f]{40}$ ]] \
+    || die "release provenance did not yield a valid source commit and tree"
 printf '    source commit  %s\n' "$SOURCE_COMMIT"
+printf '    source tree    %s\n' "$SOURCE_TREE"
 
-# The public signed checksum manifest is the release attestation available to
-# downstream packagers. Preserve it in the app under the name expected by the
-# upstream macOS release verifier.
+# The public, release-workflow-signed checksum manifest is the candidate
+# attestation available to downstream packagers. Preserve the authenticated
+# bytes under the name expected by the runtime installer.
 cp "$RUNTIME_DIR/checksums.txt" "$RUNTIME_ATTESTATION"
 
-# Validate the signed policy before decoding either protected artifact, then
-# extract only the regular gateway binary from the authenticated archive.
+# Validate the complete schema-2 policy before decoding either protected
+# artifact, then extract only the regular gateway binary from the authenticated
+# archive. The protected wheel remains protected in RuntimePayload.
 step "Validating schema-2 runtime policy and protected artifacts"
 GATEWAY="$RUNTIME_DIR/defenseclaw-gateway"
 DECODED_WHEEL="$RUNTIME_DIR/defenseclaw-${RUNTIME_VERSION}-py3-none-any.whl"
-python3 - "$UPGRADE_MANIFEST" "$RUNTIME_ATTESTATION" "$PROTECTED_GATEWAY" "$WHEEL" "$RUNTIME_VERSION" "$GATEWAY" "$DECODED_WHEEL" <<'PYEOF'
+python3 - "$UPGRADE_MANIFEST" "$RUNTIME_ATTESTATION" "$PROTECTED_GATEWAY" "$WHEEL" "$RUNTIME_VERSION" "$ARCH" "$GATEWAY" "$DECODED_WHEEL" <<'PYEOF'
 import hashlib
 import io
 import json
@@ -164,46 +205,62 @@ import tarfile
 import zipfile
 
 manifest_path, checksums_path, gateway_path, wheel_path = map(Path, sys.argv[1:5])
-version = sys.argv[5]
-output_path = Path(sys.argv[6])
-decoded_wheel_path = Path(sys.argv[7])
+version, arch = sys.argv[5:7]
+output_path = Path(sys.argv[7])
+decoded_wheel_path = Path(sys.argv[8])
 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+expected_gateways = {
+    os_name: {
+        candidate_arch: f"defenseclaw_{version}_protocol2_{os_name}_{candidate_arch}.dcgateway"
+        for candidate_arch in ("amd64", "arm64")
+    }
+    for os_name in ("darwin", "linux", "windows")
+}
 expected_wheel = f"defenseclaw-{version}-2-py3-none-any.dcwheel"
-expected_gateway = f"defenseclaw_{version}_protocol2_darwin_arm64.dcgateway"
-gateways = manifest.get("release_artifacts", {}).get("gateways", {})
+expected_artifacts = {"wheel": expected_wheel, "gateways": expected_gateways}
+expected_gateway = expected_gateways["darwin"].get(arch)
 if (
     manifest.get("schema_version") != 2
     or manifest.get("release_version") != version
-    or manifest.get("release_artifacts", {}).get("wheel") != expected_wheel
-    or gateways.get("darwin", {}).get("arm64") != expected_gateway
+    or manifest.get("release_artifacts") != expected_artifacts
+    or gateway_path.name != expected_gateway
+    or wheel_path.name != expected_wheel
 ):
     raise SystemExit("signed upgrade manifest does not select the expected protocol-2 macOS runtime")
 
 checksums = {}
 for line_number, raw in enumerate(checksums_path.read_text(encoding="utf-8").splitlines(), 1):
-    match = re.fullmatch(r"([0-9a-f]{64})  ([A-Za-z0-9._-]+)", raw)
-    if not match:
+    parts = raw.split()
+    if len(parts) != 2 or re.fullmatch(r"[0-9A-Fa-f]{64}", parts[0]) is None:
         raise SystemExit(f"invalid signed checksum line {line_number}")
-    digest, name = match.groups()
+    name = parts[1].removeprefix("./").removeprefix("*")
+    if not name or Path(name).name != name:
+        raise SystemExit(f"invalid signed checksum filename on line {line_number}")
     if name in checksums:
         raise SystemExit(f"duplicate signed checksum entry: {name}")
-    checksums[name] = digest
+    checksums[name] = parts[0].lower()
 for path in (manifest_path, gateway_path, wheel_path):
     actual = hashlib.sha256(path.read_bytes()).hexdigest()
     if checksums.get(path.name) != actual:
         raise SystemExit(f"signed checksums do not authenticate {path.name}")
 
 magic = b"DEFENSECLAW-PROTECTED-ARTIFACT-V1\n"
+max_envelope_size = 512 * 1024 * 1024
+
 def decode(path):
+    size = path.stat().st_size
+    if size <= len(magic) or size > max_envelope_size:
+        raise SystemExit(f"invalid protected artifact size: {path.name}")
     outer = path.read_bytes()
-    if not outer.startswith(magic) or len(outer) == len(magic):
+    if not outer.startswith(magic):
         raise SystemExit(f"invalid protected artifact envelope: {path.name}")
     return bytes(value ^ 0xA5 for value in outer[len(magic):])
 
 wheel = decode(wheel_path)
-if not zipfile.is_zipfile(io.BytesIO(wheel)):
+if zipfile.is_zipfile(wheel_path) or not zipfile.is_zipfile(io.BytesIO(wheel)):
     raise SystemExit("protected runtime wheel payload is invalid")
 decoded_wheel_path.write_bytes(wheel)
+decoded_wheel_path.chmod(0o600)
 
 gateway_archive = decode(gateway_path)
 with tarfile.open(fileobj=io.BytesIO(gateway_archive), mode="r:gz") as archive:
@@ -215,16 +272,19 @@ with tarfile.open(fileobj=io.BytesIO(gateway_archive), mode="r:gz") as archive:
     if len(candidates) != 1:
         raise SystemExit("protected gateway archive must contain exactly one gateway binary")
     member = candidates[0]
+    if member.size <= 0 or member.size > 256 * 1024 * 1024:
+        raise SystemExit("protected gateway binary size is invalid")
     source = archive.extractfile(member)
     if source is None:
         raise SystemExit("protected gateway binary is unreadable")
     payload = source.read()
-    if not payload or len(payload) > 256 * 1024 * 1024:
-        raise SystemExit("protected gateway binary size is invalid")
+    if len(payload) != member.size:
+        raise SystemExit("protected gateway binary is truncated")
     output_path.write_bytes(payload)
     output_path.chmod(0o755)
 PYEOF
 
+# ── 3. Re-sign the decoded gateway ───────────────────────────────────────────
 # The upstream binary is ad-hoc signed; notarization requires Developer ID
 # with hardened runtime on every Mach-O inside the bundle.
 file "$GATEWAY" | grep -q "Mach-O 64-bit executable arm64" \
@@ -234,19 +294,29 @@ step "Re-signing gateway: Developer ID + hardened runtime"
 codesign -f -o runtime --timestamp -s "$IDENTITY" "$GATEWAY"
 codesign --verify --strict --verbose=2 "$GATEWAY"
 
-# ── 3b. Authenticated overrides + hash-locked dependencies ───────────────────
+# ── 3b. Dependency overrides from the upstream pyproject ─────────────────────
 # The wheel alone does not resolve to upstream's tested dependency set: their
 # pyproject's [tool.uv] override-dependencies carries CVE-driven floors
 # (cryptography, litellm, aiohttp, ...) AND the textual>=8.2.7 override that
 # the wheel's skill-scanner pin (textual<8) would otherwise defeat — without
-# it a fresh install's TUI crashes (Tabs.get_tab AttributeError). Resolve with
-# the authenticated override list during the release build, then ship both the
-# list and the resulting hash lock as signed payload provenance.
-step "Extracting dependency overrides from authenticated source $SOURCE_COMMIT"
+# it a fresh install's TUI crashes (Tabs.get_tab AttributeError). Ship the
+# authenticated source tree's override list in the payload; the installer applies it via
+# `uv pip install --overrides`, reproducing upstream's own resolution.
+step "Extracting dependency overrides from authenticated source commit ($SOURCE_COMMIT)"
 PYPROJECT="$RUNTIME_DIR/pyproject.toml"
-curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 \
-    -o "$PYPROJECT" "https://raw.githubusercontent.com/${RUNTIME_REPO}/${SOURCE_COMMIT}/pyproject.toml" \
-    || die "could not fetch pyproject.toml for authenticated source commit $SOURCE_COMMIT"
+SOURCE_REPO="$RUNTIME_DIR/source.git"
+git init --bare --quiet "$SOURCE_REPO"
+git -C "$SOURCE_REPO" fetch --quiet --no-tags --depth=1 \
+    "https://github.com/${RUNTIME_REPO}.git" "$SOURCE_COMMIT" \
+    || die "could not fetch authenticated source commit $SOURCE_COMMIT"
+FETCHED_COMMIT="$(git -C "$SOURCE_REPO" rev-parse 'FETCH_HEAD^{commit}')"
+FETCHED_TREE="$(git -C "$SOURCE_REPO" rev-parse 'FETCH_HEAD^{tree}')"
+[[ "$FETCHED_COMMIT" == "$SOURCE_COMMIT" ]] \
+    || die "fetched source commit does not match signed release provenance"
+[[ "$FETCHED_TREE" == "$SOURCE_TREE" ]] \
+    || die "fetched source tree does not match signed release provenance"
+git -C "$SOURCE_REPO" show "${SOURCE_COMMIT}:pyproject.toml" > "$PYPROJECT" \
+    || die "authenticated source tree does not contain pyproject.toml"
 OVERRIDES="$RUNTIME_DIR/overrides.txt"
 python3 - "$PYPROJECT" > "$OVERRIDES" <<'PYEOF'
 import re, sys
@@ -266,10 +336,9 @@ grep -q '^textual' "$OVERRIDES" \
     || die "override extraction produced no textual pin — check pyproject format: $(head -3 "$OVERRIDES")"
 printf '    %s overrides (incl. %s)\n' "$(wc -l < "$OVERRIDES" | tr -d ' ')" "$(grep '^textual' "$OVERRIDES")"
 
-# Resolve once in the trusted release build, include hashes for every accepted
-# distribution, and omit the root package because its separately authenticated
-# protected wheel is installed locally with --no-deps. End-user installation
-# may download only artifacts whose hashes are sealed into this app bundle.
+# Resolve dependencies once in the authenticated release build. The protected
+# root wheel remains separately authenticated and is installed with --no-deps;
+# every downloaded dependency must match a hash sealed into the app bundle.
 step "Generating hash-locked macOS arm64 dependency set"
 DEPENDENCY_LOCK="$RUNTIME_DIR/runtime-requirements.lock"
 RUNTIME_REQUIREMENTS_IN="$RUNTIME_DIR/runtime-requirements.in"
@@ -325,6 +394,8 @@ xcodebuild -exportArchive \
     -quiet
 APP_PLAIN="$WORK/export/$APP_NAME.app"
 [[ -d "$APP_PLAIN" ]] || die "export did not produce $APP_PLAIN"
+strip_stale_provenance "$APP_PLAIN"
+codesign --verify --strict --deep --verbose=2 "$APP_PLAIN"
 
 # ── 5. Traditional app-only artifact (self-update track) ─────────────────────
 if [[ "${SKIP_NOTARIZE:-0}" != "1" ]]; then
@@ -333,11 +404,19 @@ if [[ "${SKIP_NOTARIZE:-0}" != "1" ]]; then
     ditto -c -k --keepParent "$APP_PLAIN" "$PLAIN_ZIP"
     notarize "$PLAIN_ZIP"
     xcrun stapler staple "$APP_PLAIN"
+    strip_stale_provenance "$APP_PLAIN"
+    codesign --verify --strict --deep --verbose=2 "$APP_PLAIN"
     spctl -a -t install -vv "$APP_PLAIN"
 fi
 step "Creating release zip (app-only)"
 RELEASE_ZIP="$OUT/$APP_NAME-$APP_VERSION.zip"
+strip_stale_provenance "$APP_PLAIN"
+codesign --verify --strict --deep --verbose=2 "$APP_PLAIN"
 ditto -c -k --keepParent "$APP_PLAIN" "$RELEASE_ZIP"
+ZIP_CHECK="$WORK/app-only-zip-check"
+mkdir -p "$ZIP_CHECK"
+ditto -x -k "$RELEASE_ZIP" "$ZIP_CHECK"
+codesign --verify --strict --deep --verbose=2 "$ZIP_CHECK/$APP_NAME.app"
 
 # ── 6. Unified variant: copy, inject RuntimePayload, re-sign ─────────────────
 step "Injecting RuntimePayload (runtime $RUNTIME_VERSION)"
@@ -362,18 +441,23 @@ UPGRADE_MANIFEST_SHA="$(shasum -a 256 "$PAYLOAD/upgrade-manifest.json" | awk '{p
 RUNTIME_ATTESTATION_SHA="$(shasum -a 256 "$PAYLOAD/runtime-candidate-checksums.txt" | awk '{print $1}')"
 python3 - "$PAYLOAD/payload-manifest.json" "$RUNTIME_VERSION" "$RUNTIME_TAG" "$ARCH" \
     "$GATEWAY_SIGNED_SHA" "$(basename "$WHEEL")" "$WHEEL_SHA" "$OVERRIDES_SHA" "$DEPENDENCY_LOCK_SHA" \
-    "$UPGRADE_MANIFEST_SHA" "$RUNTIME_ATTESTATION_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" <<'PYEOF'
+    "$UPGRADE_MANIFEST_SHA" "$RUNTIME_ATTESTATION_SHA" "$SOURCE_COMMIT" "$SOURCE_TREE" \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" <<'PYEOF'
 import json
 from pathlib import Path
 import sys
 
 (
     path, version, tag, arch, gateway_sha, wheel_name, wheel_sha,
-    overrides_sha, dependency_lock_sha, policy_sha, attestation_sha, built_at,
+    overrides_sha, dependency_lock_sha, policy_sha, attestation_sha, source_commit, source_tree, built_at,
 ) = sys.argv[1:]
 payload = {
     "runtime_version": version,
     "runtime_tag": tag,
+    "runtime_source": {
+        "commit": source_commit,
+        "tree": source_tree,
+    },
     "arch": arch,
     "gateway": {
         "file": "defenseclaw-gateway",
@@ -398,11 +482,21 @@ PYEOF
 step "Re-signing app bundle over the injected payload"
 # Preserve entitlements if the export produced any (currently none).
 ENTITLEMENTS="$WORK/app-entitlements.plist"
-if codesign -d --entitlements - --xml "$APP" > "$ENTITLEMENTS" 2>/dev/null && [[ -s "$ENTITLEMENTS" ]]; then
+if codesign -d --entitlements - --xml "$APP" > "$ENTITLEMENTS" 2>/dev/null \
+    && python3 - "$ENTITLEMENTS" <<'PYEOF'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as handle:
+    entitlements = plistlib.load(handle)
+raise SystemExit(0 if isinstance(entitlements, dict) and entitlements else 1)
+PYEOF
+then
     codesign -f -o runtime --timestamp --entitlements "$ENTITLEMENTS" -s "$IDENTITY" "$APP"
 else
     codesign -f -o runtime --timestamp -s "$IDENTITY" "$APP"
 fi
+strip_stale_provenance "$APP"
 codesign --verify --strict --deep --verbose=2 "$APP"
 
 # ── 7. Notarize + staple the unified app ─────────────────────────────────────
@@ -412,6 +506,8 @@ if [[ "${SKIP_NOTARIZE:-0}" != "1" ]]; then
     ditto -c -k --keepParent "$APP" "$APP_ZIP"
     notarize "$APP_ZIP"
     xcrun stapler staple "$APP"
+    strip_stale_provenance "$APP"
+    codesign --verify --strict --deep --verbose=2 "$APP"
     spctl -a -t install -vv "$APP"
 fi
 
@@ -420,9 +516,16 @@ step "Creating DMG"
 STAGE="$WORK/dmg-stage"
 mkdir -p "$STAGE"
 ditto "$APP" "$STAGE/$APP_NAME.app"
+strip_stale_provenance "$STAGE/$APP_NAME.app"
+codesign --verify --strict --deep --verbose=2 "$STAGE/$APP_NAME.app"
 ln -s /Applications "$STAGE/Applications"
 DMG="$OUT/$APP_NAME-$APP_VERSION.dmg"
-hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+# hdiutil's automatic sizing can undercount code-signing metadata and extended
+# attributes. Give the temporary image 25% plus 64 MiB of headroom; UDZO still
+# emits a compact release artifact.
+STAGE_KB="$(du -sk "$STAGE" | awk '{print $1}')"
+DMG_SIZE_KB=$((STAGE_KB + STAGE_KB / 4 + 65536))
+hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE" -size "${DMG_SIZE_KB}k" -ov -format UDZO "$DMG"
 codesign --timestamp -s "$IDENTITY" "$DMG"
 
 if [[ "${SKIP_NOTARIZE:-0}" != "1" ]]; then
@@ -431,6 +534,12 @@ if [[ "${SKIP_NOTARIZE:-0}" != "1" ]]; then
     xcrun stapler staple "$DMG"
     spctl -a -t open --context context:primary-signature -vv "$DMG"
 fi
+
+# A valid DMG signature does not prove the staged app remained intact. Verify
+# both copies after image creation so release builds fail before publication if
+# staging or signing changed a sealed resource.
+codesign --verify --strict --deep --verbose=2 "$APP"
+codesign --verify --strict --deep --verbose=2 "$STAGE/$APP_NAME.app"
 
 step "Done"
 printf 'App version   : %s\n' "$APP_VERSION"

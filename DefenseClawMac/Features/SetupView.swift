@@ -75,6 +75,9 @@ struct WizardDefinition: Identifiable {
     var commandBuilder: (([String: String], Bool) -> [[String]])? = nil
     /// Field delivered through stdin instead of argv (currently `keys set`).
     var secretInputField: String? = nil
+    /// Secret fields exported only to the child process environment. Values
+    /// are masked in review and Activity history and never enter argv.
+    var secretEnvironment: (([String: String]) -> [String: String])? = nil
     /// Optional form validation. Returning a message keeps Review disabled and
     /// surfaces the same requirement before invoking the CLI.
     var validation: (([String: String]) -> String?)? = nil
@@ -218,6 +221,12 @@ struct WizardSheet: View {
 
     private var cliCommands: [[String]] { buildCommands(maskSecrets: false) }
 
+    private var commandEnvironment: [String: String] {
+        let visibleKeys = Set(visibleFields.map(\.key))
+        let scopedValues = values.filter { visibleKeys.contains($0.key) }
+        return wizard.secretEnvironment?(scopedValues) ?? [:]
+    }
+
     private var validationMessage: String? {
         if let message = wizard.validation?(values) { return message }
         return SetupSecretTransportPolicy.validationMessage(
@@ -236,9 +245,12 @@ struct WizardSheet: View {
     private var displayCommand: String {
         let commands = buildCommands(maskSecrets: true)
         guard !commands.isEmpty else { return "(no changes selected — nothing to apply)" }
-        return commands
-            .map { command in
-                (["defenseclaw"] + command).joined(separator: " ")
+        return commands.enumerated()
+            .map { index, command in
+                let environment = index == 0
+                    ? commandEnvironment.keys.sorted().map { "\($0)=••••••" }
+                    : []
+                return (environment + ["defenseclaw"] + command).joined(separator: " ")
             }
             .joined(separator: "\n")
     }
@@ -481,6 +493,7 @@ struct WizardSheet: View {
                     binary: "defenseclaw",
                     arguments: arguments,
                     standardInput: secret,
+                    environment: index == 0 ? commandEnvironment : [:],
                     category: "setup",
                     origin: "Setup",
                     refreshOnSuccess: true
