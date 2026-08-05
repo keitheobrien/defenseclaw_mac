@@ -355,8 +355,8 @@ grep -q -- '--hash=sha256:' "$DEPENDENCY_LOCK" \
     || die "dependency lock contains no authenticated distribution hashes"
 grep -q '^defenseclaw==' "$DEPENDENCY_LOCK" \
     && die "dependency lock unexpectedly contains the separately authenticated root wheel"
-grep -Eq '(^|[[:space:]])(@|https?://|file:)' "$DEPENDENCY_LOCK" \
-    && die "dependency lock contains an untrusted direct URL or local path"
+python3 "$REPO_ROOT/scripts/validate_dependency_lock.py" "$PYPROJECT" "$DEPENDENCY_LOCK" \
+    || die "dependency lock failed authenticated-reference validation"
 printf '    %s locked dependency lines\n' "$(grep -c '==' "$DEPENDENCY_LOCK")"
 
 # ── 4. Archive + export the app ──────────────────────────────────────────────

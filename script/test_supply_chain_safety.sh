@@ -37,6 +37,8 @@ checks = {
     "pyproject is read from the authenticated source commit": '${SOURCE_COMMIT}:pyproject.toml' in build,
     "mutable runtime tag does not select pyproject": '${RUNTIME_TAG}/pyproject.toml' not in build,
     "dependency lock includes artifact hashes": '--generate-hashes' in build,
+    "dependency lock authenticates approved direct references": 'validate_dependency_lock.py' in build,
+    "dependency lock no longer uses a blanket URL ban": "untrusted direct URL or local path" not in build,
     "dependency lock excludes the separately authenticated root wheel": '--no-emit-package defenseclaw' in build,
     "dependency lock is embedded": 'runtime-requirements.lock' in build,
     "runtime requires dependency hashes": '"--require-hashes"' in runtime,
