@@ -1,24 +1,60 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 // Async REST client for the DefenseClaw Go gateway sidecar (localhost only).
 // Endpoint set and timeouts mirror the Python TUI's OrchestratorClient.
 
 import Foundation
 
+private struct GatewayMutationDenied: LocalizedError {
+    let reason: String
+    var errorDescription: String? { "Operation refused by the Mac app: \(reason)" }
+}
+
 actor GatewayClient {
-    private var baseURL: URL
+    private var baseURL: URL?
     private var token: String?
+    private var mutationsAllowed: Bool
+    private var mutationDenialReason: String
     private let session: URLSession
+    private let responseByteLimit: Int
 
     static let defaultTimeout: TimeInterval = 5
     static let pluginTimeout: TimeInterval = 90
     static let scanTimeout: TimeInterval = 120
+    static let maximumResponseBytes = 4 * 1024 * 1024
+    private static let pathSegmentCharacters = CharacterSet.alphanumerics
+        .union(CharacterSet(charactersIn: "-._~"))
 
-    init(config: DefenseClawConfig = DefenseClawConfig()) {
+    init(
+        config: DefenseClawConfig = DefenseClawConfig(),
+        mutationsAllowed: Bool = false,
+        mutationDenialReason: String = "This installation is read only.",
+        maximumResponseBytes: Int = GatewayClient.maximumResponseBytes,
+        session: URLSession? = nil
+    ) {
         self.baseURL = config.baseURL
         self.token = config.gatewayToken
+        self.mutationsAllowed = mutationsAllowed
+        self.mutationDenialReason = mutationDenialReason
+        self.responseByteLimit = max(1, maximumResponseBytes)
         let conf = URLSessionConfiguration.ephemeral
         conf.timeoutIntervalForRequest = Self.defaultTimeout
         conf.waitsForConnectivity = false
-        self.session = URLSession(configuration: conf)
+        self.session = session ?? URLSession(configuration: conf)
     }
 
     func update(config: DefenseClawConfig) {
@@ -26,15 +62,33 @@ actor GatewayClient {
         token = config.gatewayToken
     }
 
+    func update(installationContext: InstallationContext) {
+        mutationsAllowed = installationContext.permitsMutation
+        mutationDenialReason = installationContext.accessMode.reason ?? "This installation is read only."
+    }
+
     // MARK: - Request plumbing
 
     private func request(
         _ method: String, _ path: String,
         body: [String: Any]? = nil,
+        queryItems: [URLQueryItem] = [],
         timeout: TimeInterval = GatewayClient.defaultTimeout
     ) async throws -> Data {
-        guard let url = URL(string: path, relativeTo: baseURL) else {
+        if method != "GET", !mutationsAllowed {
+            throw GatewayMutationDenied(reason: mutationDenialReason)
+        }
+        guard let baseURL, Self.isLoopback(baseURL) else {
+            throw GatewayError.badResponse("refusing non-loopback gateway URL")
+        }
+        guard let relativeURL = URL(string: path, relativeTo: baseURL),
+              var components = URLComponents(url: relativeURL, resolvingAgainstBaseURL: true)
+        else {
             throw GatewayError.badResponse("bad path \(path)")
+        }
+        if !queryItems.isEmpty { components.queryItems = queryItems }
+        guard let url = components.url, Self.isLoopback(url) else {
+            throw GatewayError.badResponse("refusing non-loopback request URL")
         }
         var req = URLRequest(url: url, timeoutInterval: timeout)
         req.httpMethod = method
@@ -48,10 +102,45 @@ actor GatewayClient {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
-        let data: Data
-        let response: URLResponse
         do {
-            (data, response) = try await session.data(for: req)
+            let (bytes, response) = try await session.bytes(for: req)
+            guard let http = response as? HTTPURLResponse else {
+                throw GatewayError.badResponse("non-HTTP response")
+            }
+            if http.statusCode == 401 || http.statusCode == 403 {
+                throw GatewayError.unauthorized
+            }
+            let expectedLength = http.expectedContentLength
+            guard expectedLength < 0 || expectedLength <= Int64(responseByteLimit) else {
+                throw GatewayError.badResponse(
+                    "response exceeds the \(responseByteLimit)-byte limit"
+                )
+            }
+
+            var data = Data()
+            if expectedLength > 0 {
+                data.reserveCapacity(Int(expectedLength))
+            }
+            for try await byte in bytes {
+                guard data.count < responseByteLimit else {
+                    throw GatewayError.badResponse(
+                        "response exceeds the \(responseByteLimit)-byte limit"
+                    )
+                }
+                data.append(byte)
+            }
+
+            switch http.statusCode {
+            case 200..<300:
+                return data
+            default:
+                throw GatewayError.degraded(
+                    status: http.statusCode,
+                    body: String(data: data, encoding: .utf8) ?? ""
+                )
+            }
+        } catch let error as GatewayError {
+            throw error
         } catch let err as URLError {
             switch err.code {
             case .cannotConnectToHost, .networkConnectionLost, .cannotFindHost:
@@ -62,22 +151,32 @@ actor GatewayClient {
                 throw GatewayError.offline
             }
         }
-        guard let http = response as? HTTPURLResponse else {
-            throw GatewayError.badResponse("non-HTTP response")
-        }
-        switch http.statusCode {
-        case 200..<300:
-            return data
-        case 401, 403:
-            throw GatewayError.unauthorized
-        default:
-            throw GatewayError.degraded(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "")
-        }
     }
 
     private func getJSON(_ path: String, timeout: TimeInterval = GatewayClient.defaultTimeout) async throws -> Any {
         let data = try await request("GET", path, timeout: timeout)
         return try JSONSerialization.jsonObject(with: data)
+    }
+
+    private func encodedPathSegment(_ value: String) throws -> String {
+        guard let encoded = value.addingPercentEncoding(withAllowedCharacters: Self.pathSegmentCharacters) else {
+            throw GatewayError.badResponse("could not encode URL path segment")
+        }
+        return encoded
+    }
+
+    private static func isLoopback(_ url: URL) -> Bool {
+        guard ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return false }
+        let host = (url.host ?? "").lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        if host == "localhost" || host == "::1" { return true }
+        let octets = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard octets.count == 4,
+              octets.allSatisfy({ part in
+                  guard !part.isEmpty, part.allSatisfy(\.isNumber), let value = Int(part) else { return false }
+                  return (0...255).contains(value)
+              })
+        else { return false }
+        return octets[0] == "127"
     }
 
     @discardableResult
@@ -99,7 +198,10 @@ actor GatewayClient {
         snap.version = dict["version"] as? String
 
         // Subsystems: any nested object with a state/status field becomes a row.
-        let known = ["watcher", "api", "guardrail", "telemetry", "ai_discovery", "sinks", "sandbox", "gateway", "watchdog"]
+        let known = [
+            "watcher", "api", "guardrail", "telemetry", "ai_discovery",
+            "sinks", "sandbox", "gateway", "watchdog", "managed",
+        ]
         for key in known {
             if let sub = dict[key] as? [String: Any],
                let state = (sub["state"] as? String) ?? (sub["status"] as? String) {
@@ -301,8 +403,11 @@ actor GatewayClient {
     private static func looseInt(_ value: Any?) -> Int {
         switch value {
         case let i as Int: return i
-        case let n as NSNumber: return n.intValue
-        case let s as String: return Int(s) ?? Int(Double(s) ?? 0)
+        case let n as NSNumber: return DCSafeNumbers.intTruncating(n.doubleValue) ?? 0
+        case let s as String:
+            if let integer = Int(s) { return integer }
+            guard let number = Double(s) else { return 0 }
+            return DCSafeNumbers.intTruncating(number) ?? 0
         default: return 0
         }
     }
@@ -421,10 +526,6 @@ actor GatewayClient {
                        ["targetType": targetType, "targetName": targetName, "reason": reason])
     }
 
-    func patchConfig(path: String, value: Any) async throws {
-        _ = try await request("PATCH", "/config/patch", body: ["path": path, "value": value])
-    }
-
     func reloadPolicy() async throws {
         try await post("/policy/reload")
     }
@@ -459,8 +560,9 @@ actor GatewayClient {
         snap.goneSignals = (summary["gone_signals"] as? Int) ?? 0
         snap.privacyMode = (summary["privacy_mode"] as? String) ?? (summary["mode"] as? String) ?? ""
         snap.lastScan = DCDates.parse(summary["scanned_at"] ?? summary["last_scan"] ?? summary["lastScan"])
-        let signals = (dict["signals"] as? [[String: Any]]) ?? (dict["components"] as? [[String: Any]]) ?? []
-        snap.signals = signals.map(decodeSignal)
+        let signalPayload = dict["signals"] ?? dict["components"]
+        let signals = AISignalDecoding.signalMappings(from: signalPayload)
+        snap.signals = signals.map(AISignalDecoding.decode)
         snap.components = signals.map(decodeComponent)
         if snap.totalDetected == 0 { snap.totalDetected = snap.signals.count }
         snap.averageConfidence = normalizeConfidence(summary["avg_confidence"] ?? summary["average_confidence"])
@@ -470,33 +572,6 @@ actor GatewayClient {
         return snap
     }
 
-    private func decodeSignal(_ r: [String: Any]) -> AISignal {
-        let component = r["component"] as? [String: Any]
-        return AISignal(
-            state: (r["state"] as? String) ?? "",
-            product: (r["product"] as? String) ?? (r["name"] as? String) ?? "?",
-            vendor: (r["vendor"] as? String) ?? "",
-            category: (r["category"] as? String) ?? "",
-            detector: (r["detector"] as? String) ?? "",
-            version: (component?["version"] as? String) ?? (r["version"] as? String) ?? "",
-            ecosystem: (component?["ecosystem"] as? String) ?? "",
-            componentName: (component?["name"] as? String) ?? "",
-            source: (r["source"] as? String) ?? "",
-            confidence: normalizeConfidence(r["confidence"]),
-            identityScore: normalizeConfidence(r["identity_score"]),
-            identityBand: (r["identity_band"] as? String) ?? "",
-            presenceScore: normalizeConfidence(r["presence_score"]),
-            presenceBand: (r["presence_band"] as? String) ?? "",
-            firstSeen: DCDates.parse(r["first_seen"]),
-            lastSeen: DCDates.parse(r["last_seen"]),
-            lastActive: DCDates.parse(r["last_active_at"]),
-            name: (r["name"] as? String) ?? "",
-            supportedConnector: (r["supported_connector"] as? String) ?? "",
-            signalID: (r["signal_id"] as? String) ?? (r["id"] as? String) ?? "",
-            signatureID: (r["signature_id"] as? String) ?? ""
-        )
-    }
-
     func aiComponents() async throws -> [AIComponent] {
         let json = try await getJSON("/api/v1/ai-usage/components")
         let rows = (json as? [[String: Any]]) ?? ((json as? [String: Any])?["components"] as? [[String: Any]]) ?? []
@@ -504,14 +579,18 @@ actor GatewayClient {
     }
 
     func aiComponentLocations(ecosystem: String, name: String) async throws -> [String] {
-        let json = try await getJSON("/api/v1/ai-usage/components/\(ecosystem)/\(name)/locations")
+        let ecosystemSegment = try encodedPathSegment(ecosystem)
+        let nameSegment = try encodedPathSegment(name)
+        let json = try await getJSON("/api/v1/ai-usage/components/\(ecosystemSegment)/\(nameSegment)/locations")
         if let arr = json as? [String] { return arr }
         let rows = ((json as? [String: Any])?["locations"] as? [Any]) ?? (json as? [Any]) ?? []
         return rows.compactMap { ($0 as? String) ?? ($0 as? [String: Any])?["path"] as? String }
     }
 
     func aiComponentHistory(ecosystem: String, name: String) async throws -> [ConfidencePoint] {
-        let json = try await getJSON("/api/v1/ai-usage/components/\(ecosystem)/\(name)/history")
+        let ecosystemSegment = try encodedPathSegment(ecosystem)
+        let nameSegment = try encodedPathSegment(name)
+        let json = try await getJSON("/api/v1/ai-usage/components/\(ecosystemSegment)/\(nameSegment)/history")
         let rows = (json as? [[String: Any]]) ?? ((json as? [String: Any])?["history"] as? [[String: Any]]) ?? []
         return rows.compactMap { r in
             guard let ts = DCDates.parse(r["timestamp"] ?? r["captured_at"]) else { return nil }
@@ -524,7 +603,11 @@ actor GatewayClient {
     }
 
     func confidencePolicy(source: String = "merged") async throws -> String {
-        let data = try await request("GET", "/api/v1/ai-usage/confidence/policy?source=\(source)")
+        let data = try await request(
+            "GET",
+            "/api/v1/ai-usage/confidence/policy",
+            queryItems: [URLQueryItem(name: "source", value: source)]
+        )
         return String(data: data, encoding: .utf8) ?? ""
     }
 
@@ -549,7 +632,6 @@ actor GatewayClient {
     }
 
     private func normalizeConfidence(_ raw: Any?) -> Double {
-        let value = (raw as? Double) ?? (raw as? Int).map(Double.init) ?? 0
-        return value > 1 ? value / 100 : value // accept 0–100 or 0–1
+        AIConfidence.normalize(raw)
     }
 }

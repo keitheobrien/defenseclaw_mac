@@ -1,0 +1,78 @@
+{
+  "config_version": 8,
+  "intentional_source_differences": {
+    "DataLayer/AuditStore.swift": {
+      "local_sha256": "7d85f68c74f68ed8cdb5725e649124ef5c69489689d225660448bac5fcee9d81",
+      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "upstream_sha256": "810aa387f0f908f224a0b14757717fe38adb73188b3c848786851a92fccb6313"
+    },
+    "DataLayer/CLIRunner.swift": {
+      "local_sha256": "00b604446d249f1011c1509684cef7ef698407f11a9b59819812d58504e99f21",
+      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "upstream_sha256": "b6b17f9d0639e27c53f232a2672643751d037b513fdc60c00124aef7d5454d26"
+    },
+    "DataLayer/CommandActivityStore.swift": {
+      "local_sha256": "d889c6b01e85113614e309bfc317b2cb34c4f0a2d74f0baffbb035228ef69b44",
+      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "upstream_sha256": "a4272e1347137dffb8186766091a3f8fdc40700da74ecfb4bb34917298936dbe"
+    },
+    "DataLayer/CommandRegistry.swift": {
+      "local_sha256": "56c6342d78b79ef498053584251d26f3a29db4ee3bf3fb9b47600536dfe277fe",
+      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "upstream_sha256": "5ea0d2913658b3043092da8a0976fe1eb50329259fcdba36d20caa6eab13088a"
+    },
+    "DataLayer/DynamicConfigCatalog.swift": {
+      "local_sha256": "e726cdcd5866d641b52b684571e177cb1eecf5dc68a544152a65beb3ec540edb",
+      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "upstream_sha256": "15b11fff1157b8188f6ba5f73353046471626a590c51f27e07d8c8703531483a"
+    },
+    "DataLayer/Models.swift": {
+      "local_sha256": "156a46be2d9b5ef77713fbcb55ba9986f431a90b8b34511fc0661aa41a61fcde",
+      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "upstream_sha256": "3daf286efea813ecef1e4e081c03e5f3f9c6fee92e193b9c69c13b39427de4e5"
+    },
+    "DataLayer/StructuredDetailParser.swift": {
+      "local_sha256": "9fdd308a78d584bb5040b82e8e7184e21d64417b08755200333ad8964d7cc040",
+      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "upstream_sha256": "missing"
+    },
+    "DataLayer/UpdateChecker.swift": {
+      "local_sha256": "4cd31d4203d3ed63698b0914d3db82df5662650298c1068f6402351034412c89",
+      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "upstream_sha256": "f32a0b1a1a754b6b29298352b96400df2dadcb77fa7cc2ae3a6d738d2fe5c280"
+    },
+    "DesignSystem/Components.swift": {
+      "local_sha256": "1b22808bfe17933acf44840ce1dcd9bda802b7163375f623200f0704e0b9183b",
+      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "upstream_sha256": "91b21985fba228c4ae9bdf48ca505953bc42c0cbf2c86a89ea00a0949cfe7aa8"
+    },
+    "Features/ActivityView.swift": {
+      "local_sha256": "08c5128d492ad4d1da124f5b7386aac75cf7aa73c2d875a143cd1e15f8df07a9",
+      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "upstream_sha256": "0be6408d74fd102f96333c435f21158bf4c309a25d508b7ebe945e6e71f52d66"
+    },
+    "Features/AlertsView.swift": {
+      "local_sha256": "a3b9e47b7d98abb172aaa39c3d1ee7e7e99d11e34d9fecb2bf4ce0c6120a6806",
+      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "upstream_sha256": "05dab114438fe4831ae75ff5cf931acf9b82a6e4b6ed47188335db88d2d9542a"
+    },
+    "Features/CatalogViews.swift": {
+      "local_sha256": "31a1ce719e6b2001f40b9c9f2470eaade7a2aebc31fbef3082b1115b7121256a",
+      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "upstream_sha256": "0cbef282145b922a10d3ec282cb8ea6d03a70026e518b7f802f3ec5fcb6d252e"
+    },
+    "Features/ConfigEditorDefinitions.swift": {
+      "local_sha256": "b495b0b80595413d566cb8ac3f945aac6c2b85768c1a04c1f554b177a3abb026",
+      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "upstream_sha256": "e982d4cbc7cc07cd644227b82bf7ccb203858043228f4398ad383bb473cb48ef"
+    },
+    "Features/FirstRunView.swift": {
+      "local_sha256": "d47214c7243dc92bda0918b7701a0f0332b9d6d4eabbe877f6a826d3b5deb2d3",
+      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "upstream_sha256": "deec73741e850fc2c2870eae5c1ee19976ca1146876b11054c75d8c3d467940d"
+    }
+  },
+  "mac_app_version": "1.1.7",
+  "runtime_version": "0.8.5",
+  "upstream_commit": "0d925f4518d54e43a78b848fda9ff1c31fd92455"
+}

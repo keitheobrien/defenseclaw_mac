@@ -1,8 +1,26 @@
-// Reads ~/.defenseclaw/config.yaml — the same source of truth the TUI uses.
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+// Reads the InstallationContext-selected config.yaml — the same source of
+// truth the CLI/TUI use.
 // Minimal YAML subset parser (nested block mappings, scalars, simple lists),
 // sufficient for the keys the app consumes. Writes never go through this
 // store; they go via the gateway (/config/patch) or the defenseclaw CLI.
 
+import Darwin
 import Foundation
 
 struct DefenseClawConfig: Sendable {
@@ -23,6 +41,9 @@ struct DefenseClawConfig: Sendable {
     /// Non-empty when guardrail.connectors exists but failed to parse — the
     /// TUI's roster-degraded error notice.
     var rosterError = ""
+    /// Last config read failure. The last-good snapshot remains active while
+    /// this is non-empty so a transient filesystem error cannot wipe tokens.
+    var loadError = ""
     var guardrailEnabled = false
     var guardrailMode: String?
     var guardrailPort: Int?
@@ -54,8 +75,16 @@ struct DefenseClawConfig: Sendable {
         var lastStatus: String
     }
 
-    var baseURL: URL {
-        URL(string: "http://\(gatewayHost):\(gatewayPort)")!
+    var baseURL: URL? {
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = gatewayHost
+        components.port = gatewayPort
+        // URLComponents brackets IPv6 hosts correctly. Invalid configured
+        // hosts stay on the loopback fallback and are reported by health.
+        // Invalid operator-controlled values become nil and are rejected by
+        // GatewayClient before any token-bearing request is constructed.
+        return components.url
     }
 }
 
@@ -97,8 +126,8 @@ indirect enum YAMLNode: Sendable {
 
 enum MiniYAML {
     /// Parses block-style YAML mappings/sequences with plain or quoted scalars.
-    /// Ignores comments, documents markers, anchors, and flow collections —
-    /// adequate for defenseclaw's generated config.yaml.
+    /// Supports empty flow collections emitted by DefenseClaw; otherwise
+    /// ignores document markers, anchors, and non-empty flow collections.
     static func parse(_ text: String) -> YAMLNode {
         var lines: [(indent: Int, content: String)] = []
         for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
@@ -138,7 +167,7 @@ enum MiniYAML {
                     let value = String(inline[inline.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
                     item[key] = value.isEmpty
                         ? parseBlock(lines: lines, index: &index, indent: nextIndent(lines, index, greaterThan: indent))
-                        : .scalar(unquote(value))
+                        : inlineNode(value)
                     while index < lines.count, lines[index].indent > indent, !lines[index].content.hasPrefix("- ") {
                         let sub = lines[index]
                         if let c = findColon(sub.content) {
@@ -147,12 +176,12 @@ enum MiniYAML {
                             index += 1
                             item[k] = v.isEmpty
                                 ? parseBlock(lines: lines, index: &index, indent: nextIndent(lines, index, greaterThan: sub.indent))
-                                : .scalar(unquote(v))
+                                : inlineNode(v)
                         } else { index += 1 }
                     }
                     seq.append(.mapping(item))
                 } else {
-                    seq.append(.scalar(unquote(inline)))
+                    seq.append(inlineNode(inline))
                 }
             } else if let colon = findColon(content) {
                 if isSequence == true { break }
@@ -163,7 +192,7 @@ enum MiniYAML {
                 if value.isEmpty {
                     map[key] = parseBlock(lines: lines, index: &index, indent: nextIndent(lines, index, greaterThan: indent))
                 } else {
-                    map[key] = .scalar(unquote(value))
+                    map[key] = inlineNode(value)
                 }
             } else {
                 index += 1 // unrecognized line — skip
@@ -171,6 +200,37 @@ enum MiniYAML {
         }
         if isSequence == true { return .sequence(seq) }
         return .mapping(map)
+    }
+
+    /// DefenseClaw's generated config uses compact empty collections such as
+    /// `observability: {}`. Preserve those collection types while leaving
+    /// quoted values like `"{}"` as ordinary strings.
+    private static func inlineNode(_ raw: String) -> YAMLNode {
+        let value = raw.trimmingCharacters(in: .whitespaces)
+        let syntax = stripInlineComment(value).trimmingCharacters(in: .whitespaces)
+        let isQuoted = (syntax.hasPrefix("\"") && syntax.hasSuffix("\""))
+            || (syntax.hasPrefix("'") && syntax.hasSuffix("'"))
+        let compactSyntax = syntax.filter { !$0.isWhitespace }
+        if !isQuoted, compactSyntax == "{}" { return .mapping([:]) }
+        if !isQuoted, compactSyntax == "[]" { return .sequence([]) }
+        return .scalar(unquote(value))
+    }
+
+    private static func stripInlineComment(_ value: String) -> String {
+        var inSingle = false
+        var inDouble = false
+        var previous: Character?
+        for index in value.indices {
+            let character = value[index]
+            if character == "'" && !inDouble { inSingle.toggle() }
+            if character == "\"" && !inSingle { inDouble.toggle() }
+            if character == "#" && !inSingle && !inDouble,
+               previous?.isWhitespace == true {
+                return String(value[..<index])
+            }
+            previous = character
+        }
+        return value
     }
 
     private static func nextIndent(_ lines: [(indent: Int, content: String)], _ index: Int, greaterThan indent: Int) -> Int {
@@ -196,8 +256,29 @@ enum MiniYAML {
     }
 
     private static func unquote(_ s: String) -> String {
-        var t = s
-        if let hash = t.range(of: " #") { t = String(t[..<hash.lowerBound]) } // trailing comment
+        var t = ""
+        var inSingle = false
+        var inDouble = false
+        var escaped = false
+        for character in s {
+            if escaped {
+                t.append(character)
+                escaped = false
+                continue
+            }
+            if character == "\\" && inDouble {
+                t.append(character)
+                escaped = true
+                continue
+            }
+            if character == "'" && !inDouble { inSingle.toggle() }
+            if character == "\"" && !inSingle { inDouble.toggle() }
+            if character == "#" && !inSingle && !inDouble,
+               t.last?.isWhitespace == true {
+                break
+            }
+            t.append(character)
+        }
         t = t.trimmingCharacters(in: .whitespaces)
         if t.count >= 2, (t.hasPrefix("\"") && t.hasSuffix("\"")) || (t.hasPrefix("'") && t.hasSuffix("'")) {
             t = String(t.dropFirst().dropLast())
@@ -206,31 +287,172 @@ enum MiniYAML {
     }
 }
 
-actor ConfigStore {
-    static let dataDirectory = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".defenseclaw")
+/// Writes sensitive exports without ever installing a permissive inode at the
+/// destination path. The complete payload is prepared in the destination
+/// directory with mode 0600, then atomically renamed into place.
+enum SecureFileWriter {
+    enum WriteError: LocalizedError {
+        case parentIsNotDirectory(String)
+        case couldNotCreateTemporaryFile(String)
+        case insecurePreparedFile(String)
+        case insecureExtendedACL(String)
 
-    /// Cheap change signature over config.yaml + .env (mtime/size) so the
-    /// pulse can re-resolve the gateway token and config when either file
-    /// changes out-of-band (token rotation, setup commands, the TUI).
-    static var diskSignature: String {
-        [configURL, dataDirectory.appendingPathComponent(".env")].map { url in
-            let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
-            let mtime = (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-            let size = (attrs?[.size] as? Int) ?? 0
-            return "\(url.lastPathComponent):\(mtime):\(size)"
-        }.joined(separator: "|")
+        var errorDescription: String? {
+            switch self {
+            case .parentIsNotDirectory(let path):
+                "Secure output parent is not a directory: \(path)"
+            case .couldNotCreateTemporaryFile(let path):
+                "Could not create secure temporary file: \(path)"
+            case .insecurePreparedFile(let path):
+                "Refusing to install a temporary file without mode 0600: \(path)"
+            case .insecureExtendedACL(let path):
+                "Refusing secure output because an extended ACL is present: \(path)"
+            }
+        }
     }
-    static let configURL = dataDirectory.appendingPathComponent("config.yaml")
-    static let auditDBURL = dataDirectory.appendingPathComponent("audit.db")
-    static let gatewayJSONLURL = dataDirectory.appendingPathComponent("gateway.jsonl")
-    static let gatewayLogURL = dataDirectory.appendingPathComponent("gateway.log")
-    static let watchdogLogURL = dataDirectory.appendingPathComponent("watchdog.log")
 
+    static func write(_ contents: String, to target: URL) throws {
+        try write(Data(contents.utf8), to: target)
+    }
+
+    /// `preparedFileCheck` is a regression-test seam invoked after the file is
+    /// fully written and synced, immediately before its atomic installation.
+    static func write(
+        _ data: Data,
+        to target: URL,
+        fileManager: FileManager = .default,
+        preparedFileCheck: ((URL) throws -> Void)? = nil
+    ) throws {
+        let parent = target.deletingLastPathComponent()
+        var isDirectory: ObjCBool = false
+        if fileManager.fileExists(atPath: parent.path, isDirectory: &isDirectory) {
+            guard isDirectory.boolValue else {
+                throw WriteError.parentIsNotDirectory(parent.path)
+            }
+        } else {
+            try fileManager.createDirectory(
+                at: parent,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+        }
+        // Existing DefenseClaw data directories may predate the secure-export
+        // path, so tighten them before the temporary file is created.
+        try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: parent.path)
+        guard try !hasExtendedACL(at: parent) else {
+            throw WriteError.insecureExtendedACL(parent.path)
+        }
+
+        let temporary = parent.appendingPathComponent(
+            ".\(target.lastPathComponent).\(UUID().uuidString).tmp",
+            isDirectory: false
+        )
+        defer { try? fileManager.removeItem(at: temporary) }
+
+        guard fileManager.createFile(
+            atPath: temporary.path,
+            contents: nil,
+            attributes: [.posixPermissions: 0o600]
+        ) else {
+            throw WriteError.couldNotCreateTemporaryFile(temporary.path)
+        }
+        // A concurrently introduced inheritable ACL must not survive on the
+        // prepared inode even though the parent was checked immediately above.
+        try clearExtendedACL(at: temporary)
+
+        let handle = try FileHandle(forWritingTo: temporary)
+        do {
+            try handle.write(contentsOf: data)
+            try handle.synchronize()
+            try handle.close()
+        } catch {
+            try? handle.close()
+            throw error
+        }
+
+        let attributes = try fileManager.attributesOfItem(atPath: temporary.path)
+        let permissions = (attributes[.posixPermissions] as? NSNumber)?.intValue
+        guard permissions == 0o600 else {
+            throw WriteError.insecurePreparedFile(temporary.path)
+        }
+        guard try !hasExtendedACL(at: temporary) else {
+            throw WriteError.insecureExtendedACL(temporary.path)
+        }
+        try preparedFileCheck?(temporary)
+
+        if fileManager.fileExists(atPath: target.path) {
+            _ = try fileManager.replaceItemAt(
+                target,
+                withItemAt: temporary,
+                backupItemName: nil,
+                options: [.usingNewMetadataOnly]
+            )
+        } else {
+            try fileManager.moveItem(at: temporary, to: target)
+        }
+    }
+
+    private static func hasExtendedACL(at url: URL) throws -> Bool {
+        let (acl, capturedErrno) = url.path.withCString { path in
+            errno = 0
+            let value = acl_get_file(path, ACL_TYPE_EXTENDED)
+            return (value, errno)
+        }
+        guard let acl else {
+            if capturedErrno == ENOENT || capturedErrno == EOPNOTSUPP { return false }
+            throw posixError(code: capturedErrno, operation: "inspect ACL", path: url.path)
+        }
+        defer { acl_free(UnsafeMutableRawPointer(acl)) }
+        return true
+    }
+
+    private static func clearExtendedACL(at url: URL) throws {
+        errno = 0
+        let allocatedACL = acl_init(0)
+        let allocationErrno = errno
+        guard let emptyACL = allocatedACL else {
+            throw posixError(code: allocationErrno, operation: "allocate empty ACL", path: url.path)
+        }
+        defer { acl_free(UnsafeMutableRawPointer(emptyACL)) }
+
+        let (result, capturedErrno) = url.path.withCString { path in
+            errno = 0
+            let value = acl_set_file(path, ACL_TYPE_EXTENDED, emptyACL)
+            return (value, errno)
+        }
+        guard result == 0 || capturedErrno == EOPNOTSUPP else {
+            throw posixError(code: capturedErrno, operation: "clear ACL", path: url.path)
+        }
+    }
+
+    private static func posixError(code: Int32, operation: String, path: String) -> NSError {
+        NSError(
+            domain: NSPOSIXErrorDomain,
+            code: Int(code),
+            userInfo: [NSLocalizedDescriptionKey: "Could not \(operation) for \(path): \(String(cString: strerror(code)))"]
+        )
+    }
+}
+
+actor ConfigStore {
+    private(set) var context: InstallationContext
     private(set) var config = DefenseClawConfig()
 
+    init(context: InstallationContext) {
+        self.context = context
+    }
+
+    /// Rebinding clears the last-good snapshot. Carrying a token or endpoint
+    /// from the previous installation across a path change would be worse than
+    /// briefly showing the new installation as unavailable.
+    func rebind(to context: InstallationContext) {
+        guard self.context != context else { return }
+        self.context = context
+        config = DefenseClawConfig()
+    }
+
     var installPresent: Bool {
-        FileManager.default.fileExists(atPath: Self.configURL.path)
+        FileManager.default.fileExists(atPath: context.configURL.path)
     }
 
     /// KEY=VALUE pairs from ~/.defenseclaw/.env — written by the Go gateway on
@@ -238,7 +460,7 @@ actor ConfigStore {
     /// into os.environ before resolving the token; a GUI app inherits no shell
     /// environment, so we read the file directly. Process env still wins.
     private func loadDotEnv() -> [String: String] {
-        let url = Self.dataDirectory.appendingPathComponent(".env")
+        let url = context.environmentURL
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [:] }
         var out: [String: String] = [:]
         for rawLine in text.split(separator: "\n") {
@@ -271,7 +493,15 @@ actor ConfigStore {
 
     @discardableResult
     func reload() -> DefenseClawConfig {
-        guard let text = try? String(contentsOf: Self.configURL, encoding: .utf8) else {
+        let configURL = context.configURL
+        guard let text = try? String(contentsOf: configURL, encoding: .utf8) else {
+            // A temporary permission/read race must not wipe the last-good
+            // token and endpoint. Reset only when the config was actually
+            // removed (the normal first-run/uninstall state).
+            if FileManager.default.fileExists(atPath: configURL.path) {
+                config.loadError = "config.yaml exists but could not be read as UTF-8; using the last-good configuration"
+                return config
+            }
             config = DefenseClawConfig()
             return config
         }
@@ -320,24 +550,26 @@ actor ConfigStore {
             }
         }
         if let sources = root["registries.sources"]?.sequence ?? root["registries"]?.sequence {
-            c.registrySources = sources.compactMap { node in
-                guard let m = node.mapping,
-                      let id = m["id"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      !id.isEmpty
-                else { return nil }
-                return .init(
+            var parsedSources: [DefenseClawConfig.RegistrySourceConfig] = []
+            for node in sources {
+                guard let fields = node.mapping else { continue }
+                let id = fields["id"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !id.isEmpty else { continue }
+                let source = DefenseClawConfig.RegistrySourceConfig(
                     id: id,
-                    kind: m["kind"]?.string ?? "http_yaml",
-                    content: m["content"]?.string ?? "skill",
-                    url: m["url"]?.string ?? "",
-                    authEnv: m["auth_env"]?.string ?? "",
-                    enabled: m["enabled"]?.bool ?? true,
-                    autoSync: m["auto_sync"]?.bool ?? false,
-                    syncIntervalHours: m["sync_interval_hours"]?.int ?? 24,
-                    lastSync: m["last_sync"]?.string ?? "",
-                    lastStatus: m["last_status"]?.string ?? ""
+                    kind: fields["kind"]?.string ?? "http_yaml",
+                    content: fields["content"]?.string ?? "skill",
+                    url: fields["url"]?.string ?? "",
+                    authEnv: fields["auth_env"]?.string ?? "",
+                    enabled: fields["enabled"]?.bool ?? true,
+                    autoSync: fields["auto_sync"]?.bool ?? false,
+                    syncIntervalHours: fields["sync_interval_hours"]?.int ?? 24,
+                    lastSync: fields["last_sync"]?.string ?? "",
+                    lastStatus: fields["last_status"]?.string ?? ""
                 )
+                parsedSources.append(source)
             }
+            c.registrySources = parsedSources
         }
         for type in ["skill", "mcp", "plugin"] {
             c.registryRequiredByType[type] = root["asset_policy.\(type).registry_required"]?.bool ?? false

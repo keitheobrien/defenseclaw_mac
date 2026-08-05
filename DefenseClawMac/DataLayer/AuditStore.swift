@@ -1,3 +1,19 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 // Read-only access to ~/.defenseclaw/audit.db via the SDK's SQLite3 module.
 // The gateway owns all writes; this store never opens the DB writable.
 // Schema-tolerant: missing tables/columns degrade features, never crash.
@@ -11,13 +27,21 @@ actor AuditStore {
     private var db: OpaquePointer?
     private let path: String
 
-    init(url: URL = ConfigStore.auditDBURL) {
+    init(url: URL) {
         self.path = url.path
     }
 
     var isAvailable: Bool {
         ensureOpen()
         return db != nil
+    }
+
+    /// Release the path-bound SQLite handle before AppState swaps to another
+    /// installation. Actor serialization waits for any in-flight query first.
+    func close() {
+        guard let db else { return }
+        sqlite3_close_v2(db)
+        self.db = nil
     }
 
     private func ensureOpen() {
@@ -299,7 +323,7 @@ actor AuditStore {
         guard let since else {
             return (query("SELECT COUNT(*) AS n FROM scan_results").first?["n"] as? Int) ?? 0
         }
-        let iso = ISO8601DateFormatter().string(from: since)
+        let iso = DCDates.iso.string(from: since)
         return (query(
             "SELECT COUNT(*) AS n FROM scan_results WHERE datetime(timestamp) >= datetime(?)",
             binds: [iso]
@@ -420,9 +444,7 @@ actor AuditStore {
             """)
         return rows.compactMap { r in
             guard let name = r["target_name"] as? String else { return nil }
-            let json = (r["actions_json"] as? String ?? "").lowercased()
-            let state: ToolState = json.contains("block") ? .block
-                : json.contains("observe") ? .observe : .allow
+            let state = toolState(from: r["actions_json"] as? String)
             let reason = (r["reason"] as? String) ?? ""
             let updated = (r["updated_at"] as? String) ?? ""
             return ToolItem(
@@ -442,12 +464,24 @@ actor AuditStore {
         var out: [String: ToolState] = [:]
         for r in rows {
             guard let name = r["target_name"] as? String else { continue }
-            let json = (r["actions_json"] as? String ?? "").lowercased()
-            if json.contains("block") { out[name] = .block }
-            else if json.contains("observe") { out[name] = .observe }
-            else { out[name] = .allow }
+            out[name] = toolState(from: r["actions_json"] as? String)
         }
         return out
+    }
+
+    private func toolState(from actionsJSON: String?) -> ToolState {
+        guard let actionsJSON,
+              let data = actionsJSON.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return .allow }
+        let action = (object["install"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        switch action {
+        case "block", "deny": return .block
+        case "observe", "audit": return .observe
+        default: return .allow
+        }
     }
 
     func activityEvents(limit: Int) -> [ActivityMutation] {

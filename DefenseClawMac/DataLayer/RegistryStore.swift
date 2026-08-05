@@ -1,16 +1,53 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import Foundation
 
 enum RegistryStore {
-    static func load(config: DefenseClawConfig) -> RegistrySnapshot {
-        load(sources: config.registrySources, dataDirectory: dataDirectory(for: config))
+    struct Limits: Sendable {
+        var maximumIndexBytes: Int
+        var maximumEntriesPerIndex: Int
+        var maximumAggregateIndexBytes: Int
+        var maximumAggregateEntries: Int
+        var maximumJSONNestingDepth: Int
+
+        static let production = Limits(
+            maximumIndexBytes: 4 * 1024 * 1024,
+            maximumEntriesPerIndex: 10_000,
+            maximumAggregateIndexBytes: 16 * 1024 * 1024,
+            maximumAggregateEntries: 25_000,
+            maximumJSONNestingDepth: 64
+        )
+    }
+
+    static func load(config: DefenseClawConfig, dataDirectory: URL) -> RegistrySnapshot {
+        load(
+            sources: config.registrySources,
+            dataDirectory: dataDirectory
+        )
     }
 
     static func load(
         sources: [DefenseClawConfig.RegistrySourceConfig],
-        dataDirectory: URL
+        dataDirectory: URL,
+        limits: Limits = .production
     ) -> RegistrySnapshot {
         var loadedSources: [RegistrySource] = []
         var loadedEntries: [RegistryEntry] = []
+        var aggregateIndexBytes = 0
 
         for sourceConfig in sources.sorted(by: { $0.id.localizedStandardCompare($1.id) == .orderedAscending }) {
             var source = RegistrySource(
@@ -29,7 +66,25 @@ enum RegistryStore {
             do {
                 let cacheURL = try indexURL(dataDirectory: dataDirectory, sourceID: source.id)
                 if FileManager.default.fileExists(atPath: cacheURL.path) {
-                    let index = try decodeIndex(data: Data(contentsOf: cacheURL), sourceID: source.id)
+                    let data = try readIndexData(at: cacheURL, maximumBytes: limits.maximumIndexBytes)
+                    guard data.count <= limits.maximumAggregateIndexBytes,
+                          aggregateIndexBytes <= limits.maximumAggregateIndexBytes - data.count
+                    else {
+                        throw RegistryStoreError.aggregateLimitExceeded(
+                            kind: "index bytes",
+                            maximum: limits.maximumAggregateIndexBytes
+                        )
+                    }
+                    let index = try decodeIndex(data: data, sourceID: source.id, limits: limits)
+                    guard index.entries.count <= limits.maximumAggregateEntries,
+                          loadedEntries.count <= limits.maximumAggregateEntries - index.entries.count
+                    else {
+                        throw RegistryStoreError.aggregateLimitExceeded(
+                            kind: "entries",
+                            maximum: limits.maximumAggregateEntries
+                        )
+                    }
+                    aggregateIndexBytes += data.count
                     source.fetchedAt = index.fetchedAt
                     source.publisher = index.publisher
                     source.entryCount = index.entryCount
@@ -52,15 +107,6 @@ enum RegistryStore {
         return RegistrySnapshot(sources: loadedSources, entries: loadedEntries)
     }
 
-    static func dataDirectory(for config: DefenseClawConfig) -> URL {
-        guard let configured = config.dataDir?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !configured.isEmpty
-        else { return ConfigStore.dataDirectory }
-
-        let expanded = (configured as NSString).expandingTildeInPath
-        return URL(fileURLWithPath: expanded, isDirectory: true).standardizedFileURL
-    }
-
     static func indexURL(dataDirectory: URL, sourceID: String) throws -> URL {
         guard isSafeSourceID(sourceID) else {
             throw RegistryStoreError.unsafeSourceID(sourceID)
@@ -76,6 +122,18 @@ enum RegistryStore {
     }
 
     static func decodeIndex(data: Data, sourceID: String) throws -> RegistryIndex {
+        try decodeIndex(data: data, sourceID: sourceID, limits: .production)
+    }
+
+    static func decodeIndex(data: Data, sourceID: String, limits: Limits) throws -> RegistryIndex {
+        guard data.count <= limits.maximumIndexBytes else {
+            throw RegistryStoreError.indexTooLarge(
+                actual: data.count,
+                maximum: limits.maximumIndexBytes
+            )
+        }
+        try validateJSONNesting(data, maximumDepth: limits.maximumJSONNestingDepth)
+
         let raw: Any
         do {
             raw = try JSONSerialization.jsonObject(with: data)
@@ -84,6 +142,14 @@ enum RegistryStore {
         }
         guard let document = raw as? [String: Any] else {
             throw RegistryStoreError.invalidDocument
+        }
+
+        let rawRows = document["verdicts"] as? [Any] ?? []
+        guard rawRows.count <= limits.maximumEntriesPerIndex else {
+            throw RegistryStoreError.tooManyEntries(
+                actual: rawRows.count,
+                maximum: limits.maximumEntriesPerIndex
+            )
         }
 
         let rows = (document["verdicts"] as? [[String: Any]] ?? []).map { row in
@@ -115,6 +181,54 @@ enum RegistryStore {
             errorCount: integer(document["error_count"], defaultValue: rows.filter { $0.status == "error" }.count),
             entries: rows
         )
+    }
+
+    private static func readIndexData(at url: URL, maximumBytes: Int) throws -> Data {
+        if let fileSize = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+           fileSize > maximumBytes {
+            throw RegistryStoreError.indexTooLarge(actual: fileSize, maximum: maximumBytes)
+        }
+
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        let data = try handle.read(upToCount: maximumBytes + 1) ?? Data()
+        guard data.count <= maximumBytes else {
+            throw RegistryStoreError.indexTooLarge(actual: data.count, maximum: maximumBytes)
+        }
+        return data
+    }
+
+    private static func validateJSONNesting(_ data: Data, maximumDepth: Int) throws {
+        var depth = 0
+        var inString = false
+        var escaped = false
+
+        for byte in data {
+            if inString {
+                if escaped {
+                    escaped = false
+                } else if byte == 0x5C {
+                    escaped = true
+                } else if byte == 0x22 {
+                    inString = false
+                }
+                continue
+            }
+
+            switch byte {
+            case 0x22:
+                inString = true
+            case 0x5B, 0x7B:
+                depth += 1
+                guard depth <= maximumDepth else {
+                    throw RegistryStoreError.nestingTooDeep(maximum: maximumDepth)
+                }
+            case 0x5D, 0x7D:
+                depth = max(0, depth - 1)
+            default:
+                break
+            }
+        }
     }
 
     private static func string(_ value: Any?) -> String {
@@ -154,6 +268,10 @@ struct RegistryIndex: Sendable {
 
 enum RegistryStoreError: LocalizedError {
     case unsafeSourceID(String)
+    case indexTooLarge(actual: Int, maximum: Int)
+    case tooManyEntries(actual: Int, maximum: Int)
+    case nestingTooDeep(maximum: Int)
+    case aggregateLimitExceeded(kind: String, maximum: Int)
     case invalidJSON(String)
     case invalidDocument
 
@@ -161,6 +279,14 @@ enum RegistryStoreError: LocalizedError {
         switch self {
         case .unsafeSourceID(let sourceID):
             "Unsafe registry source ID: \(sourceID)"
+        case .indexTooLarge(let actual, let maximum):
+            "Registry index is too large (\(actual) bytes; maximum \(maximum))."
+        case .tooManyEntries(let actual, let maximum):
+            "Registry index has too many entries (\(actual); maximum \(maximum))."
+        case .nestingTooDeep(let maximum):
+            "Registry index JSON nesting exceeds the maximum depth of \(maximum)."
+        case .aggregateLimitExceeded(let kind, let maximum):
+            "Registry cache exceeds the aggregate \(kind) limit of \(maximum)."
         case .invalidJSON(let detail):
             "Invalid registry index JSON: \(detail)"
         case .invalidDocument:

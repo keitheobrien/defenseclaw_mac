@@ -1,3 +1,19 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import SwiftUI
 
 private enum ActivityTab: String, CaseIterable, Identifiable {
@@ -12,6 +28,7 @@ struct ActivityView: View {
     @State private var mutations: [ActivityMutation] = []
     @State private var search = ""
     @State private var selectedMutation: ActivityMutation?
+    @State private var mutationLoadGeneration = 0
 
     private var commandEntries: [CommandActivityEntry] {
         appState.activity.entries.filter { entry in
@@ -78,15 +95,17 @@ struct ActivityView: View {
                     }
                     .disabled(!appState.activity.entries.contains { !$0.status.isActive })
                 } else {
-                    Button(action: loadMutations) {
+                    Button { Task { await loadMutations() } } label: {
                         Label("Refresh", systemImage: "arrow.clockwise")
                     }
                 }
             }
         }
-        .task { loadMutations() }
-        .task(id: appState.health.fetchedAt) { loadMutations() }
-        .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in loadMutations() }
+        .task { await loadMutations() }
+        .task(id: appState.health.fetchedAt) { await loadMutations() }
+        .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in
+            Task { await loadMutations() }
+        }
     }
 
     @ViewBuilder
@@ -153,7 +172,7 @@ struct ActivityView: View {
                     Text(mutation.targetType.isEmpty ? mutation.targetID : "\(mutation.targetType)/\(mutation.targetID)")
                         .font(.caption).lineLimit(1)
                 }
-                TableColumn("From to To") { mutation in
+                TableColumn("Version Change") { mutation in
                     Text(mutation.versionFrom.isEmpty && mutation.versionTo.isEmpty ? "—" : "\(mutation.versionFrom) to \(mutation.versionTo)")
                         .font(.caption2.monospaced()).foregroundStyle(.secondary)
                 }
@@ -204,6 +223,7 @@ struct ActivityView: View {
                 }
                 Button { appState.activity.selectedID = nil } label: { Image(systemName: "xmark.circle.fill") }
                     .buttonStyle(.borderless)
+                    .accessibilityLabel("Close command details")
             }
             KeyValueGrid(pairs: [
                 ("Status", entry.statusLabel),
@@ -226,6 +246,7 @@ struct ActivityView: View {
                 } label: { Image(systemName: "doc.on.doc") }
                 .buttonStyle(.borderless)
                 .help("Copy Output")
+                .accessibilityLabel("Copy command output")
             }
             ScrollView {
                 Text(entry.output.isEmpty ? emptyOutputLabel(entry.status) : entry.output)
@@ -245,6 +266,7 @@ struct ActivityView: View {
                 Spacer()
                 Button { selectedMutation = nil } label: { Image(systemName: "xmark.circle.fill") }
                     .buttonStyle(.borderless)
+                    .accessibilityLabel("Close mutation details")
             }
             KeyValueGrid(pairs: [
                 ("Actor", mutation.actor),
@@ -258,18 +280,24 @@ struct ActivityView: View {
         .padding(12)
     }
 
-    private func loadMutations() {
-        Task {
-            let fromDB = await appState.audit.activityEvents(limit: 500)
-            let fromStream = await appState.stream.activity
-            var seen = Set<String>()
-            var merged: [ActivityMutation] = []
-            for mutation in (fromDB + fromStream).sorted(by: { $0.timestamp > $1.timestamp }) {
-                let key = "\(mutation.timestamp.timeIntervalSince1970)-\(mutation.action)-\(mutation.targetID)"
-                if seen.insert(key).inserted { merged.append(mutation) }
-            }
-            if merged.map(\.id) != mutations.map(\.id) { mutations = merged }
+    private func loadMutations() async {
+        mutationLoadGeneration += 1
+        let generation = mutationLoadGeneration
+        let installationGeneration = appState.installationGeneration
+        let fromDB = await appState.audit.activityEvents(limit: 500)
+        guard !Task.isCancelled,
+              installationGeneration == appState.installationGeneration else { return }
+        let fromStream = await appState.stream.activity
+        var seen = Set<String>()
+        var merged: [ActivityMutation] = []
+        for mutation in (fromDB + fromStream).sorted(by: { $0.timestamp > $1.timestamp }) {
+            let key = "\(mutation.timestamp.timeIntervalSince1970)-\(mutation.action)-\(mutation.targetID)"
+            if seen.insert(key).inserted { merged.append(mutation) }
         }
+        guard !Task.isCancelled,
+              generation == mutationLoadGeneration,
+              installationGeneration == appState.installationGeneration else { return }
+        if merged.map(\.id) != mutations.map(\.id) { mutations = merged }
     }
 
     private func statusIcon(_ status: CommandActivityStatus) -> String {

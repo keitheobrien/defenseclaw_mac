@@ -1,3 +1,19 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 // Menu bar popover (spec §5.1): health header, per-connector lines,
 // recent enforcement metrics, recent unacked alerts, footer actions.
 
@@ -34,7 +50,7 @@ struct MenuBarPopover: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text("DefenseClaw").font(.headline)
                 Text(appState.gatewayReachable
-                     ? "Gateway up · \(uptimeText) · \(appState.health.connectors.count) connector(s)"
+                     ? "Gateway up · \(uptimeText) · \(displayedConnectors.count) connector(s)"
                      : "Gateway offline")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -53,7 +69,7 @@ struct MenuBarPopover: View {
 
     @ViewBuilder
     private var connectorLines: some View {
-        ForEach(appState.health.connectors) { c in
+        ForEach(displayedConnectors) { c in
             HStack(spacing: 6) {
                 Circle().fill(Cisco.stateColor(raw: c.state)).frame(width: 6, height: 6)
                 Text(c.name).font(.caption.weight(.medium))
@@ -174,8 +190,30 @@ struct MenuBarPopover: View {
     }
 
     private func openMainWindow() {
+        AppDelegate.recreateMainWindow = { openWindow(id: "main") }
         AppDelegate.openMainWindow()
-        openWindow(id: "main")
+    }
+
+    private var displayedConnectors: [ConnectorHealth] {
+        if !appState.health.connectors.isEmpty { return appState.health.connectors }
+        guard let primary = appState.health.primaryConnector else { return [] }
+        let mode = appState.config.connectorModes.first {
+            $0.key.caseInsensitiveCompare(primary.name) == .orderedSame
+        }?.value ?? primary.toolInspectionMode.nonEmpty ?? appState.config.guardrailMode ?? "observe"
+        let rulePack = appState.config.connectorRulePacks.first {
+            $0.key.caseInsensitiveCompare(primary.name) == .orderedSame
+        }?.value ?? "default"
+        return [ConnectorHealth(
+            name: primary.name,
+            mode: mode,
+            rulePack: rulePack,
+            lastActivity: primary.since,
+            calls: primary.requests,
+            blocks: primary.toolBlocks + primary.subprocessBlocks,
+            alerts: 0,
+            state: primary.state,
+            since: primary.since
+        )]
     }
 
     @ViewBuilder
@@ -235,7 +273,10 @@ struct MenuBarPopover: View {
                 Task { await appState.acknowledge(appState.unackedAlerts) }
             }
             .controlSize(.small)
-            .disabled(appState.unackedAlerts.isEmpty)
+            .disabled(
+                appState.unackedAlerts.isEmpty
+                    || !appState.installationMutationsAllowed
+            )
             Button(appState.monitoringPaused ? "Resume" : "Pause") {
                 appState.monitoringPaused.toggle()
             }

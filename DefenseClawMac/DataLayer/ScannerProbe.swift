@@ -1,3 +1,19 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 // Overview SCANNERS card — port of the TUI's scanner box (app.py ~5120).
 // Six rows: external scanners probed on PATH (skill-scanner, mcp-scanner),
 // built-ins that ship in the CLI (aibom, codeguard), the guardrail (state +
@@ -165,8 +181,8 @@ enum ScannerProbe {
         return plan
     }
 
-    private static func dotEnvNames() -> Set<String> {
-        let url = ConfigStore.dataDirectory.appendingPathComponent(".env")
+    private static func dotEnvNames(environmentURL: URL) -> Set<String> {
+        let url = environmentURL
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
         var names = Set<String>()
         for rawLine in text.split(separator: "\n") {
@@ -174,7 +190,10 @@ enum ScannerProbe {
             guard !line.isEmpty, !line.hasPrefix("#"), let eq = line.firstIndex(of: "=") else { continue }
             let name = String(line[..<eq]).trimmingCharacters(in: .whitespaces)
             // A name with an empty value doesn't count as set.
-            if !String(line[line.index(after: eq)...]).trimmingCharacters(in: .whitespaces).isEmpty {
+            let value = String(line[line.index(after: eq)...])
+                .trimmingCharacters(in: .whitespaces)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+            if !value.isEmpty {
                 names.insert(name)
             }
         }
@@ -182,12 +201,12 @@ enum ScannerProbe {
     }
 
     /// Missing required gateway credentials (env or ~/.defenseclaw/.env).
-    static func missingKeys(config: DefenseClawConfig) -> [String] {
+    static func missingKeys(config: DefenseClawConfig, environmentURL: URL) -> [String] {
         let requiredKeys = requiresOpenClawGatewayToken(config: config)
             ? [openClawGatewayToken]
             : []
         let env = ProcessInfo.processInfo.environment
-        let dotenv = dotEnvNames()
+        let dotenv = dotEnvNames(environmentURL: environmentURL)
         return requiredKeys.filter { name in
             let inEnv = !(env[name] ?? "").isEmpty
             return !inEnv && !dotenv.contains(name)

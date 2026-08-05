@@ -1,5 +1,21 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 // Typed config-editor catalog — a port of the TUI's Setup config sections
-// (tui/panels/setup.py build of ConfigSection/ConfigField, DefenseClaw 0.8.3).
+// (tui/panels/setup.py build of ConfigSection/ConfigField, DefenseClaw 0.8.5).
 // Every editable field carries its exact config.yaml dotted key, kind, choice
 // options, and hint; read-only sections render as headers with guidance.
 
@@ -119,7 +135,8 @@ enum ConfigEditorCatalog {
     static let llmProviders = [
         "anthropic", "openai", "openrouter", "azure", "gemini", "gemini-openai",
         "groq", "mistral", "cohere", "deepseek", "xai", "bedrock", "vertex_ai",
-        "ollama", "vllm", "lm_studio",
+        "fireworks_ai", "perplexity", "huggingface", "replicate", "together_ai",
+        "cerebras", "ollama", "vllm", "lm_studio", "custom",
     ]
     static var llmOverrideProviders: [String] { [""] + llmProviders }
     static let connectors = [
@@ -358,9 +375,10 @@ enum ConfigEditorCatalog {
             .init(label: "Judge Model", key: "guardrail.judge.model", hint: "Legacy judge model id."),
             .init(label: "Judge API Key Env", key: "guardrail.judge.api_key_env", hint: "Legacy judge API key env."),
             .init(label: "Judge API Base", key: "guardrail.judge.api_base", hint: "Legacy judge API base URL."),
-            .init(label: "Judge Timeout", key: "guardrail.judge.timeout", hint: "Seconds to wait for one judge call."),
+            .init(label: "Judge Timeout", key: "guardrail.judge.timeout", kind: .int,
+                  hint: "Seconds to wait for one judge call."),
             .init(label: "Adjudication Timeout", key: "guardrail.judge.adjudication_timeout",
-                  hint: "Total judge fallback budget."),
+                  kind: .int, hint: "Total judge fallback budget."),
             .init(label: "Fallbacks", key: "guardrail.judge.fallbacks", hint: "CSV of backup judge models."),
         ]
         guardrail += llmOverrideFields("Judge", "guardrail.judge.llm")
@@ -537,8 +555,6 @@ enum ConfigEditorCatalog {
                       hint: "Detect provider domains."),
                 .init(label: "Max Files", key: "ai_discovery.max_files_per_scan", kind: .int, hint: "Max files per scan."),
                 .init(label: "Max File Bytes", key: "ai_discovery.max_file_bytes", kind: .int, hint: "Skip larger files."),
-                .init(label: "Emit OTel", key: "ai_discovery.emit_otel", kind: .bool,
-                      hint: "Emit sanitized AI visibility telemetry."),
                 .init(label: "Store Raw Local Paths", key: "ai_discovery.store_raw_local_paths", kind: .bool,
                       hint: "Store raw paths locally only."),
             ]
@@ -578,12 +594,12 @@ enum ConfigEditorCatalog {
         ))
 
         sections.append(ConfigEditorSection(
-            name: "Audit Sinks",
-            summary: "Read-only audit sink summary.",
-            help: "Manage via Setup → Observability (Splunk) or `defenseclaw setup observability`.",
+            name: "Observability",
+            summary: "Read-only config v8 destination summary.",
+            help: "Manage via Setup → Observability or `defenseclaw setup observability`.",
             fields: [
                 .init(label: "How to edit", key: "", kind: .header,
-                      headerValue: "Use the Observability / Splunk wizards; sinks appear in the Overview destinations table."),
+                      headerValue: "Use the Observability wizards; named destinations appear in the Overview destinations table."),
             ]
         ))
 
@@ -594,37 +610,6 @@ enum ConfigEditorCatalog {
             fields: [
                 .init(label: "How to edit", key: "", kind: .header,
                       headerValue: "Use the Webhooks wizard in Setup to add or change notifier webhooks."),
-            ]
-        ))
-
-        sections.append(ConfigEditorSection(
-            name: "OTel",
-            summary: "OpenTelemetry exporter config.",
-            fields: [
-                .init(label: ".. Process-wide policy ..", key: "", kind: .header),
-                .init(label: "Enabled", key: "otel.enabled", kind: .bool, hint: "Master OpenTelemetry export switch."),
-                .init(label: ".. Traces ..", key: "", kind: .header),
-                .init(label: "Sampler", key: "otel.traces.sampler", kind: .choice,
-                      options: ["always_on", "always_off", "traceidratio",
-                                "parentbased_always_on", "parentbased_always_off", "parentbased_traceidratio"],
-                      hint: "Trace sampler."),
-                .init(label: "Sampler Arg", key: "otel.traces.sampler_arg", hint: "Trace sampler argument."),
-                .init(label: ".. Logs ..", key: "", kind: .header),
-                .init(label: "Emit individual findings", key: "otel.logs.emit_individual_findings", kind: .bool,
-                      hint: "One record per finding."),
-                .init(label: ".. Metrics ..", key: "", kind: .header),
-                .init(label: "Export interval (s)", key: "otel.metrics.export_interval_s", kind: .int,
-                      hint: "Seconds between metric pushes."),
-                .init(label: "Temporality", key: "otel.metrics.temporality", kind: .choice,
-                      options: ["delta", "cumulative"], hint: "Metric temporality."),
-                .init(label: ".. Batch ..", key: "", kind: .header),
-                .init(label: "Max export batch size", key: "otel.batch.max_export_batch_size", kind: .int,
-                      hint: "Max records per request."),
-                .init(label: "Scheduled delay (ms)", key: "otel.batch.scheduled_delay_ms", kind: .int,
-                      hint: "Batch flush delay."),
-                .init(label: "Max queue size", key: "otel.batch.max_queue_size", kind: .int, hint: "In-memory queue size."),
-                .init(label: ".. Resource ..", key: "", kind: .header),
-                .init(label: "Attributes", key: "otel.resource.attributes", hint: "CSV resource attributes."),
             ]
         ))
 

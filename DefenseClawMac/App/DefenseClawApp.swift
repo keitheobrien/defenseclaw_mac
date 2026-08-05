@@ -1,3 +1,19 @@
+// Copyright 2026 Cisco Systems, Inc. and its affiliates
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 // DefenseClaw for macOS — app entry. Menu-bar-first (spec §5):
 // MenuBarExtra always present; main window hides to the menu bar on close;
 // Dock icon presence is a runtime setting (NSApp activation policy).
@@ -8,7 +24,12 @@ import ServiceManagement
 @main
 struct DefenseClawApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var appState = AppState()
+    @State private var appState: AppState
+
+    init() {
+        CLIProcessGroupLauncher.execIfRequested()
+        _appState = State(initialValue: AppState())
+    }
 
     var body: some Scene {
         WindowGroup("DefenseClaw", id: "main") {
@@ -30,6 +51,7 @@ struct DefenseClawApp: App {
                         NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
                     }
                 }
+                .disabled(appState.updateOperationInProgress)
             }
             CommandGroup(after: .toolbar) {
                 Button("Refresh Panel") {
@@ -45,6 +67,7 @@ struct DefenseClawApp: App {
                     }
                 }
                 .keyboardShortcut("h", modifiers: [.command, .shift])
+                .disabled(!appState.installationMutationsAllowed)
 
                 Button("Scan AI Components") {
                     appState.selectedPanel = .aiDiscovery
@@ -53,7 +76,11 @@ struct DefenseClawApp: App {
                     }
                 }
                 .keyboardShortcut("a", modifiers: [.command, .shift])
-                .disabled(!appState.gatewayReachable || appState.scanInFlight)
+                .disabled(
+                    !appState.gatewayReachable
+                        || appState.scanInFlight
+                        || !appState.installationMutationsAllowed
+                )
 
                 // The TUI's `m` key: step the shared connector filter
                 // All → conn0 → conn1 → … → All across every panel.
@@ -81,12 +108,13 @@ struct DefenseClawApp: App {
                     appState.exportLastCommandOutput()
                 }
                 .keyboardShortcut("s", modifiers: [.control])
+                .disabled(!appState.installationMutationsAllowed)
 
                 Button("Diagnose in Background") {
                     appState.runBackgroundDiagnose()
                 }
                 .keyboardShortcut("d", modifiers: [.command, .shift])
-                .disabled(appState.diagnoseRunning)
+                .disabled(appState.diagnoseRunning || !appState.installationMutationsAllowed)
             }
             CommandMenu("Go") {
                 ForEach(Array(PanelID.allCases.enumerated()), id: \.element) { index, panel in
@@ -156,7 +184,9 @@ private struct MenuBarIcon: View {
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    static var recreateMainWindow: (() -> Void)?
     private var miniaturizeObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -215,11 +245,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.makeKeyAndOrderFront(nil)
             return
         }
-        // Window was released — ask SwiftUI to recreate it via the openWindow URL scheme fallback.
-        if let window = NSApp.windows.first(where: { $0.canBecomeKey && !($0 is NSPanel) }) {
-            if window.isMiniaturized { window.deminiaturize(nil) }
-            window.makeKeyAndOrderFront(nil)
-        }
+        // A non-main utility window must never be promoted as the dashboard.
+        // Ask SwiftUI to recreate the released WindowGroup instead.
+        recreateMainWindow?()
     }
 }
 

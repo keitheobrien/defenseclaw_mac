@@ -1,0 +1,4 @@
+interface:
+  display_name: "Check DefenseClaw Compatibility"
+  short_description: "Audit the Mac app against current DefenseClaw"
+  default_prompt: "Compare this DefenseClawMac checkout with the latest DefenseClaw mainline and installed runtime, fix verified compatibility drift, and report residual risks."
