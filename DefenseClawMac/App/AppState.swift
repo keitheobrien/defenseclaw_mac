@@ -1111,7 +1111,7 @@ final class AppState {
         // binary — never present overlapping runtime actions.
         guard !runtimeInstallState.isRunning else { return false }
         guard let runtimeUpdate = availableRuntimeUpdate else { return true }
-        guard let resolverCommand = Self.authenticatedRuntimeUpgradeResolverCommand(
+        guard let resolverCommand = RuntimeUpgradeResolverCommand.authenticated(
             releaseTag: runtimeUpdate.tag
         ) else {
             let failure = """
@@ -1129,6 +1129,37 @@ final class AppState {
         runtimeUpgradeLog = guidance
         runtimeUpgradeState = .actionRequired(guidance: guidance, command: resolverCommand)
         return false
+    }
+
+    /// Targets the installation that produced the warning. The installed CLI
+    /// authenticates the release-owned resolver before replacing any audit
+    /// files; the app only prepares the explicit operator command.
+    func auditStoreRecoveryCommand(
+        expectedGeneration: Int,
+        expectedBinaryPath: String?
+    ) async -> String? {
+        guard installationSnapshotIsCurrent(expectedGeneration) else { return nil }
+        guard let expectedBinaryPath,
+              await cli.locateBinary() == expectedBinaryPath else { return nil }
+        let versionResult = await cli.run(
+            binary: expectedBinaryPath,
+            arguments: ["--version"],
+            mutation: false
+        )
+        guard installationSnapshotIsCurrent(expectedGeneration),
+              await cli.locateBinary() == expectedBinaryPath,
+              versionResult.succeeded,
+              let installedVersion = UpdateChecker.parseVersion(versionResult.output) else {
+            return nil
+        }
+        return RuntimeAuditRecoveryCommand.command(for: RuntimeAuditRecoveryTarget(
+            homeRoot: installationContext.homeRoot,
+            configURL: installationContext.configURL,
+            venvURL: installationContext.venvURL,
+            runtimeCLIURL: URL(fileURLWithPath: expectedBinaryPath, isDirectory: false),
+            installedVersion: installedVersion,
+            permitsMutation: installationContext.permitsMutation
+        ))
     }
 
     /// Download, install over the current bundle, and restart the app.

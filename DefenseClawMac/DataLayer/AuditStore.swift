@@ -24,7 +24,19 @@ import SQLite3
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
 actor AuditStore {
+    private struct FileIdentity: Equatable {
+        let device: UInt64
+        let inode: UInt64
+    }
+
+    private struct DatabaseFamilyIdentity: Equatable {
+        let database: FileIdentity
+        let wal: FileIdentity?
+        let sharedMemory: FileIdentity?
+    }
+
     private var db: OpaquePointer?
+    private var openedIdentity: DatabaseFamilyIdentity?
     private let path: String
 
     init(url: URL) {
@@ -39,22 +51,55 @@ actor AuditStore {
     /// Release the path-bound SQLite handle before AppState swaps to another
     /// installation. Actor serialization waits for any in-flight query first.
     func close() {
-        guard let db else { return }
-        sqlite3_close_v2(db)
+        if let db { sqlite3_close_v2(db) }
         self.db = nil
+        openedIdentity = nil
     }
 
     private func ensureOpen() {
-        guard db == nil else { return }
-        guard FileManager.default.fileExists(atPath: path) else { return }
-        var handle: OpaquePointer?
-        // Read-only; gateway writes via WAL so allow shared access.
-        if sqlite3_open_v2(path, &handle, SQLITE_OPEN_READONLY, nil) == SQLITE_OK {
-            db = handle
-            sqlite3_busy_timeout(db, 500)
-        } else {
-            sqlite3_close(handle)
+        let currentIdentity = databaseFamilyIdentity()
+        if db != nil, currentIdentity != openedIdentity {
+            close()
         }
+        guard db == nil, var expectedIdentity = currentIdentity else { return }
+
+        // A runtime recovery replaces audit.db at the same path. Capture the
+        // identity on both sides of open so this actor never retains a handle
+        // to the retired database family or races a replacement in progress.
+        for _ in 0..<2 {
+            var handle: OpaquePointer?
+            if sqlite3_open_v2(path, &handle, SQLITE_OPEN_READONLY, nil) == SQLITE_OK,
+               let afterOpenIdentity = databaseFamilyIdentity(),
+               afterOpenIdentity == expectedIdentity {
+                db = handle
+                openedIdentity = afterOpenIdentity
+                sqlite3_busy_timeout(db, 500)
+                return
+            }
+            sqlite3_close(handle)
+            guard let retryIdentity = databaseFamilyIdentity(), retryIdentity != expectedIdentity else {
+                return
+            }
+            expectedIdentity = retryIdentity
+        }
+    }
+
+    private func databaseFamilyIdentity() -> DatabaseFamilyIdentity? {
+        guard let database = fileIdentity(atPath: path) else { return nil }
+        return DatabaseFamilyIdentity(
+            database: database,
+            wal: fileIdentity(atPath: path + "-wal"),
+            sharedMemory: fileIdentity(atPath: path + "-shm")
+        )
+    }
+
+    private func fileIdentity(atPath candidatePath: String) -> FileIdentity? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: candidatePath),
+              let device = attributes[.systemNumber] as? NSNumber,
+              let inode = attributes[.systemFileNumber] as? NSNumber else {
+            return nil
+        }
+        return FileIdentity(device: device.uint64Value, inode: inode.uint64Value)
     }
 
     private func tableExists(_ name: String) -> Bool {
