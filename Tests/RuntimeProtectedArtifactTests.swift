@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 
 @main
@@ -10,6 +11,7 @@ struct RuntimeProtectedArtifactTests {
         try rejectsChecksumDrift()
         validatesVersionBoundFilename()
         validatesProtectedArtifactSizeLimit()
+        try validatesAuditRecoveryCommandTargetsInstallation()
         print("RuntimeProtectedArtifactTests passed")
     }
 
@@ -101,6 +103,77 @@ struct RuntimeProtectedArtifactTests {
                 RuntimePayload.maximumProtectedArtifactBytes + 1
             ),
             "oversized protected payload is rejected before decoding"
+        )
+    }
+
+    private static func validatesAuditRecoveryCommandTargetsInstallation() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "DefenseClaw-recovery-fixture-'quoted'-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let venv = root.appendingPathComponent("venv", isDirectory: true)
+        let bin = venv.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let cli = bin.appendingPathComponent("defenseclaw", isDirectory: false)
+        try Data("#!/bin/sh\n".utf8).write(to: cli)
+        guard chmod(cli.path, 0o755) == 0 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+        let target = RuntimeAuditRecoveryTarget(
+            homeRoot: root,
+            configURL: root.appendingPathComponent("config.yaml"),
+            venvURL: venv,
+            runtimeCLIURL: cli,
+            installedVersion: "0.8.10",
+            permitsMutation: true
+        )
+
+        guard let command = RuntimeAuditRecoveryCommand.command(for: target) else {
+            fail("a writable installation with an executable CLI should produce a recovery command")
+        }
+        expect(
+            command.contains("upgrade --yes --version '0.8.10' --recover-corrupt-audit"),
+            "recovery uses the runtime's authenticated pre-config delegation"
+        )
+        expect(
+            !command.contains("upgrade --yes --recover-corrupt-audit"),
+            "recovery never silently selects the latest runtime"
+        )
+        expect(command.contains("DEFENSECLAW_HOME="), "recovery pins the selected home")
+        expect(command.contains("DEFENSECLAW_CONFIG="), "recovery pins the selected config")
+        expect(command.contains("DEFENSECLAW_VENV="), "recovery pins the selected venv")
+        expect(command.contains("'\"'\"'"), "single quotes in installation paths are shell-escaped")
+        expect(
+            command.contains("/venv/bin/defenseclaw' upgrade"),
+            "recovery executes the selected installation's CLI"
+        )
+        expect(!command.contains("curl "), "release authentication remains inside the runtime")
+        expect(
+            RuntimeAuditRecoveryCommand.command(
+                for: RuntimeAuditRecoveryTarget(
+                    homeRoot: target.homeRoot,
+                    configURL: target.configURL,
+                    venvURL: target.venvURL,
+                    runtimeCLIURL: target.runtimeCLIURL,
+                    installedVersion: target.installedVersion,
+                    permitsMutation: false
+                )
+            ) == nil,
+            "read-only installations cannot produce a repair command"
+        )
+        expect(
+            RuntimeAuditRecoveryCommand.command(
+                for: RuntimeAuditRecoveryTarget(
+                    homeRoot: target.homeRoot,
+                    configURL: target.configURL,
+                    venvURL: target.venvURL,
+                    runtimeCLIURL: target.runtimeCLIURL,
+                    installedVersion: "latest; touch /tmp/unsafe",
+                    permitsMutation: true
+                )
+            ) == nil,
+            "recovery rejects non-SemVer version input"
         )
     }
 

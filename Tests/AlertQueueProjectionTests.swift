@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import SQLite3
 
@@ -10,6 +11,8 @@ enum AlertQueueProjectionTests {
     static func main() async {
         await currentSchemaExcludesAcknowledgedAndNonFindingRows()
         await legacySchemaRemainsReadable()
+        await reopensAfterSamePathReplacement()
+        await dropsStaleHandleWhilePathIsMissing()
         print("AlertQueueProjectionTests passed")
     }
 
@@ -52,6 +55,59 @@ enum AlertQueueProjectionTests {
 
         let rows = await AuditStore(url: url).alertQueueEvents(limit: 500)
         expect(rows.map(\.id) == ["legacy"], "legacy queue remains available without v8 projection columns")
+    }
+
+    private static func reopensAfterSamePathReplacement() async {
+        let url = temporaryDatabaseURL("replace-live")
+        let replacement = temporaryDatabaseURL("replace-new")
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: replacement)
+        }
+        createSingleAlertDatabase(url, id: "old")
+        createSingleAlertDatabase(replacement, id: "new")
+
+        let store = AuditStore(url: url)
+        let originalRows = await store.alertQueueEvents()
+        expect(originalRows.map(\.id) == ["old"], "fixture opens the original inode")
+        expect(rename(replacement.path, url.path) == 0, "fixture atomically replaces audit.db")
+        let replacementRows = await store.alertQueueEvents()
+        expect(
+            replacementRows.map(\.id) == ["new"],
+            "the same AuditStore instance reopens a replaced database"
+        )
+    }
+
+    private static func dropsStaleHandleWhilePathIsMissing() async {
+        let url = temporaryDatabaseURL("missing")
+        defer { try? FileManager.default.removeItem(at: url) }
+        createSingleAlertDatabase(url, id: "before")
+
+        let store = AuditStore(url: url)
+        let beforeRows = await store.alertQueueEvents()
+        expect(beforeRows.map(\.id) == ["before"], "fixture opens before removal")
+        try? FileManager.default.removeItem(at: url)
+        let missingRows = await store.alertQueueEvents()
+        expect(missingRows.isEmpty, "a missing path cannot serve stale rows")
+
+        createSingleAlertDatabase(url, id: "after")
+        let afterRows = await store.alertQueueEvents()
+        expect(
+            afterRows.map(\.id) == ["after"],
+            "the store reopens when audit.db returns"
+        )
+    }
+
+    private static func createSingleAlertDatabase(_ url: URL, id: String) {
+        execute(url, """
+            CREATE TABLE audit_events (
+                id TEXT, timestamp TEXT, action TEXT, target TEXT, actor TEXT,
+                details TEXT, severity TEXT, run_id TEXT, structured_json TEXT,
+                connector TEXT
+            );
+            INSERT INTO audit_events VALUES
+                ('\(id)', '2026-07-22T12:00:00Z', 'scan', '', '', '', 'HIGH', '', '', '');
+            """)
     }
 
     private static func temporaryDatabaseURL(_ suffix: String) -> URL {

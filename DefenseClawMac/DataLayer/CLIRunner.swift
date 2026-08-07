@@ -29,6 +29,12 @@ struct CLIResult: Sendable {
     var succeeded: Bool { exitCode == 0 && !cancelled && !outputTruncated }
 }
 
+struct CatalogListCLIResult: Sendable {
+    var result: CLIResult
+    var usedIsolatedAuditStore: Bool
+    var selectedBinaryPath: String?
+}
+
 enum CLICancellationDisposition: Sendable, Equatable {
     case requested
     case alreadyRequested
@@ -484,6 +490,10 @@ private struct BoundedCLILineStreamer: Sendable {
 }
 
 actor CLIRunner {
+    private static let isolatedCatalogResources = Set(["skill", "mcp", "plugin"])
+    private static let isolatedCatalogDirectoryPrefix = "DefenseClaw-catalog-read-only-"
+    private static let auditStoreMalformedLine =
+        "Failed to open audit store: database disk image is malformed"
     /// User override (App Settings ▸ Connection) wins; otherwise search standard locations.
     static let pathOverrideKey = "defenseclawBinaryPath"
 
@@ -606,6 +616,200 @@ actor CLIRunner {
     /// Subprocess-backed — callers cache the result; never run on the pulse.
     func locateTool(_ name: String) -> String? {
         which(name)
+    }
+
+    /// Catalog list commands currently initialize the runtime's writable audit
+    /// store before dispatch. If that store is corrupt, preserve catalog
+    /// availability by re-running only the allowlisted read-only list command
+    /// with a private, ephemeral DefenseClaw home. The real config and venv
+    /// remain pinned, while audit-backed status/history is intentionally absent.
+    func runReadOnlyCatalogList(resource: String) async -> CatalogListCLIResult {
+        guard Self.isolatedCatalogResources.contains(resource) else {
+            return CatalogListCLIResult(
+                result: CLIResult(exitCode: 64, output: "Unsupported isolated catalog resource."),
+                usedIsolatedAuditStore: false,
+                selectedBinaryPath: nil
+            )
+        }
+
+        let sourceContext = installationContext
+        guard let selectedBinary = locateBinary() else {
+            return CatalogListCLIResult(
+                result: CLIResult(
+                    exitCode: 127,
+                    output: "defenseclaw binary not found. Set its path in Settings ▸ Connection."
+                ),
+                usedIsolatedAuditStore: false,
+                selectedBinaryPath: nil
+            )
+        }
+        let arguments = [resource, "list", "--json"]
+        let primary = await run(binary: selectedBinary, arguments: arguments, mutation: false)
+        guard installationContext == sourceContext else {
+            return CatalogListCLIResult(
+                result: CLIResult(
+                    exitCode: 75,
+                    output: "DefenseClaw installation changed while loading the catalog. Refresh to retry."
+                ),
+                usedIsolatedAuditStore: false,
+                selectedBinaryPath: selectedBinary
+            )
+        }
+        guard !primary.succeeded, Self.isAuditStoreCorruption(primary.output) else {
+            return CatalogListCLIResult(
+                result: primary,
+                usedIsolatedAuditStore: false,
+                selectedBinaryPath: selectedBinary
+            )
+        }
+
+        let sourceConfig = await run(
+            binary: selectedBinary,
+            arguments: ["config", "show", "--source", "--format", "json"],
+            mutation: false
+        )
+        guard installationContext == sourceContext, sourceConfig.succeeded else {
+            return CatalogListCLIResult(
+                result: primary,
+                usedIsolatedAuditStore: false,
+                selectedBinaryPath: selectedBinary
+            )
+        }
+
+        let fileManager = FileManager.default
+        let temporaryHome = fileManager.temporaryDirectory.appendingPathComponent(
+            Self.isolatedCatalogDirectoryPrefix + UUID().uuidString,
+            isDirectory: true
+        )
+        do {
+            try fileManager.createDirectory(
+                at: temporaryHome,
+                withIntermediateDirectories: false,
+                attributes: [.posixPermissions: NSNumber(value: Int16(0o700))]
+            )
+        } catch {
+            return CatalogListCLIResult(
+                result: CLIResult(
+                    exitCode: 73,
+                    output: "Could not create a private read-only catalog workspace: \(error.localizedDescription)"
+                ),
+                usedIsolatedAuditStore: false,
+                selectedBinaryPath: selectedBinary
+            )
+        }
+        defer { try? fileManager.removeItem(at: temporaryHome) }
+
+        let isolatedConfigURL = temporaryHome.appendingPathComponent("config.json", isDirectory: false)
+        guard let isolatedConfig = Self.isolatedCatalogConfig(
+            sourceJSON: sourceConfig.output,
+            temporaryHome: temporaryHome,
+            pluginDirectory: sourceContext.dataDirectory.appendingPathComponent(
+                "plugins",
+                isDirectory: true
+            )
+        ), fileManager.createFile(
+            atPath: isolatedConfigURL.path,
+            contents: isolatedConfig,
+            attributes: [.posixPermissions: NSNumber(value: Int16(0o600))]
+        ) else {
+            return CatalogListCLIResult(
+                result: primary,
+                usedIsolatedAuditStore: false,
+                selectedBinaryPath: selectedBinary
+            )
+        }
+
+        let isolatedContext = InstallationContext(
+            source: .environmentHome,
+            accessMode: .invalidReadOnly("Isolated read-only catalog view."),
+            homeRoot: temporaryHome,
+            configURL: isolatedConfigURL,
+            dataDirectory: temporaryHome,
+            auditDBURL: temporaryHome.appendingPathComponent("audit.db", isDirectory: false),
+            environmentURL: temporaryHome.appendingPathComponent(".env", isDirectory: false),
+            gatewayJSONLURL: temporaryHome.appendingPathComponent("gateway.jsonl", isDirectory: false),
+            gatewayLogURL: temporaryHome.appendingPathComponent("gateway.log", isDirectory: false),
+            gatewayErrorLogURL: nil,
+            watchdogLogURL: temporaryHome.appendingPathComponent("watchdog.log", isDirectory: false),
+            venvURL: sourceContext.venvURL
+        )
+        let isolatedRunner = CLIRunner(context: isolatedContext)
+        let fallback = await isolatedRunner.run(
+            binary: selectedBinary,
+            arguments: arguments,
+            mutation: false
+        )
+        guard installationContext == sourceContext else {
+            return CatalogListCLIResult(
+                result: CLIResult(
+                    exitCode: 75,
+                    output: "DefenseClaw installation changed while loading the catalog. Refresh to retry."
+                ),
+                usedIsolatedAuditStore: false,
+                selectedBinaryPath: selectedBinary
+            )
+        }
+        return CatalogListCLIResult(
+            result: fallback,
+            usedIsolatedAuditStore: fallback.succeeded,
+            selectedBinaryPath: selectedBinary
+        )
+    }
+
+    nonisolated static func isAuditStoreCorruption(_ output: String) -> Bool {
+        output.components(separatedBy: .newlines).contains {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines) == auditStoreMalformedLine
+        }
+    }
+
+    private nonisolated static func isolatedCatalogConfig(
+        sourceJSON: String,
+        temporaryHome: URL,
+        pluginDirectory: URL
+    ) -> Data? {
+        guard sourceJSON.utf8.count <= CLIOutputLimits.maximumOutputBytes,
+              let sourceData = sourceJSON
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .data(using: .utf8),
+              var config = try? JSONSerialization.jsonObject(with: sourceData) as? [String: Any],
+              (config["config_version"] as? NSNumber)?.intValue == 8 else {
+            return nil
+        }
+
+        config = removingInlineSecrets(from: config)
+        config["data_dir"] = temporaryHome.path
+        config["quarantine_dir"] = temporaryHome.appendingPathComponent("quarantine").path
+        config["policy_dir"] = temporaryHome.appendingPathComponent("policies").path
+        if config["plugin_dir"] == nil {
+            config["plugin_dir"] = pluginDirectory.path
+        }
+        // Catalog inventory needs no telemetry sink. Keeping an operator's
+        // destinations here could emit from the isolated helper or reach a
+        // path outside its private workspace.
+        config["observability"] = [String: Any]()
+
+        return try? JSONSerialization.data(withJSONObject: config, options: [.sortedKeys])
+    }
+
+    private nonisolated static func removingInlineSecrets(
+        from dictionary: [String: Any]
+    ) -> [String: Any] {
+        dictionary.reduce(into: [String: Any]()) { result, entry in
+            let lowerKey = entry.key.lowercased()
+            let namesEnvironmentVariable = lowerKey.hasSuffix("_env")
+            let namesInlineSecret = !namesEnvironmentVariable && [
+                "api_key", "token", "password", "secret", "credential",
+            ].contains { lowerKey == $0 || lowerKey.hasSuffix("_\($0)") }
+            guard !namesInlineSecret else { return }
+
+            if let nested = entry.value as? [String: Any] {
+                result[entry.key] = removingInlineSecrets(from: nested)
+            } else if let array = entry.value as? [[String: Any]] {
+                result[entry.key] = array.map(removingInlineSecrets(from:))
+            } else {
+                result[entry.key] = entry.value
+            }
+        }
     }
 
     private func which(_ name: String) -> String? {
