@@ -46,6 +46,44 @@ strip_stale_provenance() {
     xattr -rd com.apple.provenance "$1" 2>/dev/null || true
 }
 
+# Existing app versions require the self-update ZIP to contain exactly one
+# top-level app bundle. Keep this check beside packaging so a release cannot
+# publish an archive the installed updater will reject.
+validate_self_update_zip() {
+    local archive="$1" expected_root="$2"
+    python3 - "$archive" "$expected_root" <<'PYEOF'
+from pathlib import PurePosixPath
+import stat
+import sys
+import zipfile
+
+archive, expected_root = sys.argv[1:]
+with zipfile.ZipFile(archive) as bundle:
+    entries = bundle.infolist()
+
+if not entries:
+    raise SystemExit("self-update archive is empty")
+
+roots = set()
+for entry in entries:
+    name = entry.filename
+    path = PurePosixPath(name)
+    if not name or name.startswith(("/", "~")) or ".." in path.parts:
+        raise SystemExit(f"unsafe self-update archive path: {name!r}")
+    roots.add(path.parts[0])
+
+    file_type = stat.S_IFMT(entry.external_attr >> 16)
+    if file_type not in (0, stat.S_IFREG, stat.S_IFDIR):
+        raise SystemExit(f"unsupported self-update archive entry: {name}")
+
+if roots != {expected_root}:
+    rendered = ", ".join(sorted(roots))
+    raise SystemExit(
+        f"self-update archive must contain only {expected_root}; found: {rendered}"
+    )
+PYEOF
+}
+
 # notarytool's exit code on an Invalid verdict is not reliable across
 # versions — require an explicit "status: Accepted" in the output.
 notarize() {
@@ -412,11 +450,17 @@ step "Creating release zip (app-only)"
 RELEASE_ZIP="$OUT/$APP_NAME-$APP_VERSION.zip"
 strip_stale_provenance "$APP_PLAIN"
 codesign --verify --strict --deep --verbose=2 "$APP_PLAIN"
-ditto -c -k --sequesterRsrc --keepParent "$APP_PLAIN" "$RELEASE_ZIP"
+# This is consumed by already-installed UpdateChecker versions, which reject
+# the __MACOSX companion root emitted by --sequesterRsrc. The app-only ZIP is
+# extracted with ditto, so omit resource-fork metadata and keep one app root.
+ditto -c -k --norsrc --keepParent "$APP_PLAIN" "$RELEASE_ZIP"
+validate_self_update_zip "$RELEASE_ZIP" "$APP_NAME.app"
 ZIP_CHECK="$WORK/app-only-zip-check"
 mkdir -p "$ZIP_CHECK"
 ditto -x -k "$RELEASE_ZIP" "$ZIP_CHECK"
 codesign --verify --strict --deep --verbose=2 "$ZIP_CHECK/$APP_NAME.app"
+xcrun stapler validate "$ZIP_CHECK/$APP_NAME.app"
+spctl -a -t install -vv "$ZIP_CHECK/$APP_NAME.app"
 PORTABLE_ZIP_CHECK="$WORK/app-only-unzip-check"
 mkdir -p "$PORTABLE_ZIP_CHECK"
 /usr/bin/unzip -q "$RELEASE_ZIP" -d "$PORTABLE_ZIP_CHECK"
