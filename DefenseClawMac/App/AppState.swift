@@ -138,6 +138,7 @@ final class AppState {
 
     // DefenseClaw runtime (CLI + gateway) update state
     var installedRuntimeVersion: String?
+    var runtimeSetupCommands: Set<String>?
     var runtimeVersionCheckInProgress = false
     var runtimeVersionError: String?
     var runtimeReleaseChecked = false
@@ -427,6 +428,7 @@ final class AppState {
     /// intentionally remain process-wide.
     private func resetInstallationScopedState() {
         installedRuntimeVersion = nil
+        runtimeSetupCommands = nil
         runtimeVersionError = nil
         runtimeReleaseChecked = false
         availableRuntimeUpdate = nil
@@ -995,6 +997,7 @@ final class AppState {
         guard installationSnapshotIsCurrent(generation) else { return }
         guard locatedBinary != nil else {
             installedRuntimeVersion = nil
+            runtimeSetupCommands = nil
             runtimeVersionError = "DefenseClaw CLI not found. Set its path in Connection."
             return
         }
@@ -1003,6 +1006,11 @@ final class AppState {
         guard installationSnapshotIsCurrent(generation) else { return }
         if let version = UpdateChecker.parseVersion(result.output) {
             installedRuntimeVersion = version
+            let setupHelp = await cli.run(arguments: ["setup", "--help"], mutation: false)
+            guard installationSnapshotIsCurrent(generation) else { return }
+            runtimeSetupCommands = setupHelp.succeeded
+                ? CommandRegistry.setupCommands(from: setupHelp.output)
+                : nil
             runtimeVersionError = nil
             // A detected, working CLI supersedes an earlier bundled-install
             // failure (e.g. the user installed via the shell script instead);
@@ -1011,6 +1019,7 @@ final class AppState {
             if case .failed = runtimeInstallState { runtimeInstallState = .idle }
         } else {
             installedRuntimeVersion = nil
+            runtimeSetupCommands = nil
             runtimeVersionError = result.succeeded
                 ? "Could not read the installed runtime version."
                 : "Runtime version check failed (exit \(result.exitCode))."
@@ -1112,7 +1121,7 @@ final class AppState {
             releaseTag: runtimeUpdate.tag
         ) else {
             let failure = """
-            The available release identifier is not canonical, so no copy/paste command was produced. No installed files or services were changed. Follow the authenticated release-asset instructions at https://github.com/cisco-ai-defense/defenseclaw/blob/main/docs/CLI.md#upgrade.
+            The available release identifier is not canonical, so no copy/paste command was produced. No installed files or services were changed. Follow the authenticated release-asset instructions at https://cisco-ai-defense.github.io/defenseclaw/docs/get-started/upgrade/.
             """
             runtimeUpgradeLogTail = ""
             runtimeUpgradeLog = failure
@@ -1507,7 +1516,7 @@ final class AppState {
             notices.append(.init(level: .warn, message: "LLM guardrail not configured - set it up in Setup → Guardrail"))
         }
         if !skillScannerAvailable {
-            notices.append(.init(level: .warn, message: "skill-scanner not on PATH - run: pip install skill-scanner"))
+            notices.append(.init(level: .warn, message: "skill-scanner unavailable - repair the DefenseClaw installation"))
         }
         if silentBypassCount > 0 {
             notices.append(.init(level: .warn, message: "\(silentBypassCount) silent LLM bypass event(s) in the last 5m - see Alerts -> egress"))
@@ -1783,7 +1792,8 @@ final class AppState {
             return .init(label: "Agent", value: name)
         }()
 
-        let redaction = config.redactionEnabled ? "ON (redacted)" : "OFF (RAW)"
+        let redactionProfile = config.redactionDefaultProfile.isEmpty ? "unset" : config.redactionDefaultProfile
+        let redaction = "default \(redactionProfile)"
         let approval = config.hiltEnabled ? "ON (min \(config.hiltMinSeverity))" : "OFF"
 
         var rows: [ConfigurationRow] = [
@@ -1821,7 +1831,8 @@ final class AppState {
         // false) outranks the global flag, exactly like connector_is_disabled.
         let guardrail = (connectorIsDisabled(name) || !config.guardrailEnabled)
             ? "disabled" : "enabled"
-        let redaction = config.redactionEnabled ? "ON (global redacted)" : "OFF (global RAW)"
+        let redactionProfile = config.redactionDefaultProfile.isEmpty ? "unset" : config.redactionDefaultProfile
+        let redaction = "default \(redactionProfile) (global)"
         let approval = config.hiltEnabled ? "ON (global min \(config.hiltMinSeverity))" : "OFF (global)"
 
         // Exactly the TUI's rows: 8 fixed + optional Environment. LLM/AI

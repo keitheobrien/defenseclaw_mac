@@ -3,17 +3,32 @@ import Foundation
 @main
 enum RuntimeContractSurfaceTests {
     static func main() {
-        precondition(CommandRegistry.sourceCount == 231, "unexpected upstream command count")
+        precondition(CommandRegistry.sourceCount == 232, "unexpected upstream command count")
         precondition(CommandRegistry.all.count == CommandRegistry.sourceCount, "registry count mismatch")
 
         let titles = CommandRegistry.all.map(\.title)
         precondition(Set(titles).count == titles.count, "command titles must be unique")
+        precondition(titles.contains("setup amp"), "Amp setup command is missing")
         precondition(titles.contains("setup omnigent"), "OmniGent setup command is missing")
         precondition(titles.contains("setup galileo"), "Galileo setup command is missing")
         precondition(titles.contains("config show effective observability"), "effective observability command is missing")
         precondition(titles.contains("observability plan"), "observability plan command is missing")
         precondition(!titles.contains("setup observability migrate-splunk"), "retired migrate-splunk command remains")
         precondition(!titles.contains("setup redaction"), "retired setup redaction command remains")
+
+        let bundledTitles = CommandRegistry.paletteCommands(supportedSetupCommands: []).map(\.title)
+        precondition(!bundledTitles.contains("setup amp"), "runtime 0.8.10 must not expose setup amp")
+        let futureTitles = CommandRegistry.paletteCommands(supportedSetupCommands: ["amp"]).map(\.title)
+        precondition(futureTitles.contains("setup amp"), "runtimes reporting Amp may expose setup amp")
+        let setupCommands = CommandRegistry.setupCommands(from: """
+        Usage: defenseclaw setup [OPTIONS] [COMMAND] [ARGS]...
+
+        Commands:
+          amp          Configure Amp.
+          omnigent     Configure OmniGent.
+                       Wrapped description text must not become a command.
+        """)
+        precondition(setupCommands == ["amp", "omnigent"], "setup help capabilities must parse exactly")
 
         let galileo = command(titled: "setup galileo")
         precondition(galileo.requiresTerminal, "interactive Galileo setup must be terminal-only")

@@ -48,6 +48,7 @@ struct ResourceBoundaryTests {
         try await eventReaderRejectsOversizedRecords()
         try await eventReaderEnforcesAggregateRetainedByteLimit()
         try await gatewayAcceptsLegitimateResponse()
+        try await gatewayDecodesOptionalAIDiscoveryMetadata()
         try await gatewayRejectsDeclaredOversizedResponse()
         try await gatewayStopsUnknownLengthOversizedResponse()
         print("Resource boundary tests passed")
@@ -268,6 +269,73 @@ struct ResourceBoundaryTests {
         let client = gatewayClient(maximumResponseBytes: 256)
         let health = try await client.health()
         expect(health.state == "running", "normal bounded gateway JSON is parsed")
+    }
+
+    private static func gatewayDecodesOptionalAIDiscoveryMetadata() async throws {
+        StubGatewayURLProtocol.body = Data(#"""
+        {
+            "enabled": true,
+            "lookup_model_provenance_online": true,
+            "summary": {
+                "active_signals": 1,
+                "files_scanned": 3,
+                "result": "partial",
+                "errors": 2,
+                "detector_errors": {
+                    "ollama": "request timed out",
+                    "empty": "",
+                    "numeric": 42
+                }
+            },
+            "signals": [{
+                "signal_id": "ollama-model",
+                "category": "local_model",
+                "model": {
+                    "id": "llama3:8b",
+                    "owner_application": "Ollama",
+                    "relevance": "primary",
+                    "discovery_confidence": 86,
+                    "provenance": {
+                        "publisher": "Meta",
+                        "country_code": "us",
+                        "root_model": "Llama 3",
+                        "quantized": true,
+                        "quantization": "Q4_K_M"
+                    }
+                }
+            }]
+        }
+        """#.utf8)
+        StubGatewayURLProtocol.headers = [
+            "Content-Type": "application/json",
+            "Content-Length": String(StubGatewayURLProtocol.body.count),
+        ]
+        let client = gatewayClient(maximumResponseBytes: 4_096)
+        let snapshot = try await client.aiUsage()
+        expect(snapshot.lookupModelProvenanceOnline, "online provenance lookup is decoded")
+        expect(snapshot.result == "partial", "discovery result is decoded")
+        expect(snapshot.errors == 2, "discovery error count is decoded")
+        expect(
+            snapshot.detectorErrors == ["ollama": "request timed out"],
+            "malformed detector errors are discarded"
+        )
+        expect(snapshot.signals.count == 1, "bounded response retains its signal")
+        expect(snapshot.signals[0].model?.ownerApplication == "Ollama", "model owner is decoded")
+        expect(snapshot.signals[0].model?.relevance == "primary", "model relevance is decoded")
+        expect(snapshot.signals[0].model?.discoveryConfidence == 0.86, "confidence is normalized")
+        expect(snapshot.signals[0].model?.provenance?.publisher == "Meta", "provenance is decoded")
+        expect(snapshot.signals[0].model?.provenance?.countryCode == "US", "country is normalized")
+
+        StubGatewayURLProtocol.body = Data(#"{"summary":{},"signals":[]}"#.utf8)
+        StubGatewayURLProtocol.headers = [
+            "Content-Type": "application/json",
+            "Content-Length": String(StubGatewayURLProtocol.body.count),
+        ]
+        let legacySnapshot = try await client.aiUsage()
+        expect(!legacySnapshot.lookupModelProvenanceOnline, "missing lookup mode defaults offline")
+        expect(legacySnapshot.result.isEmpty, "missing diagnostics remain absent")
+        expect(legacySnapshot.errors == 0, "missing diagnostic count defaults safely")
+        expect(legacySnapshot.detectorErrors.isEmpty, "missing detector errors default safely")
     }
 
     private static func gatewayStopsUnknownLengthOversizedResponse() async throws {
