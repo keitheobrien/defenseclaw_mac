@@ -11,6 +11,7 @@ struct RuntimeProtectedArtifactTests {
         try rejectsChecksumDrift()
         validatesVersionBoundFilename()
         validatesProtectedArtifactSizeLimit()
+        validatesUpgradeResolverSanitizesAmbientVersion()
         try validatesAuditRecoveryCommandTargetsInstallation()
         print("RuntimeProtectedArtifactTests passed")
     }
@@ -103,6 +104,24 @@ struct RuntimeProtectedArtifactTests {
                 RuntimePayload.maximumProtectedArtifactBytes + 1
             ),
             "oversized protected payload is rejected before decoding"
+        )
+    }
+
+    private static func validatesUpgradeResolverSanitizesAmbientVersion() {
+        guard let command = RuntimeUpgradeResolverCommand.authenticated(releaseTag: "0.8.10") else {
+            fail("a valid runtime release tag should produce an authenticated resolver")
+        }
+        expect(
+            command.contains("set -eu\n  unset VERSION\n  umask 077"),
+            "the resolver must clear ambient VERSION before selecting the requested release"
+        )
+        expect(
+            !command.contains(" --version "),
+            "latest-mode resolution must not inject a version override"
+        )
+        expect(
+            RuntimeUpgradeResolverCommand.authenticated(releaseTag: "latest; touch /tmp/unsafe") == nil,
+            "the resolver rejects non-SemVer release tags"
         )
     }
 

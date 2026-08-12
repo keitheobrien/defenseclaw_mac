@@ -17,6 +17,7 @@
 // DefenseClaw for macOS — data models mirroring the TUI's service-layer dataclasses.
 // Apache-2.0; companion to cisco-ai-defense/defenseclaw.
 
+import CoreFoundation
 import Foundation
 
 // MARK: - Severity / state
@@ -587,6 +588,36 @@ enum AIConfidence {
     ) -> Int {
         DCSafeNumbers.intTruncating((clampedUnit(value) * 100).rounded(roundingRule)) ?? 0
     }
+
+    /// Decode a confidence value while preserving the distinction between an
+    /// omitted field and an explicitly reported zero. The distinction matters
+    /// for compatibility: model rows from older gateways can fall back to the
+    /// signal confidence, while a new gateway's explicit zero remains low.
+    static func optionalNormalized(_ raw: Any?) -> Double? {
+        guard let raw, !(raw is NSNull) else { return nil }
+        if let number = raw as? NSNumber {
+            // Swift bridges both JSON booleans and numeric 0/1 through
+            // NSNumber. Runtime type IDs preserve that distinction.
+            guard CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
+            let value = number.doubleValue
+            guard value.isFinite else { return nil }
+            return clampedUnit(value > 1 ? value / 100 : value)
+        }
+        guard !(raw is Bool) else { return nil }
+        let value: Double?
+        switch raw {
+        case let number as Double:
+            value = number
+        case let number as Int:
+            value = Double(number)
+        case let text as String:
+            value = Double(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        default:
+            value = nil
+        }
+        guard let value, value.isFinite else { return nil }
+        return clampedUnit(value > 1 ? value / 100 : value)
+    }
 }
 
 enum AIPresenceAxis {
@@ -611,10 +642,42 @@ struct AIUsageSnapshot: Sendable {
     var signals: [AISignal] = []
     // Overview box inputs (TUI ai_discovery_box)
     var enabled: Bool = true
+    /// Runtime opt-in reported by the currently running gateway generation.
+    var lookupModelProvenanceOnline: Bool = false
     var newSignals: Int = 0
     var changedSignals: Int = 0
     var goneSignals: Int = 0
     var privacyMode: String = ""
+    /// Completion state for the most recent scan (`ok`, `partial`, or
+    /// `disabled`). Empty means an older gateway did not report it.
+    var result: String = ""
+    var errors: Int = 0
+    var detectorErrors: [String: String] = [:]
+
+    var isPartial: Bool {
+        result.trimmingCharacters(in: .whitespacesAndNewlines)
+            .caseInsensitiveCompare("partial") == .orderedSame
+            || errors > 0
+            || !detectorErrors.isEmpty
+    }
+
+    var reportedDiscoveryErrorCount: Int {
+        max(errors, detectorErrors.count)
+    }
+
+    var discoveryIssueLabel: String {
+        let count = reportedDiscoveryErrorCount
+        if count > 0 { return "\(count) error\(count == 1 ? "" : "s")" }
+        return isPartial ? "Scan did not complete" : "0 errors"
+    }
+
+    var partialDiscoveryDescription: String {
+        let count = reportedDiscoveryErrorCount
+        if count > 0 {
+            return "\(count) error\(count == 1 ? "" : "s") occurred during discovery."
+        }
+        return "The scan did not complete, so results may be incomplete."
+    }
 
     /// Grouped one-row-per-product view, exactly as the TUI presents it.
     var rows: [AIDiscoveryRow] { AIDiscoveryGrouping.rows(from: signals) }
@@ -627,7 +690,41 @@ struct AIUsageSnapshot: Sendable {
         if changedSignals != 0 { parts.append("changed=\(changedSignals)") }
         if goneSignals != 0 { parts.append("gone=\(goneSignals)") }
         parts.append("files=\(filesScanned)")
+        parts.append("model-lookup=\(lookupModelProvenanceOnline ? "online" : "offline")")
         return parts
+    }
+}
+
+/// The diagnostic subset of an AI-discovery summary. Keeping coercion in the
+/// model layer makes the REST client and focused Swift harnesses share the same
+/// compatibility behavior.
+struct AIDiscoveryDiagnostics: Sendable, Hashable {
+    var result: String = ""
+    var errors: Int = 0
+    var detectorErrors: [String: String] = [:]
+
+    static func fromMapping(_ raw: [String: Any]) -> AIDiscoveryDiagnostics {
+        let errors = Int(clamping: AIUsageValueDecoding.nonnegativeInt64(raw["errors"]))
+        let detectorErrors: [String: String]
+        if let values = raw["detector_errors"] as? [String: String] {
+            detectorErrors = values.filter {
+                !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+        } else if let values = raw["detector_errors"] as? [String: Any] {
+            detectorErrors = values.reduce(into: [:]) { decoded, entry in
+                guard let message = entry.value as? String,
+                      !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                else { return }
+                decoded[entry.key] = message
+            }
+        } else {
+            detectorErrors = [:]
+        }
+        return AIDiscoveryDiagnostics(
+            result: (raw["result"] as? String) ?? "",
+            errors: errors,
+            detectorErrors: detectorErrors
+        )
     }
 }
 
@@ -648,6 +745,117 @@ struct ConfidencePoint: Identifiable, Sendable {
     var id: Date { timestamp }
 }
 
+/// Curated lineage for one locally observed model. Flags are intentionally
+/// derived by clients from the ISO country code instead of crossing the wire.
+struct AIModelProvenance: Sendable, Hashable {
+    var publisher: String = ""
+    var countryCode: String = ""
+    var rootModel: String = ""
+    var baseModels: [String] = []
+    /// nil means the catalog could not establish whether this is quantized.
+    var quantized: Bool? = nil
+    var quantization: String = ""
+    /// nil means the catalog could not establish whether this is distilled.
+    var distilled: Bool? = nil
+    var derivation: String = ""
+    var source: String = ""
+    var confidence: String = ""
+
+    static func fromMapping(_ raw: [String: Any]?) -> AIModelProvenance? {
+        guard let raw, !raw.isEmpty else { return nil }
+        let bases: [String]
+        if let values = raw["base_models"] as? [String] {
+            bases = values.filter {
+                !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+        } else if let values = raw["base_models"] as? [Any] {
+            bases = values.compactMap { $0 as? String }
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        } else if let value = raw["base_models"] as? String,
+                  !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            bases = [value]
+        } else {
+            bases = []
+        }
+        return AIModelProvenance(
+            publisher: (raw["publisher"] as? String) ?? "",
+            countryCode: normalizedCountryCode((raw["country_code"] as? String) ?? ""),
+            rootModel: (raw["root_model"] as? String) ?? "",
+            baseModels: bases,
+            quantized: optionalBool(raw["quantized"]),
+            quantization: (raw["quantization"] as? String) ?? "",
+            distilled: optionalBool(raw["distilled"]),
+            derivation: (raw["derivation"] as? String) ?? "",
+            source: (raw["source"] as? String) ?? "",
+            confidence: (raw["confidence"] as? String) ?? ""
+        )
+    }
+
+    /// Text remains useful when the platform cannot render the flag glyph.
+    var countryDisplay: String {
+        guard !countryCode.isEmpty else { return "" }
+        let flag = countryFlag
+        return flag.isEmpty ? countryCode : "\(countryCode) \(flag)"
+    }
+
+    var countryFlag: String {
+        guard countryCode.unicodeScalars.count == 2 else { return "" }
+        let regionalIndicatorOffset: UInt32 = 127_397
+        return countryCode.unicodeScalars.compactMap { scalar in
+            UnicodeScalar(regionalIndicatorOffset + scalar.value)
+        }.map { String($0) }.joined()
+    }
+
+    var rootDisplay: String {
+        if !rootModel.isEmpty { return rootModel }
+        if !baseModels.isEmpty { return "ambiguous (\(baseModels.count))" }
+        return ""
+    }
+
+    var derivationDisplay: String {
+        var parts: [String] = []
+        if !derivation.isEmpty {
+            parts.append(derivation)
+        } else if quantized == true, distilled == true {
+            parts.append("distilled+quantized")
+        } else if quantized == true {
+            parts.append("quantized")
+        } else if distilled == true {
+            parts.append("distilled")
+        } else if quantized == false, distilled == false {
+            parts.append("base")
+        }
+        if !quantization.isEmpty,
+           !parts.contains(where: { $0.caseInsensitiveCompare(quantization) == .orderedSame }) {
+            parts.append(quantization)
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private static func normalizedCountryCode(_ raw: String) -> String {
+        let code = raw.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard code.unicodeScalars.count == 2,
+              code.unicodeScalars.allSatisfy({ (65...90).contains(Int($0.value)) })
+        else { return "" }
+        return code
+    }
+
+    private static func optionalBool(_ raw: Any?) -> Bool? {
+        if let value = raw as? Bool { return value }
+        if let value = raw as? NSNumber, value.doubleValue == 0 || value.doubleValue == 1 {
+            return value.boolValue
+        }
+        if let value = raw as? String {
+            switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            case "true", "1", "yes", "on": return true
+            case "false", "0", "no", "off": return false
+            default: return nil
+            }
+        }
+        return nil
+    }
+}
+
 /// Local-model metadata carried by `/api/v1/ai-usage` signals.
 ///
 /// Model IDs deliberately remain separate from product/component identity:
@@ -663,6 +871,70 @@ struct AIUsageModel: Sendable, Hashable {
     var device: String = ""
     var sizeBytes: Int64 = 0
     var pinned: Bool = false
+    var provenance: AIModelProvenance? = nil
+    /// Owning desktop application when the scanner can safely attribute it.
+    var ownerApplication: String = ""
+    /// Scanner classification: primary, supporting, embedded, or unknown.
+    var relevance: String = ""
+    /// nil means an older gateway did not report model-specific confidence.
+    var discoveryConfidence: Double? = nil
+
+    static func fromMapping(_ raw: [String: Any]?) -> AIUsageModel? {
+        guard let raw, !raw.isEmpty else { return nil }
+        return AIUsageModel(
+            id: (raw["id"] as? String) ?? "",
+            status: (raw["status"] as? String) ?? "",
+            format: (raw["format"] as? String) ?? "",
+            provider: (raw["provider"] as? String) ?? "",
+            recipe: (raw["recipe"] as? String) ?? "",
+            modality: (raw["modality"] as? String) ?? "",
+            device: (raw["device"] as? String) ?? "",
+            sizeBytes: AIUsageValueDecoding.nonnegativeInt64(raw["size_bytes"]),
+            pinned: AIUsageValueDecoding.boolean(raw["pinned"]),
+            provenance: AIModelProvenance.fromMapping(raw["provenance"] as? [String: Any]),
+            ownerApplication: (raw["owner_application"] as? String) ?? "",
+            relevance: (raw["relevance"] as? String) ?? "",
+            discoveryConfidence: AIConfidence.optionalNormalized(raw["discovery_confidence"])
+        )
+    }
+}
+
+private enum AIUsageValueDecoding {
+    static func nonnegativeInt64(_ raw: Any?) -> Int64 {
+        // JSON booleans bridge through NSNumber, so reject Bool first.
+        if raw is Bool { return 0 }
+        let value: Int64?
+        switch raw {
+        case let number as Int:
+            value = Int64(exactly: number)
+        case let number as Int64:
+            value = number
+        case let number as NSNumber:
+            let double = number.doubleValue
+            guard double.isFinite, let exact = Int64(exactly: double) else { return 0 }
+            value = exact
+        case let text as String:
+            value = Int64(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        default:
+            value = nil
+        }
+        guard let value, value >= 0 else { return 0 }
+        return value
+    }
+
+    static func boolean(_ raw: Any?) -> Bool {
+        if let value = raw as? Bool { return value }
+        if let value = raw as? NSNumber {
+            if value == 0 { return false }
+            if value == 1 { return true }
+            return false
+        }
+        guard let text = raw as? String else { return false }
+        switch text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "true", "1", "yes", "on": return true
+        default: return false
+        }
+    }
 }
 
 /// Sanitized process metadata for a discovered AI runtime. The gateway never
@@ -763,27 +1035,16 @@ enum AISignalDecoding {
     }
 
     private static func decodeModel(_ raw: [String: Any]?) -> AIUsageModel? {
-        guard let raw else { return nil }
-        return AIUsageModel(
-            id: string(raw["id"]),
-            status: string(raw["status"]),
-            format: string(raw["format"]),
-            provider: string(raw["provider"]),
-            recipe: string(raw["recipe"]),
-            modality: string(raw["modality"]),
-            device: string(raw["device"]),
-            sizeBytes: nonnegativeInt64(raw["size_bytes"]),
-            pinned: boolean(raw["pinned"])
-        )
+        AIUsageModel.fromMapping(raw)
     }
 
     private static func decodeRuntime(_ raw: [String: Any]?) -> AIUsageRuntime? {
         guard let raw else { return nil }
         return AIUsageRuntime(
-            pid: Int(clamping: nonnegativeInt64(raw["pid"])),
-            ppid: Int(clamping: nonnegativeInt64(raw["ppid"])),
+            pid: Int(clamping: AIUsageValueDecoding.nonnegativeInt64(raw["pid"])),
+            ppid: Int(clamping: AIUsageValueDecoding.nonnegativeInt64(raw["ppid"])),
             startedAt: DCDates.parse(raw["started_at"]),
-            uptimeSeconds: nonnegativeInt64(raw["uptime_sec"]),
+            uptimeSeconds: AIUsageValueDecoding.nonnegativeInt64(raw["uptime_sec"]),
             user: string(raw["user"]),
             command: string(raw["comm"])
         )
@@ -801,42 +1062,6 @@ enum AISignalDecoding {
     private static func stringList(_ raw: Any?) -> [String] {
         if let value = raw as? String { return value.isEmpty ? [] : [value] }
         return (raw as? [Any])?.compactMap { $0 as? String } ?? []
-    }
-
-    private static func nonnegativeInt64(_ raw: Any?) -> Int64 {
-        // JSON booleans bridge through NSNumber, so reject Bool first.
-        if raw is Bool { return 0 }
-        let value: Int64?
-        switch raw {
-        case let number as Int:
-            value = Int64(exactly: number)
-        case let number as Int64:
-            value = number
-        case let number as NSNumber:
-            let double = number.doubleValue
-            guard double.isFinite, let exact = Int64(exactly: double) else { return 0 }
-            value = exact
-        case let text as String:
-            value = Int64(text.trimmingCharacters(in: .whitespacesAndNewlines))
-        default:
-            value = nil
-        }
-        guard let value, value >= 0 else { return 0 }
-        return value
-    }
-
-    private static func boolean(_ raw: Any?) -> Bool {
-        if let value = raw as? Bool { return value }
-        if let value = raw as? NSNumber {
-            if value == 0 { return false }
-            if value == 1 { return true }
-            return false
-        }
-        guard let text = raw as? String else { return false }
-        switch text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "true", "1", "yes", "on": return true
-        default: return false
-        }
     }
 }
 
@@ -947,10 +1172,18 @@ enum AIDiscoveryGrouping {
         for (label, value) in [
             ("status", model.status), ("format", model.format),
             ("recipe", model.recipe), ("modality", model.modality),
+            ("relevance", model.relevance), ("owner", model.ownerApplication),
             ("device", model.device),
         ] {
             let value = value.trimmingCharacters(in: .whitespacesAndNewlines)
             if !value.isEmpty { parts.append("\(label)=\(value)") }
+        }
+        if let confidence = model.discoveryConfidence {
+            let percentage = AIConfidence.percent(
+                confidence,
+                roundingRule: .toNearestOrAwayFromZero
+            )
+            parts.append("discovery_confidence=\(percentage)%")
         }
         if model.sizeBytes > 0 { parts.append("size_bytes=\(model.sizeBytes)") }
         if model.pinned { parts.append("pinned=true") }

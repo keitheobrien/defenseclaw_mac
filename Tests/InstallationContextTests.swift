@@ -31,6 +31,7 @@ struct InstallationContextTests {
         managedEvidenceMonotonicallyRemovesMutation()
         nestedAuditPathIsReadCorrectly()
         protectedEnvironmentCannotBeOverridden()
+        await redactionDefaultProfileMatchesRuntimeSchema()
         await configStoreRebindDropsThePreviousInstallation()
         await lowerLevelMutationGateSurvivesRebind()
         await gatewayPOSTGateFailsBeforeNetwork()
@@ -304,6 +305,60 @@ struct InstallationContextTests {
         expect(environment["DEFENSECLAW_CONFIG"] == context.configURL.path, "config env is pinned")
         expect(environment["DEFENSECLAW_HOME"] == context.homeRoot.path, "home env is pinned")
         expect(environment["PATH"]?.hasPrefix("/custom/bin") == true, "normal PATH inheritance remains")
+    }
+
+    private static func redactionDefaultProfileMatchesRuntimeSchema() async {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("defenseclaw-redaction-profile-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+            defer { try? FileManager.default.removeItem(at: directory) }
+
+            let configURL = directory.appendingPathComponent("config.yaml", isDirectory: false)
+            let context = InstallationContext.resolve(
+                environment: ["DEFENSECLAW_CONFIG": configURL.path],
+                appConfigOverride: nil,
+                userHome: directory
+            )
+            let store = ConfigStore(context: context)
+
+            try """
+            config_version: 8
+            deployment_mode: unmanaged_byod
+            privacy:
+              disable_redaction: true
+            """.write(to: configURL, atomically: true, encoding: .utf8)
+            var config = await store.reload()
+            expect(
+                config.redactionDefaultProfile.isEmpty,
+                "legacy privacy.disable_redaction no longer defines the v8 redaction profile"
+            )
+
+            try """
+            config_version: 8
+            deployment_mode: unmanaged_byod
+            observability:
+              defaults:
+                redaction_profile: none
+            """.write(to: configURL, atomically: true, encoding: .utf8)
+            config = await store.reload()
+            expect(
+                config.redactionDefaultProfile == "none",
+                "the permissive none profile remains distinct from an absent profile"
+            )
+
+            try """
+            config_version: 8
+            deployment_mode: unmanaged_byod
+            observability:
+              defaults:
+                redaction_profile: strict
+            """.write(to: configURL, atomically: true, encoding: .utf8)
+            config = await store.reload()
+            expect(config.redactionDefaultProfile == "strict", "v8 redaction profile is loaded")
+        } catch {
+            fail("redaction profile fixture failed: \(error)")
+        }
     }
 
     private static func lowerLevelMutationGateSurvivesRebind() async {

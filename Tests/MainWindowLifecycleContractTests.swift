@@ -15,6 +15,9 @@ enum MainWindowLifecycleContractTests {
         let popoverSource = try source(
             at: root.appendingPathComponent("DefenseClawMac/Features/MenuBarPopover.swift")
         )
+        let mainWindowSource = try source(
+            at: root.appendingPathComponent("DefenseClawMac/Features/MainWindow.swift")
+        )
 
         expect(appSource.contains(#"Window("DefenseClaw", id: "main")"#),
                "the primary dashboard must use a singleton Window scene")
@@ -31,11 +34,58 @@ enum MainWindowLifecycleContractTests {
         expect(!helper.contains("AppDelegate.openMainWindow()"),
                "the menu action must not combine AppKit and SwiftUI open operations")
 
+        expect(mainWindowSource.contains("NavigationSplitView {"),
+               "the main window must retain its native sidebar/detail split")
+        expect(!mainWindowSource.contains("NavigationSplitView(columnVisibility:"),
+               "inspector presentation must not programmatically change split-view visibility")
+
+        let applicationSources = try swiftSources(
+            under: root.appendingPathComponent("DefenseClawMac", isDirectory: true)
+        )
+        for forbiddenSymbol in [
+            "detailInspectorPresented",
+            "reportsDetailInspector(",
+            "inspectorCollapsedSidebar",
+            "shouldCollapseSidebar(",
+        ] {
+            expect(!applicationSources.contains(forbiddenSymbol),
+                   "legacy inspector/sidebar coupling returned: \(forbiddenSymbol)")
+        }
+
+        for relativePath in [
+            "DefenseClawMac/Features/ActivityView.swift",
+            "DefenseClawMac/Features/AlertsView.swift",
+            "DefenseClawMac/Features/AuditView.swift",
+            "DefenseClawMac/Features/LogsView.swift",
+        ] {
+            let featureSource = try source(at: root.appendingPathComponent(relativePath))
+            expect(featureSource.contains(".inspector(isPresented:"),
+                   "\(relativePath) must retain its native inspector")
+            expect(featureSource.contains(".dcInspectorColumnWidth()"),
+                   "\(relativePath) must retain bounded inspector sizing")
+        }
+
         print("MainWindowLifecycleContractTests passed")
     }
 
     private static func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
+    }
+
+    private static func swiftSources(under directory: URL) throws -> String {
+        guard let enumerator = FileManager.default.enumerator(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else {
+            throw TestError("could not enumerate \(directory.path)")
+        }
+
+        var contents: [String] = []
+        for case let url as URL in enumerator where url.pathExtension == "swift" {
+            contents.append(try source(at: url))
+        }
+        return contents.joined(separator: "\n")
     }
 
     private static func functionBody(named name: String, in source: String) throws -> String {

@@ -20,6 +20,7 @@ import Foundation
 struct LocalModelDiscoveryParityTests {
     static func main() {
         decodesLocalModelRuntimeAndEvidenceMetadata()
+        decodesProvenanceDiagnosticsAndClassificationMetadata()
         safelyCoercesUntrustedModelMetadata()
         groupsLocalModelsByModelIDAndSearchesModelNames()
         preservesStableCollisionSafeRowIdentity()
@@ -95,6 +96,87 @@ struct LocalModelDiscoveryParityTests {
         )
     }
 
+    private static func decodesProvenanceDiagnosticsAndClassificationMetadata() {
+        let signal = AISignalDecoding.decode([
+            "model": [
+                "id": "llama3:8b-q4",
+                "owner_application": "Ollama",
+                "relevance": "primary",
+                "discovery_confidence": 92,
+                "provenance": [
+                    "publisher": "Meta",
+                    "country_code": " us ",
+                    "base_models": ["Llama 3", "", 42] as [Any],
+                    "quantized": "yes",
+                    "quantization": "4-bit",
+                    "distilled": false,
+                    "source": "catalog",
+                    "confidence": "high",
+                ] as [String: Any],
+            ] as [String: Any],
+        ])
+
+        guard let model = signal.model, let provenance = model.provenance else {
+            fail("model provenance is decoded")
+        }
+        expect(model.ownerApplication == "Ollama", "model owner application")
+        expect(model.relevance == "primary", "model relevance")
+        expect(model.discoveryConfidence == 0.92, "percent model confidence is normalized")
+        expect(provenance.publisher == "Meta", "provenance publisher")
+        expect(provenance.countryCode == "US", "country code is normalized")
+        expect(provenance.countryDisplay == "US 🇺🇸", "country display includes its derived flag")
+        expect(provenance.baseModels == ["Llama 3"], "malformed and empty base models are discarded")
+        expect(provenance.rootDisplay == "ambiguous (1)", "ambiguous lineage is explicit")
+        expect(provenance.quantized == true, "string quantized flag is decoded")
+        expect(provenance.distilled == false, "boolean distilled flag is decoded")
+        expect(provenance.derivationDisplay == "quantized · 4-bit", "derivation fallback")
+        expect(provenance.source == "catalog", "provenance source")
+        expect(provenance.confidence == "high", "provenance confidence")
+        expect(
+            AIDiscoveryGrouping.modelDetail(model)
+                == "model: id=llama3:8b-q4 relevance=primary owner=Ollama discovery_confidence=92%",
+            "classification metadata appears in bounded inspector detail"
+        )
+
+        let diagnostics = AIDiscoveryDiagnostics.fromMapping([
+            "result": "partial",
+            "errors": NSNumber(value: 2),
+            "detector_errors": [
+                "ollama": "request timed out",
+                "empty": "   ",
+                "numeric": 42,
+            ] as [String: Any],
+        ])
+        expect(diagnostics.result == "partial", "diagnostic result")
+        expect(diagnostics.errors == 2, "diagnostic error count")
+        expect(
+            diagnostics.detectorErrors == ["ollama": "request timed out"],
+            "only nonempty string detector errors are retained"
+        )
+
+        var snapshot = AIUsageSnapshot()
+        snapshot.result = diagnostics.result
+        snapshot.errors = diagnostics.errors
+        snapshot.detectorErrors = diagnostics.detectorErrors
+        expect(snapshot.isPartial, "reported diagnostics mark a partial scan")
+        expect(snapshot.reportedDiscoveryErrorCount == 2, "reported count wins over detector map size")
+        expect(snapshot.discoveryIssueLabel == "2 errors", "diagnostic issue label")
+        expect(
+            snapshot.partialDiscoveryDescription == "2 errors occurred during discovery.",
+            "diagnostic description"
+        )
+
+        expect(AIConfidence.optionalNormalized(true) == nil, "boolean confidence is rejected")
+        expect(
+            AIConfidence.optionalNormalized(NSNumber(value: true)) == nil,
+            "bridged boolean confidence is rejected"
+        )
+        expect(AIConfidence.optionalNormalized(NSNumber(value: 0)) == 0, "numeric zero is preserved")
+        expect(AIConfidence.optionalNormalized(NSNumber(value: 1)) == 1, "numeric one is preserved")
+        expect(AIConfidence.optionalNormalized(Double.nan) == nil, "non-finite confidence is rejected")
+        expect(AIUsageModel.fromMapping([:]) == nil, "empty model mapping remains absent")
+    }
+
     private static func safelyCoercesUntrustedModelMetadata() {
         let invalid = AISignalDecoding.decode([
             "model": ["id": "private", "size_bytes": "not-a-number", "pinned": "false"],
@@ -115,9 +197,16 @@ struct LocalModelDiscoveryParityTests {
         expect(negative.model?.pinned == true, "true string is accepted")
 
         let boundary = AISignalDecoding.decode([
-            "model": ["id": "boundary", "size_bytes": Double(Int64.max)],
+            "model": [
+                "id": "boundary",
+                "size_bytes": Double(Int64.max),
+                "discovery_confidence": true,
+                "provenance": ["country_code": "USA"],
+            ] as [String: Any],
         ])
         expect(boundary.model?.sizeBytes == 0, "rounded Int64 boundary cannot trap")
+        expect(boundary.model?.discoveryConfidence == nil, "boolean confidence remains absent")
+        expect(boundary.model?.provenance?.countryCode.isEmpty == true, "invalid country code is discarded")
 
         var distant = makeSignal(id: "distant")
         distant.lastSeen = Date(timeIntervalSince1970: 1e22)
@@ -223,8 +312,16 @@ struct LocalModelDiscoveryParityTests {
         snapshot.goneSignals = 4
         expect(
             snapshot.discoveryHeaderParts
-                == ["active=0", "new=1", "changed=2", "gone=4", "files=3"],
+                == [
+                    "active=0", "new=1", "changed=2", "gone=4", "files=3",
+                    "model-lookup=offline",
+                ],
             "reported active zero never falls back to total detected"
+        )
+        snapshot.lookupModelProvenanceOnline = true
+        expect(
+            snapshot.discoveryHeaderParts.last == "model-lookup=online",
+            "online provenance lookup is visible in the discovery header"
         )
 
         var newAgent = makeSignal(id: "new", name: "New agent", category: "ai_cli", product: "New")

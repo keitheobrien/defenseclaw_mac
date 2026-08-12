@@ -110,7 +110,6 @@ struct AuditView: View {
                     .dcInspectorColumnWidth()
             }
         }
-        .reportsDetailInspector(selectedEvent != nil)
         .searchable(text: $search, placement: .toolbar, prompt: "Search action, target, details")
         .toolbar {
             ToolbarItemGroup {

@@ -137,7 +137,6 @@ struct AlertsView: View {
                     .dcInspectorColumnWidth()
             }
         }
-        .reportsDetailInspector(selectedRow != nil)
         .searchable(text: $search, placement: .toolbar, prompt: "Search action, target, details")
         .toolbar {
             ToolbarItemGroup {
