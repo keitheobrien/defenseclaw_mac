@@ -48,6 +48,10 @@ checks = {
     "first-run no longer references mutable main": 'defenseclaw/main/scripts' not in first_run,
     "updater pins Apple Team ID": 'expectedTeamIdentifier = "9R236BB67S"' in updater,
     "updater enforces designated requirement": '"-R=\\(Self.expectedCodeRequirement)"' in updater,
+    "self-update ZIP omits AppleDouble companion root": 'ditto -c -k --norsrc --keepParent "$APP_PLAIN" "$RELEASE_ZIP"' in build,
+    "self-update ZIP validates its single-root layout": 'validate_self_update_zip "$RELEASE_ZIP" "$APP_NAME.app"' in build,
+    "self-update ZIP validates its notarization ticket after extraction": 'xcrun stapler validate "$ZIP_CHECK/$APP_NAME.app"' in build,
+    "self-update ZIP passes Gatekeeper after extraction": 'spctl -a -t install -vv "$ZIP_CHECK/$APP_NAME.app"' in build,
 }
 
 failed = [label for label, ok in checks.items() if not ok]
