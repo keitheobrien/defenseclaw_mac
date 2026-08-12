@@ -103,7 +103,6 @@ struct LogsView: View {
                     .dcInspectorColumnWidth()
             }
         }
-        .reportsDetailInspector(selectedDisplayRow != nil)
         .searchable(text: $search, placement: .toolbar, prompt: "Search log lines")
         .toolbar {
             ToolbarItemGroup {

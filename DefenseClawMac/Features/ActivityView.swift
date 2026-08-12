@@ -79,7 +79,6 @@ struct ActivityView: View {
                     .dcInspectorColumnWidth()
             }
         }
-        .reportsDetailInspector(inspectorIsPresented)
         .searchable(text: $search, placement: .toolbar, prompt: "Search activity")
         .toolbar {
             ToolbarItemGroup {
@@ -198,10 +197,6 @@ struct ActivityView: View {
                 }
             }
         )
-    }
-
-    private var inspectorIsPresented: Bool {
-        tab == .commands ? selectedCommand != nil : selectedMutation != nil
     }
 
     private func commandInspector(_ entry: CommandActivityEntry) -> some View {
