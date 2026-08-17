@@ -71,6 +71,13 @@ enum PanelID: String, CaseIterable, Identifiable {
     }
 }
 
+enum AppSettingsTab: Hashable {
+    case general
+    case monitoring
+    case notifications
+    case connection
+}
+
 enum AlertPanelRequest: Equatable {
     case all
     case blocks
@@ -252,6 +259,7 @@ final class AppState {
     var auditPresetRequest: String?
     var logPanelRequest: LogPanelRequest?
     var commandPalettePresented = false
+    var selectedSettingsTab: AppSettingsTab = .general
 
     // Settings (mirrored via @AppStorage in views; defaults here)
     @ObservationIgnored @AppStorage(SettingsKeys.pulseInterval) var pulseInterval: Double = 5
