@@ -187,7 +187,7 @@
       "upstream_sha256": "22651b732073867ac59d52c6e7105b46f23637f4702dfee326e6378ef45d5993"
     }
   },
-  "mac_app_version": "1.1.17",
+  "mac_app_version": "1.1.18",
   "runtime_version": "0.8.6",
   "upstream_commit": "1dbf08b26e0ef94f5550e03c40fe6cdc8de0cd46"
 }
