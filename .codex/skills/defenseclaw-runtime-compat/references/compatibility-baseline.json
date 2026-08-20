@@ -47,7 +47,7 @@
       "upstream_sha256": "e3c44716832d2ce48dff9b4954a14f2602f2cea3b59b003e1cf294b62f37b0c4"
     },
     "DataLayer/ConfigStore.swift": {
-      "local_sha256": "f064dda95866468bc232f33f51b459f86b42ddd81ac8cd71de4bbd97934eae6a",
+      "local_sha256": "ad1279d0614dd342facc8cb9367a2fc42b0d656bf423420625abb3fd3b122a68",
       "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
       "upstream_sha256": "fdcc81f28a520b070d0674870e0cb3d98548335c31a910959cc83a76a54ed59d"
     },
@@ -187,7 +187,7 @@
       "upstream_sha256": "22651b732073867ac59d52c6e7105b46f23637f4702dfee326e6378ef45d5993"
     }
   },
-  "mac_app_version": "1.1.18",
+  "mac_app_version": "1.1.19",
   "runtime_version": "0.8.6",
   "upstream_commit": "1dbf08b26e0ef94f5550e03c40fe6cdc8de0cd46"
 }
