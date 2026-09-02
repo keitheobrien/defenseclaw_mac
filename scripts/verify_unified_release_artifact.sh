@@ -19,27 +19,32 @@ MOUNT_POINT="$(mktemp -d "${TMPDIR:-/tmp}/defenseclaw-release-verify.XXXXXX")"
 ATTACHED=0
 cleanup() {
     if [[ "$ATTACHED" == "1" ]]; then
-        hdiutil detach "$MOUNT_POINT" -quiet || true
+        /usr/bin/hdiutil detach "$MOUNT_POINT" -quiet || true
     fi
     rmdir "$MOUNT_POINT" 2>/dev/null || true
 }
 trap cleanup EXIT
 
-hdiutil attach -readonly -nobrowse -mountpoint "$MOUNT_POINT" "$DMG" >/dev/null
+/usr/bin/hdiutil attach -readonly -nobrowse -mountpoint "$MOUNT_POINT" "$DMG" >/dev/null
 ATTACHED=1
 
 shopt -s nullglob
 apps=("$MOUNT_POINT"/*.app)
 shopt -u nullglob
-if [[ ${#apps[@]} -ne 1 ]]; then
-    printf 'Unified DMG must contain exactly one top-level app; found %d\n' "${#apps[@]}" >&2
+APP="$MOUNT_POINT/DefenseClawMac.app"
+if [[ ${#apps[@]} -ne 1 || "${apps[0]:-}" != "$APP" || ! -d "$APP" || -L "$APP" ]]; then
+    printf 'Unified DMG must contain exactly one regular top-level DefenseClawMac.app\n' >&2
     exit 1
 fi
 
-APP="${apps[0]}"
 PAYLOAD="$APP/Contents/Resources/RuntimePayload"
 GATEWAY="$PAYLOAD/defenseclaw-gateway"
 MANIFEST="$PAYLOAD/payload-manifest.json"
+
+if [[ ! -f "$GATEWAY" || -L "$GATEWAY" ]]; then
+    printf 'Unified DMG gateway must be a regular file: %s\n' "$GATEWAY" >&2
+    exit 1
+fi
 
 /usr/bin/codesign --verify --strict --deep --verbose=4 "$APP"
 verify_gateway_signature "$GATEWAY" "$EXPECTED_TEAM_ID"

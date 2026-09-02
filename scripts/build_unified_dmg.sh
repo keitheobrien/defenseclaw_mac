@@ -330,7 +330,8 @@ file "$GATEWAY" | grep -q "Mach-O 64-bit executable arm64" \
     || die "unexpected gateway binary type: $(file "$GATEWAY")"
 
 step "Re-signing gateway: Developer ID + hardened runtime"
-codesign -f -o runtime --timestamp --identifier "$GATEWAY_IDENTIFIER" -s "$IDENTITY" "$GATEWAY"
+sign_gateway_for_release "$GATEWAY" "$IDENTITY" \
+    || die "could not sign the gateway with the release signing contract"
 verify_gateway_signature "$GATEWAY" "$TEAM_ID" \
     || die "re-signed gateway does not satisfy the release signing contract"
 GATEWAY_SIGNED_SHA="$(shasum -a 256 "$GATEWAY" | awk '{print $1}')"

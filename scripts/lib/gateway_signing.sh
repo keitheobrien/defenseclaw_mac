@@ -3,6 +3,23 @@
 GATEWAY_IDENTIFIER="com.cisco.defenseclaw.gateway"
 GATEWAY_IDENTIFIER_REQUIREMENT="=identifier \"$GATEWAY_IDENTIFIER\""
 
+sign_gateway_for_release() {
+    local gateway_path="$1"
+    local identity="$2"
+    local timestamp_option="${3:---timestamp}"
+
+    case "$timestamp_option" in
+        --timestamp|--timestamp=none) ;;
+        *)
+            printf 'Unsupported gateway timestamp option: %s\n' "$timestamp_option" >&2
+            return 1
+            ;;
+    esac
+
+    /usr/bin/codesign -f -o runtime "$timestamp_option" \
+        --identifier "$GATEWAY_IDENTIFIER" -s "$identity" "$gateway_path"
+}
+
 verify_gateway_signature() {
     local gateway_path="$1"
     local expected_team_id="${2:-}"

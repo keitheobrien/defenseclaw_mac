@@ -19,8 +19,7 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE" xcrun swiftc \
 cp "$BUILD_DIR/gateway-fixture" "$BUILD_DIR/correct-gateway"
 cp "$BUILD_DIR/gateway-fixture" "$BUILD_DIR/wrong-gateway"
 
-/usr/bin/codesign -f -s - -o runtime \
-    --identifier "$GATEWAY_IDENTIFIER" "$BUILD_DIR/correct-gateway"
+sign_gateway_for_release "$BUILD_DIR/correct-gateway" - --timestamp=none
 /usr/bin/codesign -f -s - -o runtime \
     --identifier "com.example.wrong-gateway" "$BUILD_DIR/wrong-gateway"
 
