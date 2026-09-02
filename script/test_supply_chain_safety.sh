@@ -19,7 +19,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-bash -n "$ROOT/scripts/build_unified_dmg.sh"
+bash -n \
+    "$ROOT/scripts/build_unified_dmg.sh" \
+    "$ROOT/scripts/lib/gateway_signing.sh" \
+    "$ROOT/scripts/verify_unified_release_artifact.sh"
 
 python3 - "$ROOT" <<'PYEOF'
 from pathlib import Path
@@ -27,6 +30,7 @@ import sys
 
 root = Path(sys.argv[1])
 build = (root / "scripts/build_unified_dmg.sh").read_text(encoding="utf-8")
+gateway_signing = (root / "scripts/lib/gateway_signing.sh").read_text(encoding="utf-8")
 runtime = (root / "DefenseClawMac/DataLayer/RuntimeInstaller.swift").read_text(encoding="utf-8")
 first_run = (root / "DefenseClawMac/Features/FirstRunView.swift").read_text(encoding="utf-8")
 updater = (root / "DefenseClawMac/DataLayer/UpdateChecker.swift").read_text(encoding="utf-8")
@@ -52,7 +56,23 @@ checks = {
     "self-update ZIP validates its single-root layout": 'validate_self_update_zip "$RELEASE_ZIP" "$APP_NAME.app"' in build,
     "self-update ZIP validates its notarization ticket after extraction": 'xcrun stapler validate "$ZIP_CHECK/$APP_NAME.app"' in build,
     "self-update ZIP passes Gatekeeper after extraction": 'spctl -a -t install -vv "$ZIP_CHECK/$APP_NAME.app"' in build,
+    "gateway signing helper fixes the installer-required identifier": 'GATEWAY_IDENTIFIER="com.cisco.defenseclaw.gateway"' in gateway_signing,
+    "runtime installer and release helper use the same gateway identifier": 'com.cisco.defenseclaw.gateway' in runtime,
+    "gateway signing command assigns the fixed identifier": 'codesign -f -o runtime --timestamp --identifier "$GATEWAY_IDENTIFIER" -s "$IDENTITY" "$GATEWAY"' in build,
+    "decoded gateway is contract verified": 'verify_gateway_signature "$GATEWAY" "$TEAM_ID"' in build,
+    "embedded gateway is contract verified": 'verify_gateway_signature "$PAYLOAD/defenseclaw-gateway" "$TEAM_ID"' in build,
+    "staged gateway is contract verified": 'verify_gateway_signature "$STAGED_GATEWAY" "$TEAM_ID"' in build,
+    "finished DMG payload is verified": 'verify_unified_release_artifact.sh" "$DMG"' in build,
 }
+
+gateway_signing_lines = [
+    line.strip()
+    for line in build.splitlines()
+    if "codesign -f" in line and '"$GATEWAY"' in line
+]
+checks["no gateway signing command omits the fixed identifier"] = bool(gateway_signing_lines) and all(
+    '--identifier "$GATEWAY_IDENTIFIER"' in line for line in gateway_signing_lines
+)
 
 failed = [label for label, ok in checks.items() if not ok]
 if failed:

@@ -24,7 +24,8 @@ bundle:
 ```
 DefenseClawMac.app/Contents/Resources/RuntimePayload/
 ├── defenseclaw-gateway          # extracted from upstream tarball, re-signed
-│                                #   Developer ID + --timestamp -o runtime
+│                                #   Developer ID + hardened runtime + fixed
+│                                #   com.cisco.defenseclaw.gateway identifier
 ├── defenseclaw-X.Y.Z-py3-none-any.whl
 └── payload-manifest.json        # runtime version, upstream sha256s,
                                  # upstream tag, build date
@@ -51,13 +52,15 @@ repair** — once the runtime is installed, upstream owns its update track.
    darwin_arm64 tarball, wheel, `checksums.txt` (+ `.sig`/`.pem`).
 2. Verify sha256 against `checksums.txt`; cosign-verify `checksums.txt`
    itself. **Fail closed.**
-3. Extract the gateway;
-   `codesign -f -o runtime --timestamp -s "Developer ID Application"` it.
+3. Extract the gateway; sign it with Developer ID, hardened runtime, and the
+   fixed `com.cisco.defenseclaw.gateway` identifier required by the installer.
 4. Stage `RuntimePayload/` into the exported app's Resources (binary
    extracted, not tarred — so notarization and the bundle seal cover it
    directly), write `payload-manifest.json`, re-sign the outer app.
 5. Staple .app → `hdiutil create` (app + `/Applications` symlink) →
-   `codesign` the DMG → `notarytool submit` DMG → staple DMG.
+   `codesign` the DMG → `notarytool submit` DMG → staple DMG. Mount the final
+   DMG read-only and reject it unless the nested gateway has the fixed
+   identifier, expected Team ID, hardened runtime, and manifest SHA-256.
 6. Release publishes **both** assets: the DMG (unified installer, the
    headline download) and the zip (self-update track).
 
