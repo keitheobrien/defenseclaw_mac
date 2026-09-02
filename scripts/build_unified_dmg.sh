@@ -16,6 +16,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$REPO_ROOT/scripts/lib/gateway_signing.sh"
 RUNTIME_REPO="cisco-ai-defense/defenseclaw"
 IDENTITY="Developer ID Application: Keith OBrien (9R236BB67S)"
 TEAM_ID="9R236BB67S"
@@ -329,8 +330,11 @@ file "$GATEWAY" | grep -q "Mach-O 64-bit executable arm64" \
     || die "unexpected gateway binary type: $(file "$GATEWAY")"
 
 step "Re-signing gateway: Developer ID + hardened runtime"
-codesign -f -o runtime --timestamp -s "$IDENTITY" "$GATEWAY"
-codesign --verify --strict --verbose=2 "$GATEWAY"
+sign_gateway_for_release "$GATEWAY" "$IDENTITY" \
+    || die "could not sign the gateway with the release signing contract"
+verify_gateway_signature "$GATEWAY" "$TEAM_ID" \
+    || die "re-signed gateway does not satisfy the release signing contract"
+GATEWAY_SIGNED_SHA="$(shasum -a 256 "$GATEWAY" | awk '{print $1}')"
 
 # ── 3b. Dependency overrides from the upstream pyproject ─────────────────────
 # The wheel alone does not resolve to upstream's tested dependency set: their
@@ -480,7 +484,10 @@ PAYLOAD="$APP/Contents/Resources/RuntimePayload"
 mkdir -p "$PAYLOAD"
 cp "$GATEWAY" "$PAYLOAD/defenseclaw-gateway"
 cp "$WHEEL" "$PAYLOAD/$(basename "$WHEEL")"
-GATEWAY_SIGNED_SHA="$(shasum -a 256 "$PAYLOAD/defenseclaw-gateway" | awk '{print $1}')"
+verify_gateway_signature "$PAYLOAD/defenseclaw-gateway" "$TEAM_ID" \
+    || die "embedded gateway does not satisfy the release signing contract"
+verify_gateway_sha256 "$PAYLOAD/defenseclaw-gateway" "$GATEWAY_SIGNED_SHA" \
+    || die "embedded gateway differs from the verified release gateway"
 cp "$OVERRIDES" "$PAYLOAD/overrides.txt"
 cp "$DEPENDENCY_LOCK" "$PAYLOAD/runtime-requirements.lock"
 cp "$UPGRADE_MANIFEST" "$PAYLOAD/upgrade-manifest.json"
@@ -548,6 +555,10 @@ else
 fi
 strip_stale_provenance "$APP"
 codesign --verify --strict --deep --verbose=2 "$APP"
+verify_gateway_signature "$PAYLOAD/defenseclaw-gateway" "$TEAM_ID" \
+    || die "gateway identifier changed while signing the unified app"
+verify_gateway_sha256 "$PAYLOAD/defenseclaw-gateway" "$GATEWAY_SIGNED_SHA" \
+    || die "gateway bytes changed while signing the unified app"
 
 # ── 7. Notarize + staple the unified app ─────────────────────────────────────
 if [[ "${SKIP_NOTARIZE:-0}" != "1" ]]; then
@@ -568,6 +579,11 @@ mkdir -p "$STAGE"
 ditto "$APP" "$STAGE/$APP_NAME.app"
 strip_stale_provenance "$STAGE/$APP_NAME.app"
 codesign --verify --strict --deep --verbose=2 "$STAGE/$APP_NAME.app"
+STAGED_GATEWAY="$STAGE/$APP_NAME.app/Contents/Resources/RuntimePayload/defenseclaw-gateway"
+verify_gateway_signature "$STAGED_GATEWAY" "$TEAM_ID" \
+    || die "staged gateway does not satisfy the release signing contract"
+verify_gateway_sha256 "$STAGED_GATEWAY" "$GATEWAY_SIGNED_SHA" \
+    || die "staged gateway differs from the verified release gateway"
 ln -s /Applications "$STAGE/Applications"
 DMG="$OUT/$APP_NAME-$APP_VERSION.dmg"
 # hdiutil's automatic sizing can undercount code-signing metadata and extended
@@ -590,6 +606,7 @@ fi
 # staging or signing changed a sealed resource.
 codesign --verify --strict --deep --verbose=2 "$APP"
 codesign --verify --strict --deep --verbose=2 "$STAGE/$APP_NAME.app"
+"$REPO_ROOT/scripts/verify_unified_release_artifact.sh" "$DMG"
 
 step "Done"
 printf 'App version   : %s\n' "$APP_VERSION"
