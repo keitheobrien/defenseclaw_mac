@@ -60,6 +60,7 @@ enum CatalogCLI {
                 enabled: bool(row["eligible"]) && !bool(row["disabled"]),
                 skillDescription: string(row["description"]),
                 connector: connector,
+                bundled: bool(row["bundled"]),
                 status: status,
                 verdict: string(row["verdict"]).nonEmpty ?? "-",
                 scan: scan(row["scan"])
@@ -93,6 +94,7 @@ enum CatalogCLI {
                 enabled: status != "disabled",
                 source: string(row["source"]),
                 connector: connector,
+                bundled: bool(row["bundled"]),
                 status: status,
                 verdict: string(row["verdict"]).nonEmpty ?? "-",
                 scan: scan(row["scan"])
@@ -169,7 +171,12 @@ enum CatalogCLI {
             )
         let result = command.result
         guard result.succeeded else {
-            throw CatalogCLIError.commandFailed(result.output.trimmingCharacters(in: .whitespacesAndNewlines))
+            let detail = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            throw CatalogCLIError.commandFailed(
+                detail.isEmpty
+                    ? "DefenseClaw \(resource) list failed (exit \(result.exitCode))."
+                    : detail
+            )
         }
         let data = try jsonData(from: result.output)
         guard let payload = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
@@ -291,6 +298,11 @@ struct CatalogInvocation: Identifiable {
 
 enum CatalogActions {
     static func skills(_ item: SkillItem) -> [CatalogResourceAction] {
+        if item.bundled {
+            return [
+                action("info", "Info", "Show bundled skill details", "info.circle", readOnly: true),
+            ]
+        }
         var actions = [
             action("scan", "Scan", "Run the skill security scan", "shield.lefthalf.filled", readOnly: true, changesState: true),
             action("info", "Info", "Show full skill details", "info.circle", readOnly: true),
@@ -320,6 +332,11 @@ enum CatalogActions {
     }
 
     static func mcps(_ item: MCPItem) -> [CatalogResourceAction] {
+        if item.bundled {
+            return [
+                action("info", "Info", "Show bundled MCP details", "info.circle", readOnly: true),
+            ]
+        }
         var actions = [
             action("scan", "Scan", "Run the MCP security scan", "shield.lefthalf.filled", readOnly: true, changesState: true),
             action("info", "Info", "Show MCP list details", "info.circle", readOnly: true),

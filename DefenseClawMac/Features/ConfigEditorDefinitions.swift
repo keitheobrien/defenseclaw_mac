@@ -141,8 +141,8 @@ enum ConfigEditorCatalog {
     static var llmOverrideProviders: [String] { [""] + llmProviders }
     static let connectors = [
         "openclaw", "zeptoclaw", "codex", "claudecode", "hermes", "cursor",
-        "windsurf", "geminicli", "copilot", "openhands", "antigravity",
-        "opencode", "omnigent",
+        "devin", "copilot", "openhands", "antigravity",
+        "opencode", "amp", "omnigent",
     ]
     static let detectionStrategies = ["regex_only", "regex_judge", "judge_first"]
 

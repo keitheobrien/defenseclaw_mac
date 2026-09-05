@@ -20,6 +20,7 @@ import Foundation
 struct ConnectorOnboardingTests {
     static func main() {
         parsesInstalledConnectorsInSupportedOrder()
+        excludesProxyConnectorsFromDiscoveryAndInitialization()
         usesObserveAllWhenEverythingIsRegistered()
         scopesActionToExplicitConnectors()
         fallsBackToLegacySingleConnectorOnlyWhenDiscoveryIsEmpty()
@@ -50,6 +51,31 @@ struct ConnectorOnboardingTests {
             supportedOrder: ["codex", "claudecode", "cursor"]
         )
         expect(result == ["claudecode", "cursor"], "installed connector parsing")
+    }
+
+    private static func excludesProxyConnectorsFromDiscoveryAndInitialization() {
+        let output = """
+        {"agents":{
+          "openclaw":{"installed":true,"name":"openclaw"},
+          "zeptoclaw":{"installed":true,"name":"zeptoclaw"},
+          "devin":{"installed":true,"name":"devin"}
+        }}
+        """
+        let detected = ConnectorOnboarding.installedConnectors(
+            from: output,
+            supportedOrder: ["openclaw", "zeptoclaw", "devin"]
+        )
+        expect(detected == ["devin"], "proxy connectors stay out of hook discovery")
+
+        let plan = makePlan(
+            detected: ["openclaw"],
+            registered: ["openclaw"],
+            action: [],
+            profile: "observe"
+        )
+        expect(plan.count == 1, "proxy-only discovery uses one safe fallback command")
+        let index = plan[0].firstIndex(of: "--connector")
+        expect(index.map { plan[0][$0 + 1] } == "codex", "proxy fallback maps to a hook connector")
     }
 
     private static func usesObserveAllWhenEverythingIsRegistered() {
@@ -145,7 +171,7 @@ struct ConnectorOnboardingTests {
 
     private static func multipleAdditiveSetupsRestartOnlyAfterTheFinalConnector() {
         let plan = makePlan(
-            detected: ["codex", "claudecode", "cursor", "openclaw"],
+            detected: ["codex", "claudecode", "cursor", "devin"],
             registered: ["codex", "claudecode", "cursor"],
             action: [],
             profile: "observe"
@@ -161,7 +187,7 @@ struct ConnectorOnboardingTests {
             "final additive setup preserves connector order"
         )
         expect(!plan[2].contains("--no-restart"), "final additive setup performs the restart")
-        expect(!plan.contains { $0.contains("openclaw") }, "unregistered connector stays absent")
+        expect(!plan.contains { $0.contains("devin") }, "unregistered connector stays absent")
     }
 
     private static func subsetWithoutGatewayStartNeverRestarts() {
