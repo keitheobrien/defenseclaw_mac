@@ -455,7 +455,8 @@ actor GatewayClient {
                 name: (r["name"] as? String) ?? (r["key"] as? String) ?? "?",
                 version: (r["version"] as? String) ?? "—",
                 source: (r["source"] as? String) ?? ((r["bundled"] as? Bool) == true ? "bundled" : "custom"),
-                enabled: (r["enabled"] as? Bool) ?? true
+                enabled: (r["enabled"] as? Bool) ?? true,
+                bundled: (r["bundled"] as? Bool) ?? false
             )
         }
     }
@@ -469,7 +470,8 @@ actor GatewayClient {
                 transport: (r["transport"] as? String) ?? (r["type"] as? String) ?? "stdio",
                 endpoint: (r["endpoint"] as? String) ?? (r["url"] as? String) ?? (r["command"] as? String) ?? "—",
                 version: (r["version"] as? String) ?? "—",
-                enabled: (r["enabled"] as? Bool) ?? true
+                enabled: (r["enabled"] as? Bool) ?? true,
+                bundled: (r["bundled"] as? Bool) ?? false
             )
         }
     }

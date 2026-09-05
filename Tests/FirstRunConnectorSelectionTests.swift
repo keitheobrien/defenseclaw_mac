@@ -20,6 +20,7 @@ import Foundation
 struct FirstRunConnectorSelectionTests {
     static func main() {
         firstDiscoveryPreselectsEverything()
+        proxyConnectorsAreNotSelectable()
         refreshPreservesExplicitChoices()
         refreshPreselectsOnlyNewConnectors()
         refreshDropsMissingAndUnregisteredActions()
@@ -35,6 +36,16 @@ struct FirstRunConnectorSelectionTests {
         )
         expect(selection.registered == ["codex", "cursor"], "first discovery preselects detected connectors")
         expect(selection.action.isEmpty, "first discovery does not opt connectors into action mode")
+    }
+
+    private static func proxyConnectorsAreNotSelectable() {
+        let selection = reconcile(
+            previouslyDetected: [],
+            detected: ["openclaw", "codex"],
+            registered: [],
+            action: []
+        )
+        expect(selection.registered == ["codex"], "proxy connectors are excluded from first-run selection")
     }
 
     private static func refreshPreservesExplicitChoices() {
