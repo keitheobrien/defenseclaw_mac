@@ -592,8 +592,26 @@ extension AppState {
         runtimeInstallState = .running("Materializing authenticated runtime wheel")
         let materializedWheel = dataHome + "/defenseclaw-\(payload.version)-py3-none-any.whl"
         let materializedDependencyLock = dataHome + "/runtime-requirements-\(payload.version).lock"
+        let materializedDependencyOverrides = dataHome + "/dependency-overrides-\(payload.version).txt"
         var materializedWheelIdentity: RuntimeInstallFilesystem.PathIdentity?
         var materializedDependencyLockIdentity: RuntimeInstallFilesystem.PathIdentity?
+        var materializedDependencyOverridesIdentity: RuntimeInstallFilesystem.PathIdentity?
+        var retainMaterializedDependencyOverrides = false
+        defer {
+            if !retainMaterializedDependencyOverrides,
+               let materializedDependencyOverridesIdentity {
+                _ = RuntimeInstallFilesystem.cleanupOwnedPath(
+                    materializedDependencyOverrides,
+                    identity: materializedDependencyOverridesIdentity
+                )
+                RuntimeInstallFilesystem.cleanupFailedFreshInstall(
+                    stagingDir: stagingDir,
+                    stagingIdentity: stagingIdentity,
+                    dataHome: dataHome,
+                    removeDataHomeIfEmpty: !dataHomeExistedBeforeInstall
+                )
+            }
+        }
         do {
             materializedWheelIdentity = try RuntimeInstallFilesystem.installRegularFileNoReplace(
                 source: payload.wheelURL.path,
@@ -611,7 +629,32 @@ extension AppState {
                 mode: 0o600,
                 expectedSourceSHA256: payload.dependencyLockSHA256
             )
+            // Keep the release-authenticated dependency override list as
+            // install provenance. The sealed dependency lock is still the
+            // only input used for dependency installation.
+            if let overridesURL = payload.overridesURL,
+               let overridesSHA256 = payload.overridesSHA256 {
+                materializedDependencyOverridesIdentity = try RuntimeInstallFilesystem.installRegularFileNoReplace(
+                    source: overridesURL.path,
+                    destination: materializedDependencyOverrides,
+                    expectedParentIdentity: dataHomeIdentity,
+                    mode: 0o600,
+                    expectedSourceSHA256: overridesSHA256
+                )
+            }
         } catch {
+            if let materializedDependencyOverridesIdentity {
+                _ = RuntimeInstallFilesystem.cleanupOwnedPath(
+                    materializedDependencyOverrides,
+                    identity: materializedDependencyOverridesIdentity
+                )
+            }
+            if let materializedDependencyLockIdentity {
+                _ = RuntimeInstallFilesystem.cleanupOwnedPath(
+                    materializedDependencyLock,
+                    identity: materializedDependencyLockIdentity
+                )
+            }
             if let materializedWheelIdentity {
                 _ = RuntimeInstallFilesystem.cleanupOwnedPath(
                     materializedWheel,
@@ -967,6 +1010,11 @@ extension AppState {
             )
             return
         }
+
+        // This file is a checksum-verified record of the dependency policy
+        // used to build the sealed lock. It is deliberately retained only
+        // after the fresh runtime activation has committed successfully.
+        retainMaterializedDependencyOverrides = true
 
         // No restart path belongs here: any pre-existing gateway was refused
         // before mutation, while a true fresh install has no process to stop.

@@ -49,6 +49,13 @@ checks = {
     "runtime installs only from the signed dependency lock": '"--requirements", materializedDependencyLock' in runtime,
     "runtime installs authenticated root wheel without re-resolving dependencies": '"--no-deps", materializedWheel' in runtime,
     "runtime does not apply unlocked overrides": 'wheelArguments += ["--overrides"' not in runtime,
+    "runtime retains authenticated override provenance": 'destination: materializedDependencyOverrides' in runtime,
+    "runtime verifies override provenance before retaining it": 'expectedSourceSHA256: overridesSHA256' in runtime,
+    "runtime cleans override provenance when fresh installation fails": (
+        'if !retainMaterializedDependencyOverrides,' in runtime
+        and 'let materializedDependencyOverridesIdentity {' in runtime
+        and 'materializedDependencyOverrides,\n' in runtime
+    ),
     "first-run no longer references mutable main": 'defenseclaw/main/scripts' not in first_run,
     "updater pins Apple Team ID": 'expectedTeamIdentifier = "9R236BB67S"' in updater,
     "updater enforces designated requirement": '"-R=\\(Self.expectedCodeRequirement)"' in updater,

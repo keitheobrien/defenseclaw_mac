@@ -12,12 +12,19 @@ enum RuntimeUICompatibilityContractTests {
         let configEditorSource = try source(
             at: root.appendingPathComponent("DefenseClawMac/Features/ConfigEditorDefinitions.swift")
         )
+        let modelsSource = try source(
+            at: root.appendingPathComponent("DefenseClawMac/DataLayer/Models.swift")
+        )
         let logsSource = try source(
             at: root.appendingPathComponent("DefenseClawMac/Features/LogsView.swift")
         )
 
         expect(!configEditorSource.contains("privacy.disable_redaction"),
                "the config editor must not expose the removed privacy.disable_redaction key")
+        expect(!configEditorSource.contains("ai_discovery.lookup_model_provenance_online"),
+               "the offline editor must not expose the mainline-only online provenance option to runtime 0.8.10")
+        expect(modelsSource.contains(#"case "amp": return "Amp""#),
+               "the runtime-supported Amp connector must retain its display name")
 
         for unsupportedSurface in [
             "setup redaction",

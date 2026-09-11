@@ -153,6 +153,11 @@ private struct CLIProcessIdentity: Hashable, Sendable {
     let startMicroseconds: UInt64
 }
 
+private struct CLIProcessCompletion: Sendable {
+    let exitCode: Int32
+    let diagnostic: String?
+}
+
 /// Signals the command's dedicated process group. PID/start-time descendant
 /// tracking remains a fallback for environments that cannot establish the
 /// group, and prevents signaling an unrelated process after PID reuse.
@@ -226,6 +231,19 @@ private final class CLIProcessTree: @unchecked Sendable {
             }
         }
         return signalledProcess
+    }
+
+    /// `Process` can occasionally retain its running state after a very
+    /// short-lived child has disappeared. Use the PID/start-time identity as
+    /// an independent, PID-reuse-safe observation so a UI task never waits
+    /// indefinitely for a completion notification that will not arrive.
+    func rootHasExited() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let root = identities[rootPID] else {
+            return Self.identity(for: rootPID) == nil
+        }
+        return !Self.matches(root)
     }
 
     private func refreshProcessGroup() {
@@ -982,9 +1000,26 @@ actor CLIRunner {
 
         let readControl = CLIOutputReadControl()
         let terminationTask = Task.detached(priority: .utility) {
-            proc.waitUntilExit()
+            var rootExitObservedAt: ContinuousClock.Instant?
+            while proc.isRunning {
+                if processTree.rootHasExited() {
+                    let now = ContinuousClock.now
+                    if let observedAt = rootExitObservedAt,
+                       now - observedAt >= .milliseconds(500) {
+                        readControl.markParentExited()
+                        return CLIProcessCompletion(
+                            exitCode: 126,
+                            diagnostic: "Command process exited without a completion status."
+                        )
+                    }
+                    if rootExitObservedAt == nil { rootExitObservedAt = now }
+                } else {
+                    rootExitObservedAt = nil
+                }
+                try? await Task.sleep(for: .milliseconds(25))
+            }
             readControl.markParentExited()
-            return proc.terminationStatus
+            return CLIProcessCompletion(exitCode: proc.terminationStatus, diagnostic: nil)
         }
 
         // Keep process waiting and pipe reads off the actor so Cancel remains
@@ -1103,8 +1138,8 @@ actor CLIRunner {
             explicitlyCancelled = false
         }
         return CLIResult(
-            exitCode: completion.1,
-            output: completion.0.output,
+            exitCode: completion.1.exitCode,
+            output: completion.0.output + (completion.1.diagnostic.map { "\n\($0)\n" } ?? ""),
             cancelled: Task.isCancelled || explicitlyCancelled,
             outputTruncated: completion.0.truncated
         )
