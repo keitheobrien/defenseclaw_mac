@@ -29,7 +29,7 @@ enum MenuBarState {
 enum PanelID: String, CaseIterable, Identifiable {
     case overview, alerts, logs, audit, activity
     case skills, mcps, plugins, tools
-    case inventory, aiDiscovery, registries
+    case inventory, aiDiscovery, aiRuntime, registries
     case setup
 
     var id: String { rawValue }
@@ -47,6 +47,7 @@ enum PanelID: String, CaseIterable, Identifiable {
         case .tools: "Tools"
         case .inventory: "Inventory"
         case .aiDiscovery: "AI Discovery"
+        case .aiRuntime: "Runtime"
         case .registries: "Registries"
         case .setup: "Setup"
         }
@@ -65,6 +66,7 @@ enum PanelID: String, CaseIterable, Identifiable {
         case .tools: "wrench.and.screwdriver"
         case .inventory: "shippingbox"
         case .aiDiscovery: "sparkle.magnifyingglass"
+        case .aiRuntime: "waveform.path.ecg"
         case .registries: "books.vertical"
         case .setup: "gearshape.2"
         }
@@ -112,6 +114,9 @@ final class AppState {
     let activity: CommandActivityStore
     let updater = UpdateChecker()
     private(set) var installationContext: InstallationContext
+    /// Presence/provenance of any runtime found before the bundled installer
+    /// is offered. Source-owned development runtimes are never app-upgraded.
+    var existingRuntimeInstallation: RuntimeInstallFilesystem.ExistingRuntime?
     /// Changes before any path-owning actor is rebound. View-local async
     /// loaders capture this value and discard results from the old install.
     @ObservationIgnored private(set) var installationGeneration = 0
@@ -146,6 +151,7 @@ final class AppState {
     // DefenseClaw runtime (CLI + gateway) update state
     var installedRuntimeVersion: String?
     var runtimeSetupCommands: Set<String>?
+    var runtimeDiscoveryCommands: Set<String>?
     var runtimeVersionCheckInProgress = false
     var runtimeVersionError: String?
     var runtimeReleaseChecked = false
@@ -169,6 +175,21 @@ final class AppState {
     var lastCheckFailed = false
     var appUpdateCheckFailed = false
     var runtimeUpdateCheckFailed = false
+
+    var sourceDevelopmentRuntimeDetected: Bool {
+        existingRuntimeInstallation?.kind == .sourceDevelopment
+    }
+
+    var runtimeInstallationPolicyNotice: String? {
+        guard let existingRuntimeInstallation else { return nil }
+        switch existingRuntimeInstallation.kind {
+        case .sourceDevelopment:
+            return "A source/development DefenseClaw runtime was detected at \(existingRuntimeInstallation.marker). The Mac app will not install or upgrade it."
+        case .installed:
+            return "An existing DefenseClaw runtime was detected at \(existingRuntimeInstallation.marker). The bundled payload will not replace it; use the runtime updater for a newer release."
+        }
+    }
+
     @ObservationIgnored private var alertRefreshInProgress = false
 
     var updateOperationInProgress: Bool {
@@ -437,6 +458,7 @@ final class AppState {
     private func resetInstallationScopedState() {
         installedRuntimeVersion = nil
         runtimeSetupCommands = nil
+        runtimeDiscoveryCommands = nil
         runtimeVersionError = nil
         runtimeReleaseChecked = false
         availableRuntimeUpdate = nil
@@ -448,6 +470,7 @@ final class AppState {
         runtimeUpgradeLogTail = ""
         runtimeUpgradeLog = ""
         runtimeUpdateCheckFailed = false
+        existingRuntimeInstallation = nil
         lastRuntimeUpdateCheckTime = 0
 
         health = HealthSnapshot()
@@ -642,8 +665,10 @@ final class AppState {
         guard installationSnapshotIsCurrent(generation) else { return }
         sessionTotalScans = scanCount
 
-        // Tail the JSONL stream and refresh the alert set.
-        _ = await activeStream.poll()
+        // Prefer immutable canonical events; retain file fallback for older schemas.
+        let history = await activeAudit.canonicalHistory()
+        guard installationSnapshotIsCurrent(generation) else { return }
+        _ = await activeStream.poll(canonicalHistory: history)
         guard installationSnapshotIsCurrent(generation) else { return }
         await refreshAlerts()
         guard installationSnapshotIsCurrent(generation) else { return }
@@ -995,17 +1020,50 @@ final class AppState {
     /// Detect the locally installed CLI without contacting GitHub. Settings
     /// calls this when opened, and startup calls it even when release checks
     /// are still inside their persisted throttle window.
+    func refreshExistingRuntimeInstallation() async -> RuntimeInstallFilesystem.ExistingRuntime? {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if let existing = RuntimeInstallFilesystem.existingRuntime(
+            home: home,
+            dataHome: installationContext.homeRoot.path,
+            venvDir: installationContext.venvURL.path
+        ) {
+            existingRuntimeInstallation = existing
+            return existing
+        }
+        if let cliPath = await cli.locateBinary() {
+            let existing = RuntimeInstallFilesystem.ExistingRuntime(
+                marker: cliPath,
+                kind: .installed
+            )
+            existingRuntimeInstallation = existing
+            return existing
+        }
+        if let gatewayPath = await cli.locateBinary(named: "defenseclaw-gateway") {
+            let existing = RuntimeInstallFilesystem.ExistingRuntime(
+                marker: gatewayPath,
+                kind: .installed
+            )
+            existingRuntimeInstallation = existing
+            return existing
+        }
+        existingRuntimeInstallation = nil
+        return nil
+    }
+
     func refreshInstalledRuntimeVersion() async {
         guard !runtimeVersionCheckInProgress, !installationBindInProgress else { return }
         let generation = installationGeneration
         runtimeVersionCheckInProgress = true
         defer { runtimeVersionCheckInProgress = false }
 
+        _ = await refreshExistingRuntimeInstallation()
+        guard installationSnapshotIsCurrent(generation) else { return }
         let locatedBinary = await cli.locateBinary()
         guard installationSnapshotIsCurrent(generation) else { return }
         guard locatedBinary != nil else {
             installedRuntimeVersion = nil
             runtimeSetupCommands = nil
+            runtimeDiscoveryCommands = nil
             runtimeVersionError = "DefenseClaw CLI not found. Set its path in Connection."
             return
         }
@@ -1019,6 +1077,10 @@ final class AppState {
             runtimeSetupCommands = setupHelp.succeeded
                 ? CommandRegistry.setupCommands(from: setupHelp.output)
                 : nil
+            let runtimeHelp = await cli.run(arguments: ["agent", "discovery", "runtime", "--help"], mutation: false)
+            guard installationSnapshotIsCurrent(generation) else { return }
+            runtimeDiscoveryCommands = runtimeHelp.succeeded
+                ? CommandRegistry.setupCommands(from: runtimeHelp.output) : nil
             runtimeVersionError = nil
             // A detected, working CLI supersedes an earlier bundled-install
             // failure (e.g. the user installed via the shell script instead);
@@ -1028,6 +1090,7 @@ final class AppState {
         } else {
             installedRuntimeVersion = nil
             runtimeSetupCommands = nil
+            runtimeDiscoveryCommands = nil
             runtimeVersionError = result.succeeded
                 ? "Could not read the installed runtime version."
                 : "Runtime version check failed (exit \(result.exitCode))."
@@ -1044,6 +1107,14 @@ final class AppState {
         // latest from the upstream repo's releases.
         if refreshInstalledVersion {
             await refreshInstalledRuntimeVersion()
+        }
+        if sourceDevelopmentRuntimeDetected {
+            availableRuntimeUpdate = nil
+            runtimeReleaseChecked = true
+            runtimeUpdateCheckFailed = false
+            runtimeUpgradeLogTail = ""
+            runtimeUpgradeLog = runtimeInstallationPolicyNotice ?? "Source/development runtime left unchanged."
+            return nil
         }
         let runtimeRelease = await updater.latestRuntimeRelease()
         runtimeReleaseChecked = true
@@ -1120,6 +1191,13 @@ final class AppState {
             return false
         default:
             break
+        }
+        if sourceDevelopmentRuntimeDetected {
+            availableRuntimeUpdate = nil
+            runtimeUpgradeLogTail = ""
+            runtimeUpgradeLog = runtimeInstallationPolicyNotice ?? "Source/development runtime left unchanged."
+            runtimeUpgradeState = .idle
+            return true
         }
         // The bundled-payload installer mutates the same venv and gateway
         // binary — never present overlapping runtime actions.

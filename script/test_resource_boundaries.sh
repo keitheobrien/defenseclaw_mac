@@ -31,6 +31,7 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE" xcrun swiftc \
   "$ROOT/DefenseClawMac/DataLayer/RegistryStore.swift" \
   "$ROOT/DefenseClawMac/DataLayer/EventStreamReader.swift" \
   "$ROOT/DefenseClawMac/DataLayer/GatewayClient.swift" \
+  "$ROOT/DefenseClawMac/DataLayer/AIRuntimeModels.swift" \
   "$ROOT/Tests/ResourceBoundaryTests.swift" \
   -o "$BUILD_DIR/ResourceBoundaryTests"
 

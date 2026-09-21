@@ -28,6 +28,8 @@ struct LogsView: View {
     @State private var eventTypeFilter = "all"
     @State private var search = ""
     @State private var rows: [LogRow] = []
+    @State private var structuredSource = "audit.db · canonical events"
+    @State private var structuredError: String?
     /// Cached filter output. Filtering up to 20k rows inside `body` stalls the
     /// main thread during trackpad scrolling — recompute only when inputs change.
     @State private var filtered: [LogRow] = []
@@ -82,6 +84,10 @@ struct LogsView: View {
     var body: some View {
         VStack(spacing: 0) {
             filterBar
+            if let structuredError, stream == .verdicts || stream == .otel {
+                Label(structuredError, systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(.orange).padding(8)
+            }
             Divider()
             if displayRows.isEmpty {
                 DCEmptyState(
@@ -294,7 +300,7 @@ struct LogsView: View {
         case .watchdog:
             appState.installationContext.watchdogLogURL.lastPathComponent
         case .verdicts, .otel:
-            appState.installationContext.gatewayJSONLURL.lastPathComponent
+            structuredSource
         }
     }
 
@@ -400,7 +406,11 @@ struct LogsView: View {
     private func load(force: Bool = false) async {
         let installationGeneration = appState.installationGeneration
         let fresh = await appState.stream.logBuffers[stream] ?? []
+        let source = await appState.stream.structuredSource
+        let error = await appState.stream.structuredError
         guard installationGeneration == appState.installationGeneration else { return }
+        structuredSource = source
+        structuredError = error
         guard force || fresh.count != rows.count || fresh.last?.id != rows.last?.id else { return }
         rows = fresh
         applyFilter()
@@ -409,7 +419,9 @@ struct LogsView: View {
     private func reload() {
         Task {
             let installationGeneration = appState.installationGeneration
-            _ = await appState.stream.reload()
+            let history = await appState.audit.canonicalHistory()
+            guard installationGeneration == appState.installationGeneration else { return }
+            _ = await appState.stream.reload(canonicalHistory: history)
             guard installationGeneration == appState.installationGeneration else { return }
             await load(force: true)
         }

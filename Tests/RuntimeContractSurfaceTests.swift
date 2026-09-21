@@ -3,7 +3,7 @@ import Foundation
 @main
 enum RuntimeContractSurfaceTests {
     static func main() {
-        precondition(CommandRegistry.sourceCount == 231, "unexpected upstream command count")
+        precondition(CommandRegistry.sourceCount == 234, "unexpected upstream command count")
         precondition(CommandRegistry.all.count == CommandRegistry.sourceCount, "registry count mismatch")
 
         let titles = CommandRegistry.all.map(\.title)
@@ -19,6 +19,12 @@ enum RuntimeContractSurfaceTests {
         let bundledTitles = CommandRegistry.paletteCommands(supportedSetupCommands: []).map(\.title)
         precondition(!bundledTitles.contains("setup amp"), "runtime 0.8.10 must not expose setup amp")
         let futureTitles = CommandRegistry.paletteCommands(supportedSetupCommands: ["amp"]).map(\.title)
+        precondition(!bundledTitles.contains("agent discovery runtime scan"), "unknown runtime capability must fail closed")
+        let runtimeTitles = CommandRegistry.paletteCommands(
+            supportedSetupCommands: [], supportedRuntimeCommands: ["scan"]
+        ).map(\.title)
+        precondition(runtimeTitles.contains("agent discovery runtime scan"), "supported Runtime scan is exposed")
+        precondition(!runtimeTitles.contains("agent discovery runtime enable"), "each Runtime command is gated independently")
         precondition(futureTitles.contains("setup amp"), "runtimes reporting Amp may expose setup amp")
         let setupCommands = CommandRegistry.setupCommands(from: """
         Usage: defenseclaw setup [OPTIONS] [COMMAND] [ARGS]...

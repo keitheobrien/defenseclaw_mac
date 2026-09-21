@@ -98,6 +98,12 @@ private struct GeneralSettings: View {
 
             Section("Updates — DefenseClaw runtime (CLI + gateway)") {
                 LabeledContent("Installed", value: runtimeInstalledValue)
+                if let notice = appState.runtimeInstallationPolicyNotice {
+                    Text(notice)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
                 if let update = appState.availableRuntimeUpdate {
                     LabeledContent("Available", value: update.tag)
                     runtimeStatus
@@ -128,13 +134,19 @@ private struct GeneralSettings: View {
                 if let payload = RuntimePayload.bundled {
                     LabeledContent("Bundled payload", value: "v\(payload.version)")
                     installStateRow
-                    Button("Install Runtime v\(payload.version) (fresh install only)") {
-                        Task { await appState.installBundledRuntime() }
+                    if appState.existingRuntimeInstallation == nil {
+                        Button("Install Runtime v\(payload.version) (fresh install only)") {
+                            Task { await appState.installBundledRuntime() }
+                        }
+                        .disabled(appState.runtimeInstallState.isRunning || runtimeActionDisabled)
+                        Text("Fresh installs only. A true fresh install lays the bundled runtime into \(appState.installationContext.homeRoot.path) and ~/.local/bin. Configuration, tokens, and the audit database are never touched. Dependency download from PyPI requires network.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Bundled installation is unavailable because an existing runtime was detected. Use the runtime updater only when it identifies a newer release.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                    .disabled(appState.runtimeInstallState.isRunning || runtimeActionDisabled)
-                    Text("Fresh installs only. If an existing or partial runtime is detected, this action makes no changes and directs you to the release-owned latest-mode upgrade resolver. A true fresh install lays the bundled runtime into \(appState.installationContext.homeRoot.path) and ~/.local/bin. Configuration, tokens, and the audit database are never touched. Dependency download from PyPI requires network.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -246,10 +258,11 @@ private struct GeneralSettings: View {
     }
 
     private var runtimeButtonTitle: String {
+        if appState.sourceDevelopmentRuntimeDetected { return "Runtime Left Unchanged" }
         switch appState.runtimeUpgradeState {
-        case .checking: "Checking Runtime…"
-        case .downloading, .installing: "Preparing Upgrade Command…"
-        default: appState.availableRuntimeUpdate == nil ? "Check Runtime" : "Show Upgrade Command"
+        case .checking: return "Checking Runtime…"
+        case .downloading, .installing: return "Preparing Upgrade Command…"
+        default: return appState.availableRuntimeUpdate == nil ? "Check Runtime" : "Show Upgrade Command"
         }
     }
 
@@ -261,6 +274,9 @@ private struct GeneralSettings: View {
     }
 
     private var runtimeStatusSummary: String {
+        if appState.sourceDevelopmentRuntimeDetected {
+            return "Source/development runtime — left unchanged"
+        }
         if appState.runtimeVersionCheckInProgress {
             return "Detecting installed runtime…"
         }
@@ -295,6 +311,7 @@ private struct GeneralSettings: View {
 
     private var runtimeActionDisabled: Bool {
         if !appState.installationMutationsAllowed { return true }
+        if appState.sourceDevelopmentRuntimeDetected { return true }
         if appState.runtimeVersionCheckInProgress { return true }
         // Do not overlap bundled-payload installation with upgrade guidance.
         if appState.runtimeInstallState.isRunning { return true }
