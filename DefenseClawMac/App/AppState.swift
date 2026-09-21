@@ -29,7 +29,7 @@ enum MenuBarState {
 enum PanelID: String, CaseIterable, Identifiable {
     case overview, alerts, logs, audit, activity
     case skills, mcps, plugins, tools
-    case inventory, aiDiscovery, registries
+    case inventory, aiDiscovery, aiRuntime, registries
     case setup
 
     var id: String { rawValue }
@@ -47,6 +47,7 @@ enum PanelID: String, CaseIterable, Identifiable {
         case .tools: "Tools"
         case .inventory: "Inventory"
         case .aiDiscovery: "AI Discovery"
+        case .aiRuntime: "Runtime"
         case .registries: "Registries"
         case .setup: "Setup"
         }
@@ -65,6 +66,7 @@ enum PanelID: String, CaseIterable, Identifiable {
         case .tools: "wrench.and.screwdriver"
         case .inventory: "shippingbox"
         case .aiDiscovery: "sparkle.magnifyingglass"
+        case .aiRuntime: "waveform.path.ecg"
         case .registries: "books.vertical"
         case .setup: "gearshape.2"
         }
@@ -149,6 +151,7 @@ final class AppState {
     // DefenseClaw runtime (CLI + gateway) update state
     var installedRuntimeVersion: String?
     var runtimeSetupCommands: Set<String>?
+    var runtimeDiscoveryCommands: Set<String>?
     var runtimeVersionCheckInProgress = false
     var runtimeVersionError: String?
     var runtimeReleaseChecked = false
@@ -455,6 +458,7 @@ final class AppState {
     private func resetInstallationScopedState() {
         installedRuntimeVersion = nil
         runtimeSetupCommands = nil
+        runtimeDiscoveryCommands = nil
         runtimeVersionError = nil
         runtimeReleaseChecked = false
         availableRuntimeUpdate = nil
@@ -661,8 +665,10 @@ final class AppState {
         guard installationSnapshotIsCurrent(generation) else { return }
         sessionTotalScans = scanCount
 
-        // Tail the JSONL stream and refresh the alert set.
-        _ = await activeStream.poll()
+        // Prefer immutable canonical events; retain file fallback for older schemas.
+        let history = await activeAudit.canonicalHistory()
+        guard installationSnapshotIsCurrent(generation) else { return }
+        _ = await activeStream.poll(canonicalHistory: history)
         guard installationSnapshotIsCurrent(generation) else { return }
         await refreshAlerts()
         guard installationSnapshotIsCurrent(generation) else { return }
@@ -1057,6 +1063,7 @@ final class AppState {
         guard locatedBinary != nil else {
             installedRuntimeVersion = nil
             runtimeSetupCommands = nil
+            runtimeDiscoveryCommands = nil
             runtimeVersionError = "DefenseClaw CLI not found. Set its path in Connection."
             return
         }
@@ -1070,6 +1077,10 @@ final class AppState {
             runtimeSetupCommands = setupHelp.succeeded
                 ? CommandRegistry.setupCommands(from: setupHelp.output)
                 : nil
+            let runtimeHelp = await cli.run(arguments: ["agent", "discovery", "runtime", "--help"], mutation: false)
+            guard installationSnapshotIsCurrent(generation) else { return }
+            runtimeDiscoveryCommands = runtimeHelp.succeeded
+                ? CommandRegistry.setupCommands(from: runtimeHelp.output) : nil
             runtimeVersionError = nil
             // A detected, working CLI supersedes an earlier bundled-install
             // failure (e.g. the user installed via the shell script instead);
@@ -1079,6 +1090,7 @@ final class AppState {
         } else {
             installedRuntimeVersion = nil
             runtimeSetupCommands = nil
+            runtimeDiscoveryCommands = nil
             runtimeVersionError = result.succeeded
                 ? "Could not read the installed runtime version."
                 : "Runtime version check failed (exit \(result.exitCode))."

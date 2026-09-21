@@ -580,6 +580,20 @@ actor GatewayClient {
         return snap
     }
 
+    func aiRuntime() async throws -> AIRuntimeSnapshot {
+        let json = try await getJSON("/api/v1/ai-usage/runtime")
+        guard let object = json as? [String: Any],
+              object["enabled"] is Bool, object["planes"] is [Any],
+              object["findings"] is [Any] else {
+            throw GatewayError.badResponse("Runtime coverage response is incomplete.")
+        }
+        return AIRuntimeDecoding.snapshot(from: object)
+    }
+
+    func scanAIRuntime() async throws {
+        try await post("/api/v1/ai-usage/runtime/scan", timeout: Self.scanTimeout)
+    }
+
     func aiComponents() async throws -> [AIComponent] {
         let json = try await getJSON("/api/v1/ai-usage/components")
         let rows = (json as? [[String: Any]]) ?? ((json as? [String: Any])?["components"] as? [[String: Any]]) ?? []

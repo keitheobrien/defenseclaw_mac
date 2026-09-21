@@ -82,17 +82,18 @@ Select a connector (the roster chip, a Connectors-table row, or ⌃M) and the Co
 
 **22 native setup wizards** covering the runtime's setup surface — connector (single / batch / remove), credentials, LLM, guardrail, guardrail actions, skill & MCP scanners, gateway, Cisco AI Defense, Splunk, Splunk dashboards, Galileo, local observability, observability destinations, webhooks, notification routing, custom providers, registries, trusted paths, token rotation, AI discovery, and sandbox. Each wizard is a native form that ends in a review step showing the exact `defenseclaw …` command before it runs, prefills from your live config where relevant so an untouched apply never resets current settings, and validates required fields before Run.
 
-**Config editor** — a typed, sectioned `config.yaml` editor whose section catalog is generated from the installed runtime itself (`build_setup_sections`), so new runtime settings appear automatically **without a Mac-app update**. A built-in catalog is the offline fallback, and an "Other (uncatalogued)" section keeps brand-new config keys editable until a dedicated wizard exists. Edits are diff-reviewed (secrets masked), saved through the runtime's own config writer, and queue a gateway restart.
+**Config editor** — a typed, sectioned editor whose catalog comes from the installed runtime. A built-in catalog is the offline fallback. Uncatalogued keys remain read-only until the runtime exposes a supported writer. Edits are diff-reviewed with secrets masked, saved through the runtime CLI, and queue a gateway restart.
 
 The menu bar shield reflects live state (healthy / alert count / degraded / offline / scanning / paused) on a 5-second pulse, with native notifications for new CRITICAL/HIGH findings. Settings ▸ General controls Dock-icon visibility and hide-on-close (pure menu-bar-agent mode).
 
 ## Verified TUI parity
 
-The app is checked feature-for-feature against the DefenseClaw 0.8.10 runtime contract, with an adversarial review pass over each area. Highlights of the shared semantics:
+The app targets DefenseClaw's schema-8 contracts and probes the selected runtime's capabilities. Matching version labels alone do not establish feature parity. Automated tests and source alignment do not certify untested external integrations; see the dated reports in `docs/` for actual coverage.
 
-- **Enforcement counts** — Hook Calls and Blocks count within the latest-500 audit window; Findings = severity-bearing rows from the audit alert queue plus scan blocks grouped by `scan_id` from the `gateway.jsonl` tail; per-connector totals fall back to all-time aggregates so counts don't freeze at the window size.
-- **Alerts** — the unified queue (audit DB + scan blocks + egress) with the TUI's severity buckets; Acknowledge shells to `defenseclaw alerts acknowledge --severity …` (class-wide, sets severity → ACK in the DB), and scan/egress rows hide locally.
-- **Logs** — the four stream tabs over their real backing files, structured `VERDICT` / `JUDGE` / `HOOK` / `SCAN` line rendering, and the redaction kill-switch (RAW badge + guarded toggle).
+- **Enforcement counts** — Hook Calls and Blocks use audit history. Findings use the audit alert queue; legacy installations also group file-backed scan blocks. Canonical findings are not counted again as legacy scan blocks. Per-connector totals can fall back to all-time aggregates.
+- **Alerts** — an audit-backed queue with legacy scan/egress compatibility. Acknowledgement runs through the selected runtime's CLI; the runtime owns persistence. Stream-only entries can be hidden locally.
+- **Logs** — Gateway and Watchdog read plain log files; Verdicts and Otel use bounded canonical audit-database projections on v8, with legacy fallback for older schemas. Unavailable history is explicitly marked stale. Sensitive fields remain redacted; there is no RAW/redaction-off switch.
+- **Runtime** — coverage planes, findings, provider attribution and inventory correlation from the Runtime API. Missing coverage is not a clean-host result. Unsupported gateways show upgrade guidance; CLI commands are exposed only when the selected runtime reports support.
 - **Session-scoped** scans and alerts, silent-bypass counting, doctor cache staleness, connector-filter propagation, and the shared latest-500 / oldest-200 windowing all mirror the runtime.
 
 ## Known notes
