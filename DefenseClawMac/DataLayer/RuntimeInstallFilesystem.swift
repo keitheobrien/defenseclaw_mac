@@ -22,6 +22,16 @@ import Foundation
 /// fresh installer. Kept independent of AppState so the filesystem boundary
 /// has a native fault-injection test harness.
 enum RuntimeInstallFilesystem {
+    struct ExistingRuntime: Equatable, Sendable {
+        enum Kind: Equatable, Sendable {
+            case sourceDevelopment
+            case installed
+        }
+
+        var marker: String
+        var kind: Kind
+    }
+
     struct PathIdentity: Codable, Equatable {
         var device: UInt64
         var inode: UInt64
@@ -113,6 +123,29 @@ enum RuntimeInstallFilesystem {
             home + "/.local/bin/.defenseclaw-source-root",
         ]
         return markers.first(where: lexicalPathExists)
+    }
+
+    /// Classifies an existing runtime before any bundled payload decision is
+    /// exposed to the user. A source-root marker is authoritative developer
+    /// provenance: the Mac app must leave that runtime entirely alone, even
+    /// when the published release is numerically older or newer.
+    static func existingRuntime(
+        home: String,
+        dataHome: String,
+        venvDir: String
+    ) -> ExistingRuntime? {
+        let sourceMarker = home + "/.local/bin/.defenseclaw-source-root"
+        if lexicalPathExists(sourceMarker) {
+            return ExistingRuntime(marker: sourceMarker, kind: .sourceDevelopment)
+        }
+
+        if let marker = existingSelectedRuntimeMarker(dataHome: dataHome, venvDir: venvDir) {
+            return ExistingRuntime(marker: marker, kind: .installed)
+        }
+        if let marker = existingManagedRuntimeMarker(home: home) {
+            return ExistingRuntime(marker: marker, kind: .installed)
+        }
+        return nil
     }
 
     /// First marker beneath the installation selected by InstallationContext.

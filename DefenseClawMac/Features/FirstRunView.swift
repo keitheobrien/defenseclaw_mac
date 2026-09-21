@@ -52,6 +52,7 @@ struct FirstRunView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var cliFound = false
+    @State private var runtimeDetected = false
     @State private var checked = false
     @State private var connector = "codex"
     @State private var detectedConnectors: [String] = []
@@ -114,6 +115,8 @@ struct FirstRunView: View {
                     Text("Set Up DefenseClaw").font(.title2.weight(.semibold))
                     Text(cliFound
                          ? "DefenseClaw registers the hook connectors you select (detected ones are pre-selected). You can optionally choose which connectors enforce policy."
+                         : runtimeDetected
+                         ? "An existing DefenseClaw runtime was found. This app will not replace it with the bundled payload."
                          : "Install the DefenseClaw runtime first, then return here to configure it.")
                         .font(.callout).foregroundStyle(.secondary)
                 }
@@ -131,7 +134,13 @@ struct FirstRunView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if cliFound { setupForm } else { installer }
+            if cliFound {
+                setupForm
+            } else if runtimeDetected {
+                existingRuntimeNotice
+            } else {
+                installer
+            }
 
             if let entry = runningEntry {
                 execution(entry)
@@ -188,8 +197,9 @@ struct FirstRunView: View {
             // CLIs' --version, and the runtime's trusted-path gate is off
             // until a config exists — never exec other binaries without an
             // explicit user action.
+            runtimeDetected = await appState.refreshExistingRuntimeInstallation() != nil
             cliFound = await appState.cli.locateBinary() != nil
-            if !cliFound {
+            if !runtimeDetected && !cliFound {
                 await loadInstallerRelease()
             }
         }
@@ -300,6 +310,28 @@ struct FirstRunView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    @ViewBuilder
+    private var existingRuntimeNotice: some View {
+        GroupBox("Existing DefenseClaw Runtime Detected") {
+            VStack(alignment: .leading, spacing: 10) {
+                Label(
+                    appState.runtimeInstallationPolicyNotice
+                        ?? "An existing runtime was detected. The bundled runtime will not replace it.",
+                    systemImage: appState.sourceDevelopmentRuntimeDetected
+                        ? "hammer.circle"
+                        : "checkmark.shield"
+                )
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                Text("Use Settings ▸ General ▸ DefenseClaw runtime to check for a newer runtime release. If the updater cannot establish a safe upgrade, this installation remains unchanged.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     @ViewBuilder
@@ -499,9 +531,10 @@ struct FirstRunView: View {
     private func checkInstallation() {
         appState.reloadConfig()
         Task {
+            runtimeDetected = await appState.refreshExistingRuntimeInstallation() != nil
             cliFound = await appState.cli.locateBinary() != nil
             appState.installDetected = await appState.configStore.installPresent
-            if !cliFound { await loadInstallerRelease() }
+            if !runtimeDetected && !cliFound { await loadInstallerRelease() }
             // Re-discover only after the user opted into discovery — Check
             // Again must not become a back door into exec'ing agent CLIs.
             if cliFound, discoveryRequested { await discoverConnectors() }

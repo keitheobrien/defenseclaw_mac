@@ -27,6 +27,8 @@ struct RuntimeInstallFilesystemTests {
         nonemptyDataHomeFailsClosedWithoutMutation()
         symlinkDataHomeFailsClosedWithoutFollowingOrMutation()
         selectedRuntimeMarkerCoversSplitHomeAndVenv()
+        sourceRuntimeMarkerIsClassifiedAsDeveloperOwned()
+        existingRuntimeStateClassifiesInstalledState()
         arbitrarySelectedDirectoryUsesPinnedWalk()
         stagingCleanupPreservesAReplacement()
         symlinkedInstallAncestorsAreRefusedWithoutExternalMutation()
@@ -162,6 +164,39 @@ struct RuntimeInstallFilesystemTests {
                 ) == dataHome.path,
                 "custom DEFENSECLAW_HOME state is a fresh-install refusal marker"
             )
+        }
+    }
+
+    private static func sourceRuntimeMarkerIsClassifiedAsDeveloperOwned() {
+        withTemporaryHome { home in
+            let bin = home.appendingPathComponent(".local/bin")
+            try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+            let marker = bin.appendingPathComponent(".defenseclaw-source-root")
+            try Data("/tmp/defenseclaw\n".utf8).write(to: marker)
+
+            let state = RuntimeInstallFilesystem.existingRuntime(
+                home: home.path,
+                dataHome: home.appendingPathComponent(".defenseclaw").path,
+                venvDir: home.appendingPathComponent(".defenseclaw/.venv").path
+            )
+            expect(state?.marker == marker.path, "source marker is reported as the existing runtime")
+            expect(state?.kind == .sourceDevelopment, "source marker is classified as developer-owned")
+        }
+    }
+
+    private static func existingRuntimeStateClassifiesInstalledState() {
+        withTemporaryHome { home in
+            let dataHome = home.appendingPathComponent(".defenseclaw")
+            try FileManager.default.createDirectory(at: dataHome, withIntermediateDirectories: false)
+            try Data("config".utf8).write(to: dataHome.appendingPathComponent("config.yaml"))
+
+            let state = RuntimeInstallFilesystem.existingRuntime(
+                home: home.path,
+                dataHome: dataHome.path,
+                venvDir: dataHome.appendingPathComponent(".venv").path
+            )
+            expect(state?.marker == dataHome.path, "installed data state is reported as the existing runtime")
+            expect(state?.kind == .installed, "release or custom runtime state is not classified as developer-owned")
         }
     }
 
