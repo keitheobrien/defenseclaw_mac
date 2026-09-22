@@ -131,7 +131,11 @@
 			name = "Build Gateway Admin Helper";
 			outputPaths = (
 				"$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/Library",
-				"$(DERIVED_FILE_DIR)/GatewayAdminHelper",
+				"$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/Library/LaunchServices",
+				"$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/Library/LaunchServices/DefenseClawGatewayHelper",
+				"$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/Library/LaunchServices/defenseclaw-gateway",
+				"$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/Library/LaunchDaemons",
+				"$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/Library/LaunchDaemons/com.keitheobrien.DefenseClawMac.GatewayAdmin.plist",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;

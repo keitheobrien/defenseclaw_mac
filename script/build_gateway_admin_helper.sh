@@ -15,7 +15,10 @@ CONFIG="${CONFIGURATION:-Debug}"
 IDENTITY="${EXPANDED_CODE_SIGN_IDENTITY:--}"
 TEAM="${DEVELOPMENT_TEAM:-}"
 DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-14.0}"
-BUILD_ROOT="${DERIVED_FILE_DIR:-${TMPDIR:-/tmp}}/GatewayAdminHelper"
+# Xcode permits transient compiler files under TARGET_TEMP_DIR. Declared output
+# directories use literal sandbox rules, so DERIVED_FILE_DIR cannot host a
+# dynamically named compiler/module-cache tree in a clean archive.
+BUILD_ROOT="${TARGET_TEMP_DIR:-${TMPDIR:-/tmp}}/GatewayAdminHelper"
 mkdir -p "$BUILD_ROOT"
 BUILD_DIR="$(mktemp -d "$BUILD_ROOT/build.XXXXXX")"
 trap 'rm -rf "$BUILD_DIR"' EXIT
