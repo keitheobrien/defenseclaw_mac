@@ -55,6 +55,7 @@
 				DC00000000000000000000C2 /* Sources */,
 				DC00000000000000000000C1 /* Frameworks */,
 				DC00000000000000000000C3 /* Resources */,
+				DC00000000000000000000C4 /* Build Gateway Admin Helper */,
 			);
 			buildRules = (
 			);
@@ -113,6 +114,30 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		DC00000000000000000000C4 /* Build Gateway Admin Helper */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = ();
+			inputPaths = (
+				"$(SRCROOT)/script/build_gateway_admin_helper.sh",
+				"$(SRCROOT)/GatewayAdminHelper/main.swift",
+				"$(SRCROOT)/DefenseClawMac/DataLayer/GatewayAdminProtocol.swift",
+				"$(SDKROOT)",
+				"$(TOOLCHAIN_DIR)",
+			);
+			name = "Build Gateway Admin Helper";
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/Library",
+				"$(DERIVED_FILE_DIR)/GatewayAdminHelper",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "\"$SRCROOT/script/build_gateway_admin_helper.sh\"";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		DC00000000000000000000C2 /* Sources */ = {
@@ -193,7 +218,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.1.22;
+				MARKETING_VERSION = 1.1.23;
 				PRODUCT_BUNDLE_IDENTIFIER = com.keitheobrien.DefenseClawMac;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -219,7 +244,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.1.22;
+				MARKETING_VERSION = 1.1.23;
 				OTHER_CODE_SIGN_FLAGS = "--timestamp";
 				PRODUCT_BUNDLE_IDENTIFIER = com.keitheobrien.DefenseClawMac;
 				PRODUCT_NAME = "$(TARGET_NAME)";

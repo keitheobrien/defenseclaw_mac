@@ -111,7 +111,7 @@ enum RuntimeInstallFilesystem {
 
     /// First marker for existing runtime state. An empty, real data directory
     /// is not an installation; any contents, symlink, special file, unreadable
-    /// directory, CLI/gateway path, or source-root marker fails closed.
+    /// directory, CLI/gateway/ACP path, or source-root marker fails closed.
     static func existingManagedRuntimeMarker(home: String) -> String? {
         let dataHome = home + "/.defenseclaw"
         if lexicalPathExists(dataHome), !isLexicallyEmptyDirectory(dataHome) {
@@ -120,6 +120,7 @@ enum RuntimeInstallFilesystem {
         let markers = [
             home + "/.local/bin/defenseclaw",
             home + "/.local/bin/defenseclaw-gateway",
+            home + "/.local/bin/defenseclaw-acp",
             home + "/.local/bin/.defenseclaw-source-root",
         ]
         return markers.first(where: lexicalPathExists)

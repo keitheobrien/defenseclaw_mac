@@ -526,18 +526,37 @@ actor CLIRunner {
     private enum RunState {
         case reserved(cancelRequested: Bool)
         case running(ActiveRun)
+        case administrator(GatewayAdministratorOperation)
     }
 
     private var cachedPaths: [String: String] = [:]
     private var runStates: [UUID: RunState] = [:]
     private var installationContext: InstallationContext
 
-    init(context: InstallationContext = .resolve()) {
+    private let administratorEnabled: @Sendable () -> Bool
+    private let administratorExecutor: @Sendable (GatewayAdminAction, InstallationContext, GatewayAdministratorOperation) async -> CLIResult
+
+    init(
+        context: InstallationContext = .resolve(),
+        administratorEnabled: @escaping @Sendable () -> Bool = {
+            UserDefaults.standard.bool(forKey: GatewayAdministratorClient.preferenceKey)
+        },
+        administratorExecutor: @escaping @Sendable (GatewayAdminAction, InstallationContext, GatewayAdministratorOperation) async -> CLIResult = {
+            await GatewayAdministratorClient.run(action: $0, context: $1, operation: $2)
+        }
+    ) {
         self.installationContext = context
+        self.administratorEnabled = administratorEnabled
+        self.administratorExecutor = administratorExecutor
     }
 
     func rebind(to context: InstallationContext) {
         guard installationContext != context else { return }
+        // A pending authorization must not launch against an old selection.
+        // Dispatched operations finish against their immutable original context.
+        for state in runStates.values {
+            if case .administrator(let operation) = state { _ = operation.cancel() }
+        }
         if installationContext.permitsMutation, !context.permitsMutation {
             let activeMutations = runStates.compactMap { runID, state -> (UUID, UUID)? in
                 guard case .running(let active) = state, active.mutation else { return nil }
@@ -929,7 +948,7 @@ actor CLIRunner {
                         cancelled: true
                     )
                 }
-            case .running:
+            case .running, .administrator:
                 return CLIResult(
                     exitCode: 125,
                     output: "A command with this run identifier is already active.\n"
@@ -941,6 +960,50 @@ actor CLIRunner {
         if mutation, !installationContext.permitsMutation {
             let reason = installationContext.accessMode.reason ?? "This installation is read only."
             return CLIResult(exitCode: 77, output: "Operation refused by the Mac app: \(reason)")
+        }
+        if binaryName == "defenseclaw-gateway", administratorEnabled(),
+           let first = arguments.first, GatewayAdminAction(rawValue: first) != nil {
+            // Keep the privileged allowlist exact; never silently fall back to
+            // ordinary execution for an invalid privileged lifecycle request.
+            guard let action = GatewayAdministratorClient.selectedAction(
+                binary: binaryName, arguments: arguments, enabled: true
+            ), standardInput == nil, environment.isEmpty else {
+                return CLIResult(exitCode: 64, output: "Administrator gateway control accepts only Start, Stop, or Restart without extra arguments or environment overrides.\n")
+            }
+            guard installationContext.permitsMutation else {
+                return CLIResult(exitCode: 77, output: "Administrator gateway control is unavailable for a read-only installation.\n")
+            }
+            guard !runStates.values.contains(where: {
+                if case .administrator = $0 { return true }
+                return false
+            }) else {
+                return CLIResult(exitCode: 125, output: "Another administrator gateway action is still running. Wait for its result in Activity before retrying.\n")
+            }
+            let context = installationContext
+            let operation = GatewayAdministratorOperation()
+            runStates[executionID] = .administrator(operation)
+            if let onLine { await onLine("Requesting macOS administrator authorization for gateway \(action.rawValue)…") }
+            let result = await withTaskCancellationHandler {
+                await administratorExecutor(action, context, operation)
+            } onCancel: {
+                _ = operation.cancel()
+            }
+            runStates[executionID] = nil
+            if let onLine {
+                for line in result.output.split(separator: "\n", omittingEmptySubsequences: false) {
+                    await onLine(String(line))
+                }
+            }
+            return result
+        }
+        if binaryName == "defenseclaw-gateway", arguments.count == 1,
+           GatewayAdminAction(rawValue: arguments[0]) != nil {
+            let protectedState = installationContext.homeRoot.appendingPathComponent("hook_contract_lock.json").path
+            var metadata = stat()
+            if lstat(protectedState, &metadata) == 0, metadata.st_uid == 0,
+               access(protectedState, R_OK) != 0 {
+                return CLIResult(exitCode: 77, output: "This installation has gateway state owned by root. Enable Run gateway as administrator in Overview or Settings → Connection, then retry this action.\n")
+            }
         }
         guard let binary = locateBinary(named: binaryName) else {
             let setting = binaryName == "defenseclaw" ? " Set its path in Settings ▸ Connection." : ""
@@ -1163,6 +1226,8 @@ actor CLIRunner {
             guard !cancelRequested else { return .alreadyRequested }
             runStates[executionID] = .reserved(cancelRequested: true)
             return .requested
+        case .administrator(let operation):
+            return operation.cancel()
         case .running(var active):
             if let expectedToken, active.token != expectedToken { return .notFound }
             guard !active.cancellationRequested else { return .alreadyRequested }

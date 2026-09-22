@@ -4,6 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/gateway_signing.sh"
+source "$SCRIPT_DIR/lib/gateway_admin_signing.sh"
 
 EXPECTED_TEAM_ID="9R236BB67S"
 
@@ -48,6 +49,7 @@ fi
 
 /usr/bin/codesign --verify --strict --deep --verbose=4 "$APP"
 verify_gateway_signature "$GATEWAY" "$EXPECTED_TEAM_ID"
+verify_gateway_admin_bundle "$APP" "$EXPECTED_TEAM_ID"
 
 python3 - "$MANIFEST" "$GATEWAY" <<'PYEOF'
 import hashlib

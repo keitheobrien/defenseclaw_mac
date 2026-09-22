@@ -80,11 +80,15 @@ struct RuntimePayload: Sendable {
 
     private static func load() -> RuntimePayload? {
         guard let resources = Bundle.main.resourceURL else { return nil }
-        let payloadDir = resources.appendingPathComponent("RuntimePayload")
+        return load(from: resources.appendingPathComponent("RuntimePayload"))
+    }
+
+    static func load(from payloadDir: URL) -> RuntimePayload? {
         let manifestURL = payloadDir.appendingPathComponent("payload-manifest.json")
         guard let data = try? Data(contentsOf: manifestURL),
               let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let version = root["runtime_version"] as? String,
+              supportsInstallerProtocol(version: version, includesACPGuard: root["acp_guard"] != nil),
               let gateway = root["gateway"] as? [String: Any],
               let gatewayFile = gateway["file"] as? String,
               let gatewaySHA = gateway["sha256"] as? String,
@@ -112,6 +116,21 @@ struct RuntimePayload: Sendable {
             dependencyLockURL: payloadDir.appendingPathComponent(dependencyLockFile),
             dependencyLockSHA256: dependencyLockSHA
         )
+    }
+
+    /// Runtime 0.8.11 introduces an ACP binary that must activate with the
+    /// gateway. Refuse that protocol until this installer handles the complete
+    /// transaction; older apps must never report a partial install as complete.
+    static func supportsInstallerProtocol(version: String, includesACPGuard: Bool) -> Bool {
+        guard !includesACPGuard else { return false }
+        let parts = version.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 3,
+              parts.allSatisfy({ part in
+                  !part.isEmpty && (part.count == 1 || part.first != "0")
+                      && part.utf8.allSatisfy { (48...57).contains($0) }
+              }) else { return false }
+        let numbers = parts.compactMap { Int($0) }
+        return numbers.count == 3 && numbers.lexicographicallyPrecedes([0, 8, 11])
     }
 
     /// Re-hash the payload against its manifest before installing anything.

@@ -4,6 +4,16 @@ One installer artifact that installs both the Mac app and the DefenseClaw
 runtime; after install they run separately and update separately (app via its
 self-updater, runtime via `defenseclaw upgrade`).
 
+## Current payload protocol (verified 2026-09-22)
+
+The released 0.8.10 payload remains supported. Current upstream mainline adds
+an ACP guard binary to the runtime installation transaction starting at
+0.8.11. Until this installer can validate, activate, and roll back that full
+transaction, packaging rejects runtime 0.8.11 and newer before downloading
+assets, and the app rejects manifests that require ACP. Existing runtimes
+continue to update through their own authenticated updater. These checks do
+not replace or downgrade an installed runtime.
+
 ## Hard constraints (verified 2026-07-04)
 
 | Constraint | Consequence |

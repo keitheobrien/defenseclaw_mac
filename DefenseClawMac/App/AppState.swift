@@ -143,8 +143,8 @@ final class AppState {
     var availableUpdate: ReleaseInfo?
     var upgradeState: UpgradeState = .idle
     var updateBannerDismissed = false
-    /// Persisted across launches: GitHub's unauthenticated API allows 60
-    /// requests/hour per IP, so app relaunches must not re-check each time.
+    /// Pulse checks are throttled because GitHub's unauthenticated API is
+    /// limited. Each launch refreshes once because release details are not persisted.
     @ObservationIgnored @AppStorage("lastUpdateCheckTime") private var lastUpdateCheckTime: Double = 0
     @ObservationIgnored @AppStorage("lastMacAppUpdateCheckTime") private var lastMacAppUpdateCheckTime: Double = 0
 
@@ -155,6 +155,7 @@ final class AppState {
     var runtimeVersionCheckInProgress = false
     var runtimeVersionError: String?
     var runtimeReleaseChecked = false
+    var publishedRuntimeVersion: String?
     var availableRuntimeUpdate: ReleaseInfo?
     var runtimeUpgradeState: UpgradeState = .idle
     /// Bundled-payload fresh-install progress (RuntimeInstaller.swift).
@@ -461,6 +462,7 @@ final class AppState {
         runtimeDiscoveryCommands = nil
         runtimeVersionError = nil
         runtimeReleaseChecked = false
+        publishedRuntimeVersion = nil
         availableRuntimeUpdate = nil
         runtimeUpgradeState = .idle
         runtimeInstallState = .idle
@@ -955,11 +957,11 @@ final class AppState {
 
     // MARK: - Self-update
 
-    /// Check GitHub for newer releases of BOTH the Mac app and the
-    /// DefenseClaw runtime; re-checked every 6h by the pulse.
+    /// Check GitHub once per launch so a previous process's throttle cannot
+    /// hide an update prompt, then recheck both releases every 6h by the pulse.
     func checkForUpdates(force: Bool = false) async {
         guard !updateOperationInProgress else { return }
-        guard force || Date().timeIntervalSince1970 - lastUpdateCheckTime > 6 * 3600 else { return }
+        guard force || !runtimeReleaseChecked || Date().timeIntervalSince1970 - lastUpdateCheckTime > 6 * 3600 else { return }
         let now = Date().timeIntervalSince1970
         lastUpdateCheckTime = now
         lastMacAppUpdateCheckTime = now
@@ -987,7 +989,7 @@ final class AppState {
         // Always refresh the local version. Only the network release lookup is
         // subject to the six-hour throttle.
         await refreshInstalledRuntimeVersion()
-        guard force || Date().timeIntervalSince1970 - lastRuntimeUpdateCheckTime > 6 * 3600 else { return }
+        guard force || !runtimeReleaseChecked || Date().timeIntervalSince1970 - lastRuntimeUpdateCheckTime > 6 * 3600 else { return }
         lastRuntimeUpdateCheckTime = Date().timeIntervalSince1970
 
         _ = await refreshRuntimeUpdate(refreshInstalledVersion: false)
@@ -1062,6 +1064,7 @@ final class AppState {
         guard installationSnapshotIsCurrent(generation) else { return }
         guard locatedBinary != nil else {
             installedRuntimeVersion = nil
+            availableRuntimeUpdate = nil
             runtimeSetupCommands = nil
             runtimeDiscoveryCommands = nil
             runtimeVersionError = "DefenseClaw CLI not found. Set its path in Connection."
@@ -1070,8 +1073,11 @@ final class AppState {
 
         let result = await cli.run(arguments: ["--version"], mutation: false)
         guard installationSnapshotIsCurrent(generation) else { return }
-        if let version = UpdateChecker.parseVersion(result.output) {
+        if result.succeeded, let version = UpdateChecker.parseVersion(result.output) {
             installedRuntimeVersion = version
+            if let update = availableRuntimeUpdate, !UpdateChecker.isNewer(update.version, than: version) {
+                availableRuntimeUpdate = nil
+            }
             let setupHelp = await cli.run(arguments: ["setup", "--help"], mutation: false)
             guard installationSnapshotIsCurrent(generation) else { return }
             runtimeSetupCommands = setupHelp.succeeded
@@ -1089,6 +1095,7 @@ final class AppState {
             if case .failed = runtimeInstallState { runtimeInstallState = .idle }
         } else {
             installedRuntimeVersion = nil
+            availableRuntimeUpdate = nil
             runtimeSetupCommands = nil
             runtimeDiscoveryCommands = nil
             runtimeVersionError = result.succeeded
@@ -1108,17 +1115,12 @@ final class AppState {
         if refreshInstalledVersion {
             await refreshInstalledRuntimeVersion()
         }
-        if sourceDevelopmentRuntimeDetected {
-            availableRuntimeUpdate = nil
-            runtimeReleaseChecked = true
-            runtimeUpdateCheckFailed = false
-            runtimeUpgradeLogTail = ""
-            runtimeUpgradeLog = runtimeInstallationPolicyNotice ?? "Source/development runtime left unchanged."
-            return nil
-        }
+        // Check release availability even for source installs. Showing a newer
+        // release never authorizes replacing an operator-managed checkout.
         let runtimeRelease = await updater.latestRuntimeRelease()
         runtimeReleaseChecked = true
         runtimeUpdateCheckFailed = runtimeRelease == nil
+        if let runtimeRelease { publishedRuntimeVersion = runtimeRelease.version }
         if let installed = installedRuntimeVersion, let latest = runtimeRelease {
             if UpdateChecker.isNewer(latest.version, than: installed) {
                 if latest != availableRuntimeUpdate { runtimeBannerDismissed = false }
@@ -1193,7 +1195,6 @@ final class AppState {
             break
         }
         if sourceDevelopmentRuntimeDetected {
-            availableRuntimeUpdate = nil
             runtimeUpgradeLogTail = ""
             runtimeUpgradeLog = runtimeInstallationPolicyNotice ?? "Source/development runtime left unchanged."
             runtimeUpgradeState = .idle
@@ -1202,7 +1203,13 @@ final class AppState {
         // The bundled-payload installer mutates the same venv and gateway
         // binary — never present overlapping runtime actions.
         guard !runtimeInstallState.isRunning else { return false }
-        guard let runtimeUpdate = availableRuntimeUpdate else { return true }
+        // Recheck local identity immediately before offering an upgrade. An
+        // external update may have made the cached release older or equal.
+        await refreshInstalledRuntimeVersion()
+        guard !sourceDevelopmentRuntimeDetected else { return true }
+        guard let runtimeUpdate = availableRuntimeUpdate,
+              let installed = installedRuntimeVersion,
+              UpdateChecker.isNewer(runtimeUpdate.version, than: installed) else { return true }
         guard let resolverCommand = RuntimeUpgradeResolverCommand.authenticated(
             releaseTag: runtimeUpdate.tag
         ) else {

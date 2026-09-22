@@ -10,6 +10,7 @@ struct RuntimeProtectedArtifactTests {
         try rejectsEmptyPayload()
         try rejectsChecksumDrift()
         validatesVersionBoundFilename()
+        try rejectsUnsupportedInstallerProtocols()
         validatesProtectedArtifactSizeLimit()
         validatesUpgradeResolverSanitizesAmbientVersion()
         try validatesAuditRecoveryCommandTargetsInstallation()
@@ -87,6 +88,41 @@ struct RuntimeProtectedArtifactTests {
                 == "defenseclaw-0.8.6-2-py3-none-any.dcwheel",
             "schema-2 protected wheel name is version-bound"
         )
+    }
+
+    private static func rejectsUnsupportedInstallerProtocols() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "DefenseClaw-payload-protocol-\(UUID().uuidString)", isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        func load(version: String, acpGuard: Any? = nil) throws -> RuntimePayload? {
+            var manifest: [String: Any] = [
+                "runtime_version": version,
+                "gateway": ["file": "defenseclaw-gateway", "sha256": String(repeating: "a", count: 64)],
+                "wheel": [
+                    "file": "defenseclaw-\(version)-2-py3-none-any.dcwheel",
+                    "sha256": String(repeating: "b", count: 64),
+                ],
+                "dependency_lock": [
+                    "file": "runtime-requirements.lock", "sha256": String(repeating: "c", count: 64),
+                ],
+            ]
+            if let acpGuard { manifest["acp_guard"] = acpGuard }
+            try JSONSerialization.data(withJSONObject: manifest).write(
+                to: root.appendingPathComponent("payload-manifest.json")
+            )
+            return RuntimePayload.load(from: root)
+        }
+
+        expect(try load(version: "0.8.10")?.version == "0.8.10", "the published runtime payload remains supported")
+        expect(try load(version: "0.8.9") != nil, "the previous protected payload protocol remains supported")
+        for version in ["0.8.11", "0.8.12", "0.9.0", "1.0.0", "0.8.11-rc1", "0.8.10+source", "0.08.10", "0.8", "0.8.10\n"] {
+            expect(try load(version: version) == nil, "future or non-release runtime payload is rejected: \(version)")
+        }
+        expect(try load(version: "0.8.10", acpGuard: [:]) == nil, "an ACP payload cannot be partially installed")
+        expect(try load(version: "0.8.10", acpGuard: NSNull()) == nil, "a malformed ACP entry cannot bypass the protocol guard")
     }
 
     private static func validatesProtectedArtifactSizeLimit() {

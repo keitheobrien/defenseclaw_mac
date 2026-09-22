@@ -254,11 +254,13 @@ struct MainWindow: View {
                 .buttonStyle(.borderless)
                 .accessibilityLabel("Dismiss runtime update")
             default:
-                Button("Show Upgrade Command") { appState.performRuntimeUpgrade() }
-                    .controlSize(.small)
-                    .buttonStyle(.borderedProminent)
-                    .tint(Cisco.green)
-                    .disabled(!appState.installationMutationsAllowed)
+                if !appState.sourceDevelopmentRuntimeDetected {
+                    Button("Show Upgrade Command") { appState.performRuntimeUpgrade() }
+                        .controlSize(.small)
+                        .buttonStyle(.borderedProminent)
+                        .tint(Cisco.green)
+                        .disabled(!appState.installationMutationsAllowed)
+                }
                 if let url = appState.availableRuntimeUpdate.flatMap({ URL(string: $0.htmlURL) }) {
                     Link("Release notes", destination: url)
                         .font(.caption)
@@ -299,6 +301,9 @@ struct MainWindow: View {
         case .failed(let why):
             return why
         default:
+            if appState.sourceDevelopmentRuntimeDetected {
+                return "A newer release is available. Your source installation is preserved; update it through its existing source workflow."
+            }
             return "Runtime update (CLI + gateway) — installed: \(appState.installedRuntimeVersion ?? "unknown"). Use the release-owned resolver in latest mode without --version."
         }
     }
