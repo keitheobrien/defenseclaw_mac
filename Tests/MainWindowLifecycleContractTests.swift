@@ -18,6 +18,9 @@ enum MainWindowLifecycleContractTests {
         let mainWindowSource = try source(
             at: root.appendingPathComponent("DefenseClawMac/Features/MainWindow.swift")
         )
+        let inspectorLayoutSource = try source(
+            at: root.appendingPathComponent("DefenseClawMac/DesignSystem/InspectorLayoutPolicy.swift")
+        )
 
         expect(appSource.contains(#"Window("DefenseClaw", id: "main")"#),
                "the primary dashboard must use a singleton Window scene")
@@ -52,6 +55,9 @@ enum MainWindowLifecycleContractTests {
                    "legacy inspector/sidebar coupling returned: \(forbiddenSymbol)")
         }
 
+        expect(!inspectorLayoutSource.contains(".inspector(isPresented:"),
+               "the shared detail pane must not recreate the native inspector constraint loop")
+
         for relativePath in [
             "DefenseClawMac/Features/ActivityView.swift",
             "DefenseClawMac/Features/AlertsView.swift",
@@ -59,10 +65,10 @@ enum MainWindowLifecycleContractTests {
             "DefenseClawMac/Features/LogsView.swift",
         ] {
             let featureSource = try source(at: root.appendingPathComponent(relativePath))
-            expect(featureSource.contains(".inspector(isPresented:"),
-                   "\(relativePath) must retain its native inspector")
-            expect(featureSource.contains(".dcInspectorColumnWidth()"),
-                   "\(relativePath) must retain bounded inspector sizing")
+            expect(featureSource.contains(".dcInspector(isPresented:"),
+                   "\(relativePath) must use the shared inline detail pane")
+            expect(!featureSource.contains(".inspector(isPresented:"),
+                   "\(relativePath) must not restore a nested native inspector")
         }
 
         print("MainWindowLifecycleContractTests passed")
