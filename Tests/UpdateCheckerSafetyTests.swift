@@ -25,6 +25,8 @@ enum RuntimePayload {
 @main
 struct UpdateCheckerSafetyTests {
     static func main() {
+        preservesNewerRuntimeVersions()
+        parsesOnlyRuntimeVersionLines()
         parsesRealZipInfoListing()
         acceptsSingleAppBundleArchive()
         rejectsPathTraversalBeforeExtraction()
@@ -39,6 +41,26 @@ struct UpdateCheckerSafetyTests {
         rejectsArchiveWithNoAppBundle()
         rejectsEmptyArchivePath()
         print("Update checker safety tests passed")
+    }
+
+    private static func preservesNewerRuntimeVersions() {
+        expect(UpdateChecker.isNewer("0.8.10", than: "0.8.9"), "older runtime prompts for the published upgrade")
+        expect(!UpdateChecker.isNewer("0.8.10", than: "0.8.11"), "newer runtime is never downgraded")
+        expect(!UpdateChecker.isNewer("0.8.10", than: "0.8.10"), "equal runtime is left in place")
+        expect(!UpdateChecker.isNewer("0.8.10", than: "0.8.10-dev.runtime-repair"), "same-number source runtime is preserved")
+        expect(!UpdateChecker.isNewer("0.8.10", than: "0.9.0+source"), "newer source runtime is preserved")
+        expect(UpdateChecker.isNewer("v0.8.11", than: "0.8.10+source"), "older source runtime can show release availability")
+        expect(!UpdateChecker.isNewer("unknown", than: "0.8.10"), "unknown published version cannot authorize upgrade")
+        expect(!UpdateChecker.isNewer("0.8.10", than: "unknown"), "unknown installed version cannot authorize replacement")
+    }
+
+    private static func parsesOnlyRuntimeVersionLines() {
+        let warning = "WARNING: sonic/ast only supports (go1.17~1.26 and amd64 CPU) or (go1.20~1.26 and arm64 CPU)"
+        expect(UpdateChecker.parseVersion(warning + "\ndefenseclaw, version 0.8.10\n") == "0.8.10", "compiler warnings cannot hide an older runtime update")
+        expect(UpdateChecker.parseVersion(warning) == nil, "a warning alone is not a runtime version")
+        expect(UpdateChecker.parseVersion("defenseclaw-gateway version 0.8.10 (commit abc, built today)") == "0.8.10", "gateway release version parses")
+        expect(UpdateChecker.parseVersion("defenseclaw-gateway 0.8.10-dev.runtime-repair") == "0.8.10-dev.runtime-repair", "source identity suffix is retained")
+        expect(UpdateChecker.parseVersion("error: incompatible with 0.8.10") == nil, "error version numbers are not installed identities")
     }
 
     private static func parsesRealZipInfoListing() {

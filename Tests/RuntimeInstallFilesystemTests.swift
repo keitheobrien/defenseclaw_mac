@@ -29,6 +29,7 @@ struct RuntimeInstallFilesystemTests {
         selectedRuntimeMarkerCoversSplitHomeAndVenv()
         sourceRuntimeMarkerIsClassifiedAsDeveloperOwned()
         existingRuntimeStateClassifiesInstalledState()
+        acpOnlyRuntimeIsPreserved()
         arbitrarySelectedDirectoryUsesPinnedWalk()
         stagingCleanupPreservesAReplacement()
         symlinkedInstallAncestorsAreRefusedWithoutExternalMutation()
@@ -197,6 +198,32 @@ struct RuntimeInstallFilesystemTests {
             )
             expect(state?.marker == dataHome.path, "installed data state is reported as the existing runtime")
             expect(state?.kind == .installed, "release or custom runtime state is not classified as developer-owned")
+        }
+    }
+
+    private static func acpOnlyRuntimeIsPreserved() {
+        for isSymlink in [false, true] {
+            withTemporaryHome { home in
+                let bin = home.appendingPathComponent(".local/bin")
+                try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+                let acp = bin.appendingPathComponent("defenseclaw-acp")
+                if isSymlink {
+                    try FileManager.default.createSymbolicLink(atPath: acp.path, withDestinationPath: "missing-guard")
+                } else {
+                    try Data("existing ACP runtime".utf8).write(to: acp)
+                }
+                let identity = RuntimeInstallFilesystem.pathIdentity(acp.path)
+                let dataHome = home.appendingPathComponent(".defenseclaw")
+                let state = RuntimeInstallFilesystem.existingRuntime(
+                    home: home.path, dataHome: dataHome.path,
+                    venvDir: dataHome.appendingPathComponent(".venv").path
+                )
+                expect(state?.marker == acp.path, "an ACP-only installation blocks bundled fresh install")
+                expect(state?.kind == .installed, "partial ACP state is treated as an existing runtime")
+                try injectFailure(home: home)
+                expect(RuntimeInstallFilesystem.pathIdentity(acp.path) == identity, "the existing ACP path remains untouched")
+                expect(!lexicalPathExists(dataHome.appendingPathComponent(".venv.staging")), "no runtime staging begins over ACP-only state")
+            }
         }
     }
 

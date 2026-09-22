@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build both release artifacts:
-#   DefenseClawMac-<ver>.zip — the traditional app-only build (no runtime
-#     payload; also the self-update asset, so updates stay small), and
+#   DefenseClawMac-<ver>.zip — app plus its administrator lifecycle helper
+#     (no runtime replacement payload; also the self-update asset), and
 #   DefenseClawMac-<ver>.dmg — the unified installer whose app embeds the
 #     latest DefenseClaw runtime release as an install payload
 #     (Contents/Resources/RuntimePayload).
@@ -17,6 +17,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$REPO_ROOT/scripts/lib/gateway_signing.sh"
+source "$REPO_ROOT/scripts/lib/gateway_admin_signing.sh"
 RUNTIME_REPO="cisco-ai-defense/defenseclaw"
 IDENTITY="Developer ID Application: Keith OBrien (9R236BB67S)"
 TEAM_ID="9R236BB67S"
@@ -111,6 +112,18 @@ mkdir -p "$RUNTIME_DIR" "$OUT"
 RUNTIME_TAG="${RUNTIME_TAG:-$(gh release view --repo "$RUNTIME_REPO" --json tagName -q .tagName)}"
 [[ -n "$RUNTIME_TAG" ]] || die "could not resolve latest $RUNTIME_REPO release tag"
 RUNTIME_VERSION="${RUNTIME_TAG#v}"
+# 0.8.11 adds an ACP binary to the installation transaction. Do not produce a
+# signed app that silently omits a required part of a newer runtime payload.
+python3 - "$RUNTIME_VERSION" <<'ACP_PROTOCOL_CHECK'
+import re
+import sys
+
+version = sys.argv[1]
+if re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version) is None:
+    raise SystemExit("Unsupported runtime release version; a canonical major.minor.patch version is required.")
+if tuple(map(int, version.split("."))) >= (0, 8, 11):
+    raise SystemExit("Unsupported ACP runtime payload: DefenseClaw 0.8.11 or newer requires ACP installer support before packaging.")
+ACP_PROTOCOL_CHECK
 step "Runtime release: $RUNTIME_TAG"
 
 # DefenseClaw 0.8.4+ deliberately publishes refusal bytes under the legacy
@@ -414,6 +427,7 @@ xcodebuild archive \
     -destination 'generic/platform=macOS' \
     -archivePath "$ARCHIVE" \
     -derivedDataPath "$WORK/DerivedData" \
+    ARCHS="$ARCH" \
     -quiet
 
 EXPORT_OPTS="$WORK/ExportOptions.plist"
@@ -438,6 +452,7 @@ APP_PLAIN="$WORK/export/$APP_NAME.app"
 [[ -d "$APP_PLAIN" ]] || die "export did not produce $APP_PLAIN"
 strip_stale_provenance "$APP_PLAIN"
 codesign --verify --strict --deep --verbose=2 "$APP_PLAIN"
+verify_gateway_admin_bundle "$APP_PLAIN" "$TEAM_ID"
 
 # ── 5. Traditional app-only artifact (self-update track) ─────────────────────
 if [[ "${SKIP_NOTARIZE:-0}" != "1" ]]; then
@@ -463,12 +478,14 @@ ZIP_CHECK="$WORK/app-only-zip-check"
 mkdir -p "$ZIP_CHECK"
 ditto -x -k "$RELEASE_ZIP" "$ZIP_CHECK"
 codesign --verify --strict --deep --verbose=2 "$ZIP_CHECK/$APP_NAME.app"
+verify_gateway_admin_bundle "$ZIP_CHECK/$APP_NAME.app" "$TEAM_ID"
 xcrun stapler validate "$ZIP_CHECK/$APP_NAME.app"
 spctl -a -t install -vv "$ZIP_CHECK/$APP_NAME.app"
 PORTABLE_ZIP_CHECK="$WORK/app-only-unzip-check"
 mkdir -p "$PORTABLE_ZIP_CHECK"
 /usr/bin/unzip -q "$RELEASE_ZIP" -d "$PORTABLE_ZIP_CHECK"
 codesign --verify --strict --deep --verbose=2 "$PORTABLE_ZIP_CHECK/$APP_NAME.app"
+verify_gateway_admin_bundle "$PORTABLE_ZIP_CHECK/$APP_NAME.app" "$TEAM_ID"
 xcrun stapler validate "$PORTABLE_ZIP_CHECK/$APP_NAME.app"
 spctl -a -t install -vv "$PORTABLE_ZIP_CHECK/$APP_NAME.app"
 
@@ -559,6 +576,7 @@ verify_gateway_signature "$PAYLOAD/defenseclaw-gateway" "$TEAM_ID" \
     || die "gateway identifier changed while signing the unified app"
 verify_gateway_sha256 "$PAYLOAD/defenseclaw-gateway" "$GATEWAY_SIGNED_SHA" \
     || die "gateway bytes changed while signing the unified app"
+verify_gateway_admin_bundle "$APP" "$TEAM_ID"
 
 # ── 7. Notarize + staple the unified app ─────────────────────────────────────
 if [[ "${SKIP_NOTARIZE:-0}" != "1" ]]; then
@@ -579,6 +597,7 @@ mkdir -p "$STAGE"
 ditto "$APP" "$STAGE/$APP_NAME.app"
 strip_stale_provenance "$STAGE/$APP_NAME.app"
 codesign --verify --strict --deep --verbose=2 "$STAGE/$APP_NAME.app"
+verify_gateway_admin_bundle "$STAGE/$APP_NAME.app" "$TEAM_ID"
 STAGED_GATEWAY="$STAGE/$APP_NAME.app/Contents/Resources/RuntimePayload/defenseclaw-gateway"
 verify_gateway_signature "$STAGED_GATEWAY" "$TEAM_ID" \
     || die "staged gateway does not satisfy the release signing contract"

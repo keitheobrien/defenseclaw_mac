@@ -38,7 +38,7 @@ struct AppSettingsView: View {
                 .tabItem { Label("Notifications", systemImage: "bell.badge") }
                 .tag(AppSettingsTab.notifications)
             ConnectionSettings()
-                .frame(width: 560, height: 540)
+                .frame(width: 560, height: 620)
                 .tabItem { Label("Connection", systemImage: "network") }
                 .tag(AppSettingsTab.connection)
         }
@@ -107,6 +107,12 @@ private struct GeneralSettings: View {
                 if let update = appState.availableRuntimeUpdate {
                     LabeledContent("Available", value: update.tag)
                     runtimeStatus
+                    if appState.sourceDevelopmentRuntimeDetected, let url = URL(string: update.htmlURL) {
+                        Link("Review newer runtime release", destination: url)
+                        Text("Your source installation is preserved. Update it through its existing source workflow.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     if let command = runtimeUpgradeCommand {
                         Button("Copy Upgrade Command") {
                             copyToPasteboard(command)
@@ -292,6 +298,11 @@ private struct GeneralSettings: View {
         if !appState.runtimeReleaseChecked {
             return "Installed"
         }
+        if let installed = appState.installedRuntimeVersion,
+           let published = appState.publishedRuntimeVersion,
+           UpdateChecker.isNewer(installed, than: published) {
+            return "Newer than published release — left unchanged"
+        }
         return "Up to date"
     }
 
@@ -400,6 +411,8 @@ private struct NotificationSettings: View {
 
 private struct ConnectionSettings: View {
     @Environment(AppState.self) private var appState
+    @AppStorage("gatewayAdministratorMode") private var gatewayAdministratorMode = false
+    @State private var administratorServiceStatus = GatewayAdministratorClient.serviceStatusDescription
     @AppStorage(CLIRunner.pathOverrideKey) private var binaryPath = ""
     @State private var configPathOverride = UserDefaults.standard.string(
         forKey: InstallationContext.configPathOverrideKey
@@ -410,6 +423,31 @@ private struct ConnectionSettings: View {
             Section("Gateway") {
                 LabeledContent("Endpoint", value: "http://\(appState.config.gatewayHost):\(appState.config.gatewayPort)")
                 LabeledContent("Token", value: appState.config.gatewayToken == nil ? "not set" : "configured (hidden)")
+                Toggle("Run gateway as administrator", isOn: $gatewayAdministratorMode)
+                    .disabled(!appState.installationMutationsAllowed)
+                Text("Starts your installed gateway with macOS administrator authorization. Your runtime installation is preserved; background-service approval may also be required.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if gatewayAdministratorMode {
+                    LabeledContent("Gateway executable", value: "~/.local/bin/defenseclaw-gateway")
+                    LabeledContent("Background service", value: administratorServiceStatus)
+                    Text("If approval is needed, allow DefenseClaw in Background Service Settings, then try Start or Restart again.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Button("Background Service Settings…") {
+                            GatewayAdministratorClient.openServiceSettings()
+                        }
+                        Button("Full Disk Access…") {
+                            GatewayAdministratorClient.openFullDiskAccessSettings()
+                        }
+                    }
+                    .controlSize(.small)
+                    Text("For Runtime agent actions, add /usr/bin/eslogger to Full Disk Access. iTerm's permission does not transfer to the background gateway.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
             }
             Section("Installation") {
                 LabeledContent("Selected by", value: appState.installationContext.source.label)
@@ -464,6 +502,12 @@ private struct ConnectionSettings: View {
             }
         }
         .formStyle(.grouped)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            administratorServiceStatus = GatewayAdministratorClient.serviceStatusDescription
+        }
+        .onChange(of: gatewayAdministratorMode) { _, _ in
+            administratorServiceStatus = GatewayAdministratorClient.serviceStatusDescription
+        }
     }
 
     private func pathRow(_ label: String, _ path: String) -> some View {

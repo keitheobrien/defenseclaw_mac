@@ -2,8 +2,8 @@
   "config_version": 8,
   "intentional_source_differences": {
     "App/AppState.swift": {
-      "local_sha256": "31b7530bb404c256ad01d440c343d2d2d75a560b84808a2840ddbca7551c9b0b",
-      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "local_sha256": "a3b164cc6a9a7f0c4c92dc96dbf7c72bf8408bb140e0fe36c53b1d17036bde2f",
+      "reason": "Reviewed standalone installation isolation and update flow: refresh explicit successful runtime identity, show newer published releases including source installs without replacing them, clear stale upgrade targets, and refresh release metadata once per launch.",
       "upstream_sha256": "c67474d84431d4593309e786c3c6946f537c25696e8f813f7074342d4c895a02"
     },
     "DataLayer/AIDiscoveryActionPolicy.swift": {
@@ -27,8 +27,8 @@
       "upstream_sha256": "7fe1c0362d5d70aee2244421a9552dd775dcedb8d96fc755968bf06dcda6d437"
     },
     "DataLayer/CLIRunner.swift": {
-      "local_sha256": "d5986658861398f812328c4885459d206d400e66f8c449edf16814d2e6c70dee",
-      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "local_sha256": "d942bb4e9d2847d207f8d6174a027f9b24ab066ddad37d6de98e887cac86787d",
+      "reason": "Reviewed standalone bounded execution and cancellation hardening plus exact Start/Stop/Restart administrator routing through the signed helper; reject extra arguments, stdin, environment, read-only selections, and overlapping privileged requests.",
       "upstream_sha256": "adb86e4afa0c9a2b18b813ee7b01da40795ef8d876df3137e1dc9af65fc883a1"
     },
     "DataLayer/CatalogCLI.swift": {
@@ -36,15 +36,30 @@
       "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
       "upstream_sha256": "c09adddfe3e53f0a9bebef86afea4843e0461c6ec49ce82cadae049fabf2f497"
     },
+    "DataLayer/CommandActivityStore.swift": {
+      "local_sha256": "0023973544bc13c93e7eb89cb28e4adf308f5ec4f298872de128d6a13d7445b2",
+      "reason": "Reviewed administrator activity labels, cancellation outcomes, and actionable background-service approval guidance while retaining mutation recording and redaction.",
+      "upstream_sha256": "d889c6b01e85113614e309bfc317b2cb34c4f0a2d74f0baffbb035228ef69b44"
+    },
     "DataLayer/CommandRegistry.swift": {
-      "local_sha256": "f5b73b6e417a39782d6a6b581ecb7b65170e6ebd0c1986311edd4bc615a3490b",
-      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "local_sha256": "c11111e8e739b1d2aa7661e9f2621d23d1cacd7f92b92ab836ae50a86c2672d2",
+      "reason": "Reviewed 235-entry upstream registry with the existing webhook usage correction and installed-runtime capability gates; new Kiro and existing Amp commands stay hidden unless setup help advertises support.",
       "upstream_sha256": "2676ba4a90c836d9c7a2909d45d9f33a71396ae1d70d7f4224ee5089b7d06dcd"
     },
     "DataLayer/EventStreamReader.swift": {
       "local_sha256": "3a6cee46a20ca9968bd305bf0a56e8a925093571a5b32607d763cf4719e21081",
       "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
       "upstream_sha256": "c6e4ea6e47c9c1a1bd2fcd32512ead6d03cda965c818c14ba757d66e76e5214f"
+    },
+    "DataLayer/GatewayAdminProtocol.swift": {
+      "local_sha256": "13e94d5c984441028ca4cbf0d3d5bc3fafcbd544ed9accddcb5a90ed421c8cc6",
+      "reason": "Reviewed new shared administrator XPC boundary: fixed lifecycle actions, selected installation paths and external Authorization Services form only; strict app/helper Developer ID requirements and exact per-operation administrator rule.",
+      "upstream_sha256": "missing"
+    },
+    "DataLayer/GatewayAdministratorClient.swift": {
+      "local_sha256": "3e86c47ab6323184e619b72d199c186410932cf42e70d014b62c5944108c75c0",
+      "reason": "Reviewed signed SMAppService registration and mutually authenticated XPC, native authorization handoff, pre-dispatch cancellation, explicit denied/cancelled/indeterminate results, and no password collection or arbitrary privileged execution.",
+      "upstream_sha256": "missing"
     },
     "DataLayer/GatewayClient.swift": {
       "local_sha256": "79ee4b3af60c11be333bee1d5f54c9eedff7c1bb18dbca42b84a9d4488a090f6",
@@ -57,14 +72,14 @@
       "upstream_sha256": "5a45c89c5125123a7a42f89c11422df9f7840748131b4c9be648ed9716a9c6fd"
     },
     "DataLayer/RuntimeInstallFilesystem.swift": {
-      "local_sha256": "4e403056b17d0e82b53df528599947c7966559dccbc2880d4e663740151455fb",
-      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
-      "upstream_sha256": "fdbc83412ed0cfa823afd6a9ac4f2f28fc68a2fc8be954449f34b3551cd1bc6d"
+      "local_sha256": "c5daeef09ac11bf791a053fcfdfe054edf538a7eee22041b4f3d3b8ecb222569",
+      "reason": "Reviewed standalone descriptor-bound no-replace installation and rollback hardening, including existing ACP-only runtime preservation. Retains three-target activation because new ACP payload transactions are explicitly rejected until supported.",
+      "upstream_sha256": "202028c356870d8a3de2f2ff7728e132370da1d3bb36e46a6f8ce6a527f79775"
     },
     "DataLayer/RuntimeInstaller.swift": {
-      "local_sha256": "a9ec5fd47aad63641ef5a9382363a9d342d201300e964828dac6580168bb94fc",
-      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
-      "upstream_sha256": "535bb41448689f9318aa30434878ec139c26c9b7c4b0e24a8b97c09cc96cc35f"
+      "local_sha256": "e82ccab0fcd245e75fbfcabd68c4ef2d154b74ed23715af168caa3e5ec82502f",
+      "reason": "Reviewed standalone authenticated protected-payload installer and existing-runtime preservation. Rejects ACP manifest entries and runtime0.8.11 or newer until the complete ACP activation/rollback protocol is implemented; released0.8.10 remains supported.",
+      "upstream_sha256": "9762df4ad32c711025805e3afd524924110548aff7048b660fb00b45e850f900"
     },
     "DataLayer/StructuredDetailParser.swift": {
       "local_sha256": "9fdd308a78d584bb5040b82e8e7184e21d64417b08755200333ad8964d7cc040",
@@ -72,8 +87,8 @@
       "upstream_sha256": "5ffc9f7f08e3613d7976201a71d1acaf1d0c05f57b81035dc7fa68d86543d480"
     },
     "DataLayer/UpdateChecker.swift": {
-      "local_sha256": "17c4f39c22a6ef381be19b3710e98cdd05430a850c24f04207238a910d3c8b27",
-      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "local_sha256": "22084d54a4412f631422e4fbabd8fc7db68fa0e9bcf7a18da409cfdde2f260e0",
+      "reason": "Reviewed standalone signed app-update protocol and preservation policy; parse only explicit DefenseClaw version lines so Go warnings cannot become versions, and compare release numbers without downgrading equal/newer source builds.",
       "upstream_sha256": "4c0b38e794fac694d0b558e254cd73976a9b7abeba4e044722aa317e88610f0c"
     },
     "DesignSystem/InspectorLayoutPolicy.swift": {
@@ -92,8 +107,8 @@
       "upstream_sha256": "9118bdeedab6cd1a800f90473446ac55c582175eec4cb4a21bf2c70c888f3b95"
     },
     "Features/AppSettingsView.swift": {
-      "local_sha256": "cd40f214aed48a4588a176b0dd8a4d6caa9d6d753e68e6433012cf71f7787891",
-      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "local_sha256": "a5d4d908270d3f43f002b4711fd7b221274198cc40f1d25893e41f6d75c8b8e1",
+      "reason": "Reviewed administrator-mode and macOS permission controls, installed gateway identity guidance, independent app/runtime updates, source-runtime preservation, and newer-than-published status.",
       "upstream_sha256": "b61388559d8814b8d56b324329f5e9b9414944f6b2f964794cc00a26aa1c60f2"
     },
     "Features/CommandPaletteView.swift": {
@@ -115,9 +130,19 @@
       "local_sha256": "3f9144c8c36f40526d7d2cd622e2606ae07c20eb22de4f6a4865b97b50567cfc",
       "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
       "upstream_sha256": "2d61cb0ae5f68c9d89c2d7268de5e0e9f498fde961a616670107650b7872b091"
+    },
+    "Features/MainWindow.swift": {
+      "local_sha256": "2a68d965106d1bb7bfd033771b87dbfdaa20cf36d474b565401841653927eb93",
+      "reason": "Reviewed runtime release prompt for source-managed installations: show newer release availability and notes but withhold app-managed replacement commands.",
+      "upstream_sha256": "d2c8055f1f4422fa98f53bcda1e3356a7ffcedf2a7035fb74dceaf495bc4c51c"
+    },
+    "Features/OverviewView.swift": {
+      "local_sha256": "e2abbcbd283ace09a9303f4a37b5b1603852c43b8836213c000001c147e0a5c0",
+      "reason": "Reviewed visible administrator gateway Start/Stop/Restart controls routed through recorded CLIRunner execution, read-only restrictions, and background/FDA guidance.",
+      "upstream_sha256": "d4fe640cd9f18b39308af0bbaeea3257b37e738e3429c50df7f862480191a775"
     }
   },
-  "mac_app_version": "1.1.22",
+  "mac_app_version": "1.1.23",
   "runtime_version": "0.8.10",
-  "upstream_commit": "85029e57e9094debd9366a7d5a9f7e6d5c3ef6fc"
+  "upstream_commit": "f05a9d3cb115c18f2c7903590a82dadf8835f2ae"
 }

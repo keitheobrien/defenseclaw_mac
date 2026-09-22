@@ -86,21 +86,27 @@ actor UpdateChecker {
         (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0"
     }
 
-    /// Numeric dotted-version comparison: true when `candidate` > `current`.
+    /// Compare release numbers without treating a source/build suffix as an
+    /// upgrade target. Equal-number development installs are left in place.
     static func isNewer(_ candidate: String, than current: String) -> Bool {
-        func components(_ version: String) -> [Int]? {
-            let parts = version.split(separator: ".", omittingEmptySubsequences: false)
-            guard parts.count >= 2 else { return nil }
-            let values = parts.compactMap { Int($0) }
-            return values.count == parts.count ? values : nil
-        }
-        guard let a = components(candidate), let b = components(current) else { return false }
+        guard let a = numericVersionComponents(candidate),
+              let b = numericVersionComponents(current) else { return false }
         for i in 0..<max(a.count, b.count) {
             let x = i < a.count ? a[i] : 0
             let y = i < b.count ? b[i] : 0
             if x != y { return x > y }
         }
         return false
+    }
+
+    private static func numericVersionComponents(_ version: String) -> [Int]? {
+        let pattern = #"^v?([0-9]+(?:\.[0-9]+)+)(?:[-+][A-Za-z0-9][A-Za-z0-9.+-]*)?$"#
+        guard let expression = try? NSRegularExpression(pattern: pattern),
+              let match = expression.firstMatch(in: version, range: NSRange(version.startIndex..., in: version)),
+              let range = Range(match.range(at: 1), in: version) else { return nil }
+        let parts = version[range].split(separator: ".")
+        let numbers = parts.compactMap { Int($0) }
+        return numbers.count == parts.count ? numbers : nil
     }
 
     // MARK: - Check
@@ -133,10 +139,13 @@ actor UpdateChecker {
         return Self.runtimeInstallerInfo(from: dict, tag: tag)
     }
 
-    /// Parse "defenseclaw, version 0.7.0"-style output into "0.7.0".
+    /// Read only an explicit CLI/gateway version line. Runtime startup can
+    /// emit Go/Sonic warnings containing unrelated version numbers first.
     static func parseVersion(_ output: String) -> String? {
-        let pattern = #"[0-9]+(\.[0-9]+)+"#
-        guard let range = output.range(of: pattern, options: .regularExpression) else { return nil }
+        let pattern = #"(?im)^\s*defenseclaw(?:-gateway)?(?:,)?\s+(?:version\s+)?v?([0-9]+(?:\.[0-9]+)+(?:[-+][A-Za-z0-9][A-Za-z0-9.+-]*)?)(?=\s|$)"#
+        guard let expression = try? NSRegularExpression(pattern: pattern),
+              let match = expression.firstMatch(in: output, range: NSRange(output.startIndex..., in: output)),
+              let range = Range(match.range(at: 1), in: output) else { return nil }
         return String(output[range])
     }
 
