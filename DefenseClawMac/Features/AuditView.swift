@@ -101,6 +101,7 @@ struct AuditView: View {
                 table
             }
         }
+        .dcInspectorMainContent()
         .inspector(isPresented: Binding(
             get: { selectedEvent != nil },
             set: { if !$0 { selection = [] } }
