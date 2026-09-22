@@ -129,6 +129,8 @@ final class AppState {
     var installationReadOnlyReason: String? { installationContext.accessMode.reason }
     var installationContextSwitchAllowed: Bool {
         !installationBindInProgress
+            && !gatewayStartupInProgress
+            && !firstRunSetupInProgress
             && !updateOperationInProgress
             && !runtimeVersionCheckInProgress
             && !scanInFlight
@@ -165,6 +167,8 @@ final class AppState {
     /// First-run sheet dismissal for this launch (Open Activity / Esc); the
     /// sheet re-presents next launch while no configuration exists.
     var firstRunDismissed = false
+    var firstRunSetupInProgress = false
+    var firstRunSetupNeedsCompletion = false
     var runtimeBannerDismissed = false
     var runtimeUpgradeLogTail = ""
     @ObservationIgnored @AppStorage("lastRuntimeUpdateCheckTime") private var lastRuntimeUpdateCheckTime: Double = 0
@@ -290,6 +294,13 @@ final class AppState {
     @ObservationIgnored @AppStorage(SettingsKeys.notifyHigh) var notifyHigh = true
     @ObservationIgnored @AppStorage(SettingsKeys.notifyGatewayOffline) var notifyGatewayOffline = true
     @ObservationIgnored @AppStorage(SettingsKeys.seenAlertHighWater) var seenAlertHighWater: Double = 0
+
+    @ObservationIgnored private var hasStarted = false
+    @ObservationIgnored private let gatewayAutoStart = GatewayAutoStartCoordinator()
+    @ObservationIgnored private var commandGeneration = 0
+    private(set) var gatewayStartupInProgress = false
+    @ObservationIgnored private var gatewayStartupRunID: UUID?
+    private(set) var gatewayStartupError: String?
 
     private var pulseTask: Task<Void, Never>?
     private var wasReachable: Bool?
@@ -468,6 +479,9 @@ final class AppState {
         runtimeInstallState = .idle
         runtimeInstallRunID = nil
         firstRunDismissed = false
+        firstRunSetupInProgress = false
+        firstRunSetupNeedsCompletion = false
+        gatewayStartupError = nil
         runtimeBannerDismissed = false
         runtimeUpgradeLogTail = ""
         runtimeUpgradeLog = ""
@@ -514,8 +528,13 @@ final class AppState {
     }
 
     func start() {
+        // The main window can be recreated without relaunching the app. Do not
+        // restart a gateway the user stopped, or repeat authorization prompts.
+        guard !hasStarted else { return }
+        hasStarted = true
         Task {
             await bindSelectedInstallation()
+            await ensureGatewayStarted(origin: "App Launch")
             startPulse()
             // Local runtime detection is independent of the throttled GitHub
             // release lookup so every launch can report the installed CLI.
@@ -525,6 +544,109 @@ final class AppState {
             await checkForUpdates()
         }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { _, _ in }
+    }
+
+    private func gatewayStartupSnapshot() -> GatewayAutoStartSnapshot {
+        // Release lookups are read-only and run in the background during setup.
+        // Only downloading/installing can conflict with gateway startup.
+        let updateIsChangingFiles = [upgradeState, runtimeUpgradeState].contains { state in
+            switch state {
+            case .downloading, .installing: true
+            default: false
+            }
+        }
+        return GatewayAutoStartSnapshot(
+            generation: installationGeneration,
+            commandGeneration: commandGeneration,
+            enabled: GatewayAutoStartPreference.isEnabled(),
+            permitsMutation: installationMutationsAllowed,
+            configurationReady: installDetected && config.loadError.isEmpty
+                && config.rosterError.isEmpty
+                && selectedInstallationContext() == installationContext,
+            operationInProgress: installationBindInProgress || firstRunSetupInProgress
+                || runtimeInstallState.isRunning || updateIsChangingFiles
+                || activity.entries.contains(where: { $0.status.isActive })
+        )
+    }
+
+    /// One automatic attempt per app launch. First-run completion uses a new
+    /// coordinator because an explicit setup retry is a new user action.
+    /// The exact lifecycle command preserves administrator routing and Activity.
+    @discardableResult
+    func ensureGatewayStarted(
+        origin: String,
+        runID: UUID = UUID(),
+        afterSetup: Bool = false
+    ) async -> GatewayAutoStartCoordinator.Outcome {
+        guard !gatewayStartupInProgress else { return .skipped }
+        let snapshot = gatewayStartupSnapshot()
+        guard snapshot.isEligible else { return .skipped }
+        gatewayStartupInProgress = true
+        defer { gatewayStartupInProgress = false }
+        let coordinator = afterSetup ? GatewayAutoStartCoordinator() : gatewayAutoStart
+        let outcome = await coordinator.ensureStarted(
+            snapshot: snapshot,
+            currentSnapshot: { self.gatewayStartupSnapshot() },
+            probe: {
+                do {
+                    _ = try await self.gateway.health()
+                    return .running
+                } catch GatewayError.offline {
+                    // Absence is the only safe automatic-start signal. A
+                    // timeout, rejected token, or bad response can belong to
+                    // an already-running process that must not be replaced.
+                    guard await self.cli.locateBinary(named: "defenseclaw-gateway") != nil else {
+                        if self.gatewayStartupSnapshot() == snapshot {
+                            self.gatewayStartupError = "The installed gateway could not be found. Check the runtime installation in Settings → Connection."
+                        }
+                        return .unavailable
+                    }
+                    return .offline
+                } catch {
+                    return .unavailable
+                }
+            },
+            start: {
+                self.gatewayStartupRunID = runID
+                defer { self.gatewayStartupRunID = nil }
+                self.gatewayStartupError = nil
+                let expectedCommandGeneration = self.commandGeneration + 1
+                let result = await self.runCommand(
+                    runID: runID,
+                    title: "Start gateway automatically",
+                    binary: "defenseclaw-gateway",
+                    arguments: ["start"],
+                    category: "daemon",
+                    origin: origin,
+                    successEffects: ["Gateway started"],
+                    suggestedNextAction: "Review gateway health on Overview."
+                )
+                guard self.installationSnapshotIsCurrent(snapshot.generation),
+                      self.selectedInstallationContext() == self.installationContext,
+                      self.commandGeneration == expectedCommandGeneration else { return .skipped }
+                guard result.succeeded else {
+                    self.gatewayStartupError = result.cancelled
+                        ? "Automatic gateway start was cancelled. Use Start Gateway in Overview when you are ready."
+                        : "The gateway could not start automatically. Review the result in Activity, then use Start Gateway in Overview to retry."
+                    return result.cancelled ? .cancelled : .failed
+                }
+                do {
+                    let health = try await self.gateway.health()
+                    guard self.installationSnapshotIsCurrent(snapshot.generation),
+                          self.commandGeneration == expectedCommandGeneration else { return .skipped }
+                    self.health = health
+                    self.gatewayReachable = true
+                    self.lastGatewayError = nil
+                    return .started
+                } catch {
+                    guard self.installationSnapshotIsCurrent(snapshot.generation),
+                          self.commandGeneration == expectedCommandGeneration else { return .skipped }
+                    self.gatewayStartupError = "The start command completed, but gateway readiness could not be confirmed. Review Activity and refresh Overview."
+                    return .failed
+                }
+            }
+        )
+        return outcome
     }
 
     func startPulse() {
@@ -628,6 +750,7 @@ final class AppState {
             }
             gatewayReachable = true
             lastGatewayError = nil
+            gatewayStartupError = nil
         } catch let err as GatewayError {
             guard installationSnapshotIsCurrent(generation) else { return }
             if gatewayReachable, notifyGatewayOffline, case .offline = err {
@@ -780,6 +903,17 @@ final class AppState {
                 output: "Operation refused by the Mac app: wait for the installation switch to finish."
             )
         }
+        if let startupRunID = gatewayStartupRunID, startupRunID != runID,
+           binary == "defenseclaw-gateway", let action = arguments.first,
+           GatewayAdminAction(rawValue: action) != nil {
+            return CLIResult(
+                exitCode: 75,
+                output: "Automatic gateway startup is still running. Wait for its result or cancel it in Activity before starting, stopping, or restarting the gateway."
+            )
+        }
+        // Any user mutation during the startup probe supersedes that probe,
+        // including an explicit Stop that finishes before the probe returns.
+        if mutation { commandGeneration += 1 }
         let result = await activity.run(
             id: runID,
             title: title,
@@ -1584,7 +1718,10 @@ final class AppState {
             notices.append(.init(level: .info, message: "First time? Head to the Setup panel to configure DefenseClaw."))
         }
         if gatewayBroken {
-            notices.append(.init(level: .error, message: "Gateway is offline - use Start Gateway in Quick Actions"))
+            notices.append(.init(level: .error, message: gatewayStartupError
+                ?? (gatewayStartupInProgress
+                    ? "Starting the gateway automatically…"
+                    : "Gateway is offline - use Start Gateway in Quick Actions")))
         } else if gatewayStandalone {
             let details = health.subsystem("gateway")?.details ?? [:]
             if let hint = (details["hint"]?.nonEmpty ?? details["summary"]?.nonEmpty) {

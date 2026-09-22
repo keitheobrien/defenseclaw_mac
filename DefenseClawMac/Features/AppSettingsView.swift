@@ -411,6 +411,7 @@ private struct NotificationSettings: View {
 
 private struct ConnectionSettings: View {
     @Environment(AppState.self) private var appState
+    @AppStorage(GatewayAutoStartPreference.key) private var autoStartGateway = true
     @AppStorage("gatewayAdministratorMode") private var gatewayAdministratorMode = false
     @State private var administratorServiceStatus = GatewayAdministratorClient.serviceStatusDescription
     @AppStorage(CLIRunner.pathOverrideKey) private var binaryPath = ""
@@ -423,6 +424,11 @@ private struct ConnectionSettings: View {
             Section("Gateway") {
                 LabeledContent("Endpoint", value: "http://\(appState.config.gatewayHost):\(appState.config.gatewayPort)")
                 LabeledContent("Token", value: appState.config.gatewayToken == nil ? "not set" : "configured (hidden)")
+                Toggle("Start gateway automatically", isOn: $autoStartGateway)
+                    .disabled(!appState.installationMutationsAllowed)
+                Text("Starts the gateway after setup and whenever DefenseClawMac opens, including after an app update. A running gateway is left in place.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Toggle("Run gateway as administrator", isOn: $gatewayAdministratorMode)
                     .disabled(!appState.installationMutationsAllowed)
                 Text("Starts your installed gateway with macOS administrator authorization. Your runtime installation is preserved; background-service approval may also be required.")

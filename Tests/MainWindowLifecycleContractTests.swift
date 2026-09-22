@@ -22,6 +22,19 @@ enum MainWindowLifecycleContractTests {
             at: root.appendingPathComponent("DefenseClawMac/DesignSystem/InspectorLayoutPolicy.swift")
         )
 
+        expect(appSource.contains("AppDelegate.startApplication = { [weak state] in state?.start() }"),
+               "shared state must receive the application launch callback")
+        let didLaunch = appSource.components(separatedBy: "func applicationDidFinishLaunching").last ?? ""
+        expect(didLaunch.components(separatedBy: "/// The menu bar").first?.contains("Self.startApplication?()") == true,
+               "minimized and hidden launches must start without waiting for a window appearance")
+        let appStateSource = try source(at: root.appendingPathComponent("DefenseClawMac/App/AppState.swift"))
+        let startup = appStateSource.components(separatedBy: "func start() {").last?
+            .components(separatedBy: "private func gatewayStartupSnapshot").first ?? ""
+        let onceGuard = startup.range(of: "guard !hasStarted else { return }")?.lowerBound ?? startup.endIndex
+        let startupTask = startup.range(of: "Task {")?.lowerBound ?? startup.startIndex
+        expect(onceGuard < startupTask,
+               "application launch and repeated window appearances must be deduplicated before suspension")
+
         expect(appSource.contains(#"Window("DefenseClaw", id: "main")"#),
                "the primary dashboard must use a singleton Window scene")
         expect(!appSource.contains(#"WindowGroup("DefenseClaw", id: "main")"#),
