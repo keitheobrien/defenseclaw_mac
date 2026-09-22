@@ -102,6 +102,7 @@ struct LogsView: View {
                 logList
             }
         }
+        .dcInspectorMainContent()
         .inspector(isPresented: inspectorPresented) {
             if let selectedDisplayRow {
                 logInspector(selectedDisplayRow)

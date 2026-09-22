@@ -128,6 +128,7 @@ struct AlertsView: View {
                 }
             }
         }
+        .dcInspectorMainContent()
         .inspector(isPresented: Binding(
             get: { selectedRow != nil },
             set: { if !$0 { selection = [] } }

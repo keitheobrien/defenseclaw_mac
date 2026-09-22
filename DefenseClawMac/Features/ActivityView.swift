@@ -70,6 +70,7 @@ struct ActivityView: View {
             if tab == .commands { commandContent(selection: $activity.selectedID) }
             else { mutationContent }
         }
+        .dcInspectorMainContent()
         .inspector(isPresented: inspectorPresented) {
             if tab == .commands, let entry = selectedCommand {
                 commandInspector(entry)

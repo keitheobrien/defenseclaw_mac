@@ -92,8 +92,8 @@
       "upstream_sha256": "4c0b38e794fac694d0b558e254cd73976a9b7abeba4e044722aa317e88610f0c"
     },
     "DesignSystem/InspectorLayoutPolicy.swift": {
-      "local_sha256": "da74dd6ed89b96dc99237cda80878505044c4860ec3ba2c2de94d95a25c711f6",
-      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "local_sha256": "71a28f90fba65778f9bdb1982581a3ab34ea89fcef07f61ab9f1043754c95526",
+      "reason": "Reviewed retained standalone inspector widths of 250/320/380 points and a shared zero-minimum flexible frame around main content before native inspector presentation, preventing intrinsic-size constraint feedback on macOS 27 without changing data or gateway behavior.",
       "upstream_sha256": "c72c1c0e2a75d7ec150886e989a6f16a4d6e4afb001ce1e1bb770108d408af3f"
     },
     "DesignSystem/QuickHoverHelp.swift": {
@@ -106,10 +106,25 @@
       "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
       "upstream_sha256": "9118bdeedab6cd1a800f90473446ac55c582175eec4cb4a21bf2c70c888f3b95"
     },
+    "Features/ActivityView.swift": {
+      "local_sha256": "22a11ed0e153d3deaf66b996ec7237ee256fdcb29cd7468a3ab15d5f2e701d8b",
+      "reason": "Reviewed shared zero-minimum main-content sizing before the native Activity inspector to prevent constraint feedback; command and mutation selections, recorded activity, detail rendering, and inspector widths remain unchanged.",
+      "upstream_sha256": "cdc1eb0b55e663e1576e09dda141e73f6d123c21a9b56f4ab8dc75e23cb543e0"
+    },
+    "Features/AlertsView.swift": {
+      "local_sha256": "75144875e7933f187de3661d54395218b426b2c486870dea546220a011778135",
+      "reason": "Reviewed shared zero-minimum main-content sizing before the native Alerts inspector to prevent the reproduced AppKit constraint-update loop during selection and detail hydration; filtering, alert actions, and detail rendering remain unchanged.",
+      "upstream_sha256": "a9db5467e25ae5bd8cc99af1e60ee423445df6595e6e26388e84f5ab83c53df9"
+    },
     "Features/AppSettingsView.swift": {
       "local_sha256": "a5d4d908270d3f43f002b4711fd7b221274198cc40f1d25893e41f6d75c8b8e1",
       "reason": "Reviewed administrator-mode and macOS permission controls, installed gateway identity guidance, independent app/runtime updates, source-runtime preservation, and newer-than-published status.",
       "upstream_sha256": "b61388559d8814b8d56b324329f5e9b9414944f6b2f964794cc00a26aa1c60f2"
+    },
+    "Features/AuditView.swift": {
+      "local_sha256": "c8b206597894dc2ba16d427a19da90c5c019300e082aff0f3223007c6204164d",
+      "reason": "Reviewed shared zero-minimum main-content sizing before the native Audit inspector to prevent constraint feedback; event filtering, table selection, and detail rendering remain unchanged.",
+      "upstream_sha256": "060eae04cbb1106ba16abdd668c348f7a9bd26c9ce3890591da8b6385cd46d2b"
     },
     "Features/CommandPaletteView.swift": {
       "local_sha256": "3a2a6346d44cc337ada6a504e2876432732716097fdda7007eb438f3aa32f8c9",
@@ -127,8 +142,8 @@
       "upstream_sha256": "bc45a6e327b6fe20f42ca385dd6077ae441261f7663c5c68a45b021b74ead466"
     },
     "Features/LogsView.swift": {
-      "local_sha256": "3f9144c8c36f40526d7d2cd622e2606ae07c20eb22de4f6a4865b97b50567cfc",
-      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "local_sha256": "935e25fbdff8ca1560a13d25393ed2c80048b6b52544582f35e39ef265c66c31",
+      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening. Reviewed shared zero-minimum main-content sizing before the native Logs inspector to prevent constraint feedback; log streaming, selection, filtering, and detail rendering remain unchanged.",
       "upstream_sha256": "2d61cb0ae5f68c9d89c2d7268de5e0e9f498fde961a616670107650b7872b091"
     },
     "Features/MainWindow.swift": {
@@ -142,7 +157,7 @@
       "upstream_sha256": "d4fe640cd9f18b39308af0bbaeea3257b37e738e3429c50df7f862480191a775"
     }
   },
-  "mac_app_version": "1.1.23",
+  "mac_app_version": "1.1.24",
   "runtime_version": "0.8.10",
   "upstream_commit": "f05a9d3cb115c18f2c7903590a82dadf8835f2ae"
 }
