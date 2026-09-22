@@ -35,6 +35,7 @@ struct GatewayAdministratorTests {
         testNativeAuthorizationResults()
         await testRoutingAndInstallationBinding()
         await testRefusalBeforeAuthorization()
+        await testTaskCancellationAfterReservationRefusesDispatch()
         await testRebindCancelsPendingAuthorization()
         await testCancellationAfterDispatchWaitsForResult()
         print("GatewayAdministratorTests passed")
@@ -144,6 +145,37 @@ struct GatewayAdministratorTests {
         expect(cancelled.cancelled, "prelaunch cancellation preserved")
         let count = await probe.count()
         expect(count == 0, "no rejected request reaches authorization")
+    }
+
+    private static func testTaskCancellationAfterReservationRefusesDispatch() async {
+        let probe = InvocationProbe()
+        let runner = CLIRunner(context: context(), administratorEnabled: { true }, administratorExecutor: { action, context, _ in
+            await probe.record(action, context)
+            return CLIResult(exitCode: 0, output: "started via helper")
+        })
+        let id = UUID()
+        let task = Task {
+            let reserved = await runner.reserve(runID: id)
+            expect(reserved, "Activity reservation succeeds before task cancellation")
+            // Match cancellation after Activity reserves its row but before
+            // the runner enters its dispatch actor; do not use runner.cancel.
+            withUnsafeCurrentTask { $0?.cancel() }
+            return await runner.run(binary: "defenseclaw-gateway", arguments: ["start"], runID: id)
+        }
+        let result = await task.value
+        expect(result.exitCode == 130 && result.cancelled && !result.succeeded,
+               "cancelled caller gets the normal cancellation result before authorization")
+        let calls = await probe.count()
+        expect(calls == 0, "cancelled caller never invokes the administrator executor")
+        let disposition = await runner.cancel(runID: id)
+        expect(disposition == .notFound, "cancelled dispatch consumes its reservation without leaving a pending operation")
+
+        let reservedAgain = await runner.reserve(runID: id)
+        expect(reservedAgain, "cancelled reservation can be reused by a later independent operation")
+        let later = await runner.run(binary: "defenseclaw-gateway", arguments: ["start"], runID: id)
+        let laterCalls = await probe.count()
+        expect(later.succeeded && !later.cancelled && laterCalls == 1,
+               "fresh uncancelled operation is not blocked or cancelled by stale run state")
     }
 
     private static func awaitValue(_ value: Bool) -> Bool { value }

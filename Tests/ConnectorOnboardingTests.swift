@@ -19,6 +19,7 @@ import Foundation
 @main
 struct ConnectorOnboardingTests {
     static func main() {
+        validatesInitializationCompletionBeforeGatewayStart()
         parsesInstalledConnectorsInSupportedOrder()
         excludesProxyConnectorsFromDiscoveryAndInitialization()
         usesObserveAllWhenEverythingIsRegistered()
@@ -35,6 +36,36 @@ struct ConnectorOnboardingTests {
         rejectsMalformedCommandArguments()
         quotesDisplayedShellArguments()
         print("ConnectorOnboardingTests, CommandArgumentParser, and ShellQuoting tests passed")
+    }
+
+    private static func validatesInitializationCompletionBeforeGatewayStart() {
+        let ready = #"{"status":"ready","setup":[{"name":"Config","status":"pass"}],"readiness":[{"name":"Audit database","status":"pass"}]}"#
+        expect(ConnectorOnboarding.initializationFailure(from: ready) == nil,
+               "ready initialization permits the final gateway start")
+        expect(ConnectorOnboarding.initializationFailure(from: "WARNING: optional runtime diagnostic\n" + ready + "\n") == nil,
+               "ordinary diagnostic prefixes do not hide successful structured output")
+        let partial = #"{"status":"partial","setup":[{"name":"Sidecar","status":"skip"}],"readiness":[{"name":"Scanner","status":"warn"}]}"#
+        expect(ConnectorOnboarding.initializationFailure(from: partial) == nil,
+               "warnings and intentionally deferred gateway startup permit completion")
+
+        for output in [
+            #"{"status":"needs_attention","setup":[{"status":"fail"}],"readiness":[]}"#,
+            #"{"status":"ready","setup":[{"status":"fail"}],"readiness":[]}"#,
+            #"{"status":"partial","setup":[],"readiness":[{"status":"fail"}]}"#,
+            #"{"status":"unexpected","setup":[],"readiness":[]}"#,
+            #"{"status":"ready","setup":[{"status":"unexpected"}],"readiness":[]}"#,
+            #"{"status":"ready","setup":[{}],"readiness":[]}"#,
+            #"{"status":"ready","setup":{},"readiness":[]}"#,
+            #"{"status":"ready"}"#,
+            #"{"status":true,"setup":[],"readiness":[]}"#,
+            #"{"status":"ready","setup":[],"readiness":[]"#,
+            "unstructured success message",
+            ready + "\n" + partial,
+            "{invalid diagnostic}\n" + ready,
+        ] {
+            expect(ConnectorOnboarding.initializationFailure(from: output) != nil,
+                   "failed, ambiguous, or malformed reports cannot authorize a gateway start")
+        }
     }
 
     private static func parsesInstalledConnectorsInSupportedOrder() {
@@ -192,14 +223,18 @@ struct ConnectorOnboardingTests {
 
     private static func subsetWithoutGatewayStartNeverRestarts() {
         let plan = makePlan(
-            detected: ["codex", "claudecode", "cursor"],
-            registered: ["codex", "claudecode"],
+            detected: ["codex", "claudecode", "cursor", "devin"],
+            registered: ["codex", "claudecode", "cursor"],
             action: [],
             profile: "observe",
             startGateway: false
         )
-        expect(plan.count == 2, "subset registration adds one setup follow-up")
-        expect(plan[1].contains("--no-restart"), "a stopped gateway stays stopped")
+        expect(plan.count == 3, "subset registration adds both setup follow-ups")
+        expect(plan[0].contains("--no-start-gateway"), "init defers gateway startup to the app")
+        expect(plan[0].contains("--verify"), "deferred startup preserves configuration readiness checks")
+        expect(!plan[0].contains("--start-gateway"), "init cannot bypass administrator-aware lifecycle routing")
+        expect(plan.dropFirst().allSatisfy { $0.contains("--no-restart") },
+               "all connector setup steps leave gateway lifecycle to the final app action")
     }
 
     private static func emptyRegistrationDefensivelyRegistersEverything() {

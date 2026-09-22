@@ -957,6 +957,12 @@ actor CLIRunner {
                 break
             }
         }
+        // The caller can cancel between Activity reservation and this actor's
+        // dispatch. Consume the reservation above, then refuse before any
+        // subprocess or administrator request begins.
+        if Task.isCancelled {
+            return CLIResult(exitCode: 130, output: "Command cancelled before launch.\n", cancelled: true)
+        }
         if mutation, !installationContext.permitsMutation {
             let reason = installationContext.accessMode.reason ?? "This installation is read only."
             return CLIResult(exitCode: 77, output: "Operation refused by the Mac app: \(reason)")

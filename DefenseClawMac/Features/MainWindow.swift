@@ -76,7 +76,7 @@ struct MainWindow: View {
         // installDetected (that flag means "config.yaml exists" and feeds
         // guardrail notices).
         .sheet(isPresented: Binding(
-            get: { !appState.installDetected && !appState.firstRunDismissed },
+            get: { (!appState.installDetected || appState.firstRunSetupNeedsCompletion) && !appState.firstRunDismissed },
             set: { if !$0 { appState.firstRunDismissed = true } }
         )) {
             FirstRunView()

@@ -2,9 +2,14 @@
   "config_version": 8,
   "intentional_source_differences": {
     "App/AppState.swift": {
-      "local_sha256": "a3b164cc6a9a7f0c4c92dc96dbf7c72bf8408bb140e0fe36c53b1d17036bde2f",
-      "reason": "Reviewed standalone installation isolation and update flow: refresh explicit successful runtime identity, show newer published releases including source installs without replacing them, clear stale upgrade targets, and refresh release metadata once per launch.",
+      "local_sha256": "b2b416dfeb9124e043ab05ebe4a1700ee8513d53307f36850c153ab9bbd4addc",
+      "reason": "Reviewed standalone installation isolation and update flow: refresh explicit successful runtime identity, show newer published releases including source installs without replacing them, clear stale upgrade targets, and refresh release metadata once per launch. Reviewed default-enabled automatic startup after binding a configured installation, with health-before-start, recorded exact lifecycle routing, stale-command suppression, and overlap guards. Background release lookups do not consume the startup opportunity; active download, installation, and runtime-install operations defer it.",
       "upstream_sha256": "c67474d84431d4593309e786c3c6946f537c25696e8f813f7074342d4c895a02"
+    },
+    "App/DefenseClawApp.swift": {
+      "local_sha256": "701b128687779d50ab30c9f006566afc7d60c3b73802b485243a4b711c3f73f9",
+      "reason": "Reviewed starting the shared AppState from the main-actor applicationDidFinishLaunching callback so restored minimized or hidden windows do not defer gateway startup until window appearance. The callback captures the same state weakly, and AppState.start guards once before suspension, retaining the existing onAppear fallback without duplicate startup.",
+      "upstream_sha256": "000e523063ef39a8358d9feef22f3df559ff54c7d57155992e8edf380b65a7ae"
     },
     "DataLayer/AIDiscoveryActionPolicy.swift": {
       "local_sha256": "d44fdacb5eb796828da0979126de1d708cc705e515525795ad20e14ae5b2584e",
@@ -27,8 +32,8 @@
       "upstream_sha256": "7fe1c0362d5d70aee2244421a9552dd775dcedb8d96fc755968bf06dcda6d437"
     },
     "DataLayer/CLIRunner.swift": {
-      "local_sha256": "d942bb4e9d2847d207f8d6174a027f9b24ab066ddad37d6de98e887cac86787d",
-      "reason": "Reviewed standalone bounded execution and cancellation hardening plus exact Start/Stop/Restart administrator routing through the signed helper; reject extra arguments, stdin, environment, read-only selections, and overlapping privileged requests.",
+      "local_sha256": "b2de16f3caa14b63934ffe670f6418fa9d038786d78e2423d56d44934bfa9687",
+      "reason": "Reviewed standalone bounded execution and cancellation hardening plus exact Start/Stop/Restart administrator routing through the signed helper; reject extra arguments, stdin, environment, read-only selections, and overlapping privileged requests. Reviewed cancellation after consuming an Activity reservation and before dispatch, preventing an already-cancelled caller from launching a subprocess or administrator request.",
       "upstream_sha256": "adb86e4afa0c9a2b18b813ee7b01da40795ef8d876df3137e1dc9af65fc883a1"
     },
     "DataLayer/CatalogCLI.swift": {
@@ -46,6 +51,11 @@
       "reason": "Reviewed 235-entry upstream registry with the existing webhook usage correction and installed-runtime capability gates; new Kiro and existing Amp commands stay hidden unless setup help advertises support.",
       "upstream_sha256": "2676ba4a90c836d9c7a2909d45d9f33a71396ae1d70d7f4224ee5089b7d06dcd"
     },
+    "DataLayer/ConnectorOnboarding.swift": {
+      "local_sha256": "4c2d35192646a779e17eb8f50ae1b8fa31c5b26e4f0e67d83b2b4f2f768b2311",
+      "reason": "Reviewed fail-closed validation of the CLI structured initialization report before additive setup or gateway startup. Both the selected release and current upstream expose root status plus setup/readiness step arrays; only ready/partial reports with recognized nonfailure step statuses proceed, while malformed, incomplete, or failed reports remain visible to the user.",
+      "upstream_sha256": "b45494f0eeb93bb4df2bc2d570ab0131325278bb4eff3ac307fdf4941a180d57"
+    },
     "DataLayer/EventStreamReader.swift": {
       "local_sha256": "3a6cee46a20ca9968bd305bf0a56e8a925093571a5b32607d763cf4719e21081",
       "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
@@ -59,6 +69,11 @@
     "DataLayer/GatewayAdministratorClient.swift": {
       "local_sha256": "3e86c47ab6323184e619b72d199c186410932cf42e70d014b62c5944108c75c0",
       "reason": "Reviewed signed SMAppService registration and mutually authenticated XPC, native authorization handoff, pre-dispatch cancellation, explicit denied/cancelled/indeterminate results, and no password collection or arbitrary privileged execution.",
+      "upstream_sha256": "missing"
+    },
+    "DataLayer/GatewayAutoStartCoordinator.swift": {
+      "local_sha256": "7974b7b319cdb2b79d184753a560d714a2c10f58cc7d5ebc32c4ef9fdb5bdeac",
+      "reason": "Reviewed a shared default-enabled preference and main-actor coordinator with injected health/start operations. It makes one resolved decision per launch/installation generation, preserves a running gateway, starts only after confirmed offline status, defers ineligible or busy state, rejects stale snapshots, deduplicates concurrent triggers, and does not repeat failed or cancelled attempts.",
       "upstream_sha256": "missing"
     },
     "DataLayer/GatewayClient.swift": {
@@ -122,8 +137,8 @@
       "upstream_sha256": "a9db5467e25ae5bd8cc99af1e60ee423445df6595e6e26388e84f5ab83c53df9"
     },
     "Features/AppSettingsView.swift": {
-      "local_sha256": "a5d4d908270d3f43f002b4711fd7b221274198cc40f1d25893e41f6d75c8b8e1",
-      "reason": "Reviewed administrator-mode and macOS permission controls, installed gateway identity guidance, independent app/runtime updates, source-runtime preservation, and newer-than-published status.",
+      "local_sha256": "5c64ad6c7d03b5100eff2486aa415e551564e1134ea33d6f4b8aa4fc2c9b7ffe",
+      "reason": "Reviewed administrator-mode and macOS permission controls, installed gateway identity guidance, independent app/runtime updates, source-runtime preservation, and newer-than-published status. Reviewed the shared default-enabled Start gateway automatically preference with explicit opt-out persistence and managed/read-only control restrictions.",
       "upstream_sha256": "b61388559d8814b8d56b324329f5e9b9414944f6b2f964794cc00a26aa1c60f2"
     },
     "Features/AuditView.swift": {
@@ -142,8 +157,8 @@
       "upstream_sha256": "ab59e479aaaaa7c3ab305646876288752324c736a012a7865ce0107826916d2a"
     },
     "Features/FirstRunView.swift": {
-      "local_sha256": "df0639fee26dd85bb067d0f637ae2ea54d341c79a6437ba1da4c81470efd72ba",
-      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "local_sha256": "edf2f442dcada9473dcd67911cf8cd0ff9565095ce4b377af2a15492231b2c2e",
+      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening. Reviewed the shared automatic-start preference, structured setup-completion validation, cancellable setup task, and awaited configuration reload before a separately recorded final gateway start. The setup sheet remains open on failed, cancelled, or deferred completion, and initializer-side gateway startup is disabled so administrator routing remains consistent.",
       "upstream_sha256": "bc45a6e327b6fe20f42ca385dd6077ae441261f7663c5c68a45b021b74ead466"
     },
     "Features/LogsView.swift": {
@@ -152,13 +167,13 @@
       "upstream_sha256": "2d61cb0ae5f68c9d89c2d7268de5e0e9f498fde961a616670107650b7872b091"
     },
     "Features/MainWindow.swift": {
-      "local_sha256": "2a68d965106d1bb7bfd033771b87dbfdaa20cf36d474b565401841653927eb93",
-      "reason": "Reviewed runtime release prompt for source-managed installations: show newer release availability and notes but withhold app-managed replacement commands.",
+      "local_sha256": "92d6d0aa4803841e766d951f859ae55c62d66c73f2f924dc1032951177672360",
+      "reason": "Reviewed runtime release prompt for source-managed installations: show newer release availability and notes but withhold app-managed replacement commands. Reviewed keeping the first-run sheet open while setup still needs completion, even when initialization has already created a configuration file.",
       "upstream_sha256": "d2c8055f1f4422fa98f53bcda1e3356a7ffcedf2a7035fb74dceaf495bc4c51c"
     },
     "Features/OverviewView.swift": {
-      "local_sha256": "e2abbcbd283ace09a9303f4a37b5b1603852c43b8836213c000001c147e0a5c0",
-      "reason": "Reviewed visible administrator gateway Start/Stop/Restart controls routed through recorded CLIRunner execution, read-only restrictions, and background/FDA guidance.",
+      "local_sha256": "13b05f0edae7cc9250dd5eb33ee0cbe07053731ca74e517041f98b42d2746cc7",
+      "reason": "Reviewed visible administrator gateway Start/Stop/Restart controls routed through recorded CLIRunner execution, read-only restrictions, and background/FDA guidance. Reviewed disabling overlapping manual gateway lifecycle controls while automatic startup is in progress; existing recorded commands and administrator behavior remain unchanged.",
       "upstream_sha256": "d4fe640cd9f18b39308af0bbaeea3257b37e738e3429c50df7f862480191a775"
     }
   },

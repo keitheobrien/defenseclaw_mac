@@ -67,10 +67,14 @@ struct FirstRunView: View {
     @State private var failMode = "open"
     @State private var humanApproval = false
     @State private var hiltSeverity = "HIGH"
-    @State private var startGateway = false
+    @AppStorage(GatewayAutoStartPreference.key) private var startGateway = true
     @State private var verify = true
     @State private var runID: UUID?
     @State private var exitCode: Int32?
+    @State private var setupInProgress = false
+    @State private var setupTask: Task<Void, Never>?
+    @State private var setupCancellationRequested = false
+    @State private var setupError: String?
     @State private var installerRelease: RuntimeInstallerInfo?
     @State private var installerMetadataLoading = false
     @State private var installerMetadataError: String?
@@ -81,8 +85,8 @@ struct FirstRunView: View {
         return appState.activity.entries.first { $0.id == runID }
     }
 
-    private var isRunning: Bool { runningEntry?.status.isActive == true }
-    private var isCancelling: Bool { runningEntry?.status == .cancelling }
+    private var isRunning: Bool { setupInProgress || runningEntry?.status.isActive == true }
+    private var isCancelling: Bool { setupCancellationRequested || runningEntry?.status == .cancelling }
     private var isFinishing: Bool { runningEntry?.status == .finishing }
 
     private var runtimeInstallIsCancelling: Bool {
@@ -136,6 +140,7 @@ struct FirstRunView: View {
 
             if cliFound {
                 setupForm
+                    .disabled(setupInProgress)
             } else if runtimeDetected {
                 existingRuntimeNotice
             } else {
@@ -145,9 +150,15 @@ struct FirstRunView: View {
             if let entry = runningEntry {
                 execution(entry)
             }
+            if let setupError {
+                Label(setupError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(Cisco.orange)
+            }
 
             HStack {
                 Button("Check Again") { checkInstallation() }
+                    .disabled(setupInProgress)
                 Button("Continue Without Setup") {
                     // Plain dismissal — installDetected stays honest (it
                     // means "config.yaml exists" and feeds Overview notices).
@@ -168,7 +179,11 @@ struct FirstRunView: View {
                     .disabled(runtimeInstallIsCancelling || runtimeInstallIsFinishing)
                 } else if isRunning {
                     Button(role: .destructive) {
-                        if let runID { appState.activity.cancel(runID) }
+                        setupCancellationRequested = true
+                        setupTask?.cancel()
+                        if let runID, runningEntry?.status.isActive == true {
+                            appState.activity.cancel(runID)
+                        }
                     } label: {
                         Label(
                             isCancelling ? "Cancelling..." : (isFinishing ? "Finishing..." : "Cancel"),
@@ -305,7 +320,11 @@ struct FirstRunView: View {
                 }
             }
             Section("Finish") {
-                Toggle("Start gateway after setup", isOn: $startGateway)
+                Toggle("Start gateway automatically", isOn: $startGateway)
+                    .disabled(!appState.installationMutationsAllowed || setupInProgress)
+                Text("Starts the gateway after setup and whenever DefenseClawMac opens, including after an app update. You can change this in Settings → Connection.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Toggle("Verify readiness", isOn: $verify)
             }
         }
@@ -479,8 +498,21 @@ struct FirstRunView: View {
     }
 
     private func initialize() {
+        guard !setupInProgress else { return }
+        setupInProgress = true
+        appState.firstRunSetupNeedsCompletion = true
+        appState.firstRunSetupInProgress = true
         exitCode = nil
-        Task {
+        setupError = nil
+        setupCancellationRequested = false
+        setupTask = Task {
+            defer {
+                setupTask = nil
+                setupInProgress = false
+                setupCancellationRequested = false
+                appState.firstRunSetupInProgress = false
+            }
+            guard !stopIfSetupCancelled() else { return }
             let plan = ConnectorOnboarding.initializationPlan(
                 detectedConnectors: detectedConnectors,
                 registeredConnectors: registeredConnectors,
@@ -492,11 +524,14 @@ struct FirstRunView: View {
                 failMode: failMode,
                 humanApproval: humanApproval,
                 hiltSeverity: hiltSeverity,
-                startGateway: startGateway,
+                // Gateway lifecycle is dispatched separately so administrator
+                // mode and Activity recording apply to the final start.
+                startGateway: false,
                 verify: verify
             )
 
             for (index, arguments) in plan.enumerated() {
+                guard !stopIfSetupCancelled() else { return }
                 let id = UUID()
                 runID = id // the execution box and Cancel track the current step
                 let isLast = index == plan.count - 1
@@ -510,22 +545,78 @@ struct FirstRunView: View {
                     category: "setup",
                     origin: "First Run",
                     successEffects: arguments.first == "init"
-                        ? ["Configuration initialized"] + (startGateway ? ["Gateway started"] : [])
+                        ? ["Configuration initialized"]
                         : [],
                     suggestedNextAction: isLast ? "Review system health on Overview." : "",
-                    refreshOnSuccess: isLast
+                    // Reload once, below, before the final startup check. An
+                    // unawaited reload here can race that check's context bind.
+                    refreshOnSuccess: false
                 )
+                guard !stopIfSetupCancelled() else { return }
                 exitCode = result.exitCode
                 guard result.succeeded else { return }
+                if arguments.first == "init",
+                   let failure = ConnectorOnboarding.initializationFailure(from: result.output) {
+                    exitCode = 1
+                    setupError = failure
+                    return
+                }
             }
 
+            guard !stopIfSetupCancelled() else { return }
             let config = await appState.configStore.reload()
+            guard !stopIfSetupCancelled() else { return }
+            let installPresent = await appState.configStore.installPresent
+            guard !stopIfSetupCancelled() else { return }
             appState.config = config
-            appState.installDetected = await appState.configStore.installPresent
+            appState.installDetected = installPresent
             await appState.gateway.update(config: config)
+            guard !stopIfSetupCancelled() else { return }
+            guard appState.installDetected, config.loadError.isEmpty else {
+                exitCode = 1
+                setupError = "Setup finished, but its configuration could not be loaded. Review Setup Output before trying again. The gateway was not started."
+                return
+            }
+            appState.firstRunSetupInProgress = false
+            if startGateway {
+                let id = UUID()
+                runID = id
+                let outcome = await appState.ensureGatewayStarted(origin: "First Run", runID: id, afterSetup: true)
+                guard !stopIfSetupCancelled() else { return }
+                switch outcome {
+                case .failed:
+                    exitCode = 1
+                    setupError = "Setup completed, but the gateway could not start. Review the output in Activity, then try Start Gateway from Overview."
+                    return
+                case .cancelled:
+                    exitCode = 130
+                    setupError = "Setup completed. Gateway startup was cancelled; use Start Gateway from Overview when ready."
+                    return
+                case .skipped:
+                    if startGateway {
+                        exitCode = 1
+                        setupError = "Setup completed, but automatic gateway startup was deferred. Review Activity and the selected installation, then use Start Gateway from Overview."
+                        return
+                    }
+                case .alreadyRunning, .started:
+                    break
+                }
+            }
             await appState.pulse()
+            guard !stopIfSetupCancelled() else { return }
+            appState.firstRunSetupNeedsCompletion = false
             if appState.installDetected { dismiss() }
         }
+    }
+
+    /// A setup run can be between recorded commands or awaiting the gateway
+    /// probe when Cancel is pressed. Task cancellation covers those gaps;
+    /// Activity cancellation still stops a command that has already launched.
+    private func stopIfSetupCancelled() -> Bool {
+        guard Task.isCancelled else { return false }
+        exitCode = 130
+        setupError = "Setup was cancelled. Review Activity for completed steps and Overview for gateway status before continuing."
+        return true
     }
 
     private func checkInstallation() {

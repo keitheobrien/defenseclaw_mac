@@ -205,7 +205,7 @@ struct OverviewView: View {
                         Label(gatewayActionTitle(appState.gatewayReachable ? "Restart" : "Start"),
                               systemImage: appState.gatewayReachable ? "arrow.clockwise.circle" : "play.circle")
                     }
-                    .disabled(!appState.installationMutationsAllowed)
+                    .disabled(!appState.installationMutationsAllowed || appState.gatewayStartupInProgress)
                     Button {
                         runDoctor()
                     } label: {
@@ -228,11 +228,11 @@ struct OverviewView: View {
                         Button(gatewayActionTitle("Restart")) {
                             runGatewayLifecycle("restart")
                         }
-                        .disabled(!appState.installationMutationsAllowed)
+                        .disabled(!appState.installationMutationsAllowed || appState.gatewayStartupInProgress)
                         Button(gatewayActionTitle("Stop")) {
                             runGatewayLifecycle("stop")
                         }
-                        .disabled(!appState.installationMutationsAllowed)
+                        .disabled(!appState.installationMutationsAllowed || appState.gatewayStartupInProgress)
                         Divider()
                         Button("Open Command Palette") { appState.commandPalettePresented = true }
                     } label: {
