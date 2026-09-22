@@ -36,9 +36,15 @@ struct LogsView: View {
     @State private var displayRows: [DisplayLogRow] = []
     @State private var selectedRowID: String?
     @State private var autoScroll = true
-    /// True while the last row is on screen; auto-scroll only then, so live
-    /// tail updates never yank the view away from what the user is reading.
-    @State private var isAtBottom = true
+    /// Row visibility callbacks run during AppKit row reuse. Keep this
+    /// imperative scroll-follow flag outside SwiftUI observation so those
+    /// callbacks cannot invalidate the List while it is laying out rows.
+    @State private var scrollFollow = ScrollFollowState()
+
+    @MainActor
+    private final class ScrollFollowState {
+        var isAtBottom = true
+    }
 
     // Superset of the TUI's Verdicts-stream chips (ACTION_FILTERS: block/alert/
     // confirm/allow; EVENT_TYPE_FILTERS: verdict/judge/lifecycle/error/
@@ -102,11 +108,11 @@ struct LogsView: View {
                 logList
             }
         }
-        .dcInspectorMainContent()
-        .inspector(isPresented: inspectorPresented) {
-            if let selectedDisplayRow {
-                logInspector(selectedDisplayRow)
-                    .dcInspectorColumnWidth()
+        .dcInspector(isPresented: inspectorPresented) {
+            VStack(spacing: 0) {
+                if let selectedDisplayRow {
+                    logInspector(selectedDisplayRow)
+                }
             }
         }
         .searchable(text: $search, placement: .toolbar, prompt: "Search log lines")
@@ -272,8 +278,8 @@ struct LogsView: View {
                 }
                 .id(item.id)
                 .listRowSeparator(.hidden)
-                .onAppear { if item.id == displayRows.last?.id { isAtBottom = true } }
-                .onDisappear { if item.id == displayRows.last?.id { isAtBottom = false } }
+                .onAppear { if item.id == displayRows.last?.id { scrollFollow.isAtBottom = true } }
+                .onDisappear { if item.id == displayRows.last?.id { scrollFollow.isAtBottom = false } }
                 .contextMenu {
                     Button("Copy Summary") { copyToPasteboard(item.message) }
                     Button("Copy JSON") { copyToPasteboard(row.rawJSON) }
@@ -283,7 +289,7 @@ struct LogsView: View {
             .onChange(of: displayRows.count) { _, _ in
                 // Follow the tail only while the user is already at the bottom —
                 // never steal the scroll position mid-read.
-                if autoScroll, isAtBottom, let last = displayRows.last {
+                if autoScroll, scrollFollow.isAtBottom, let last = displayRows.last {
                     var transaction = Transaction()
                     transaction.disablesAnimations = true
                     withTransaction(transaction) {

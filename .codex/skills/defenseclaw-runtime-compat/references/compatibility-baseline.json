@@ -91,9 +91,14 @@
       "reason": "Reviewed standalone signed app-update protocol and preservation policy; parse only explicit DefenseClaw version lines so Go warnings cannot become versions, and compare release numbers without downgrading equal/newer source builds.",
       "upstream_sha256": "4c0b38e794fac694d0b558e254cd73976a9b7abeba4e044722aa317e88610f0c"
     },
+    "DesignSystem/Components.swift": {
+      "local_sha256": "1b22808bfe17933acf44840ce1dcd9bda802b7163375f623200f0704e0b9183b",
+      "reason": "Reviewed removal of the native inspector column-width modifier now that the shared inline detail pane owns its explicit 320-point width; unrelated shared components remain unchanged.",
+      "upstream_sha256": "a62ad0fb01f7ecbdb7bbd7c67830dd7c0485ed99da931006467d83dc06cbcb0d"
+    },
     "DesignSystem/InspectorLayoutPolicy.swift": {
-      "local_sha256": "71a28f90fba65778f9bdb1982581a3ab34ea89fcef07f61ab9f1043754c95526",
-      "reason": "Reviewed retained standalone inspector widths of 250/320/380 points and a shared zero-minimum flexible frame around main content before native inspector presentation, preventing intrinsic-size constraint feedback on macOS 27 without changing data or gateway behavior.",
+      "local_sha256": "1c848f727c50fa1327da556523db5c84be4eb4abf7b4c48c499ecec023f1fc79",
+      "reason": "Reviewed shared inline detail presentation with flexible zero-minimum main content, a divider, and a fixed 320-point accessible Details region. This avoids the nested native inspector split controller that continued to fail optimized full-app selection/resize checks. Escape dismisses through the presentation binding; the former 250-to-380-point native resizing affordance is intentionally removed. Outer navigation and window sizing remain unchanged.",
       "upstream_sha256": "c72c1c0e2a75d7ec150886e989a6f16a4d6e4afb001ce1e1bb770108d408af3f"
     },
     "DesignSystem/QuickHoverHelp.swift": {
@@ -107,13 +112,13 @@
       "upstream_sha256": "9118bdeedab6cd1a800f90473446ac55c582175eec4cb4a21bf2c70c888f3b95"
     },
     "Features/ActivityView.swift": {
-      "local_sha256": "22a11ed0e153d3deaf66b996ec7237ee256fdcb29cd7468a3ab15d5f2e701d8b",
-      "reason": "Reviewed shared zero-minimum main-content sizing before the native Activity inspector to prevent constraint feedback; command and mutation selections, recorded activity, detail rendering, and inspector widths remain unchanged.",
+      "local_sha256": "350a93ad05896e2e12ef218c213b0ae234084469ce36c2287a924bdd3e19de38",
+      "reason": "Reviewed adoption of the shared inline detail pane with an unconditional content container. Command and mutation selections, recorded activity, and detail rendering are retained; presentation now uses the common fixed 320-point pane, existing close actions, and Escape dismissal instead of a nested native inspector.",
       "upstream_sha256": "cdc1eb0b55e663e1576e09dda141e73f6d123c21a9b56f4ab8dc75e23cb543e0"
     },
     "Features/AlertsView.swift": {
-      "local_sha256": "75144875e7933f187de3661d54395218b426b2c486870dea546220a011778135",
-      "reason": "Reviewed shared zero-minimum main-content sizing before the native Alerts inspector to prevent the reproduced AppKit constraint-update loop during selection and detail hydration; filtering, alert actions, and detail rendering remain unchanged.",
+      "local_sha256": "e05687e14ee038eac03801c0fa07a9086c6c6edac150257e0086ea67e977457b",
+      "reason": "Reviewed adoption of the shared inline detail pane with an unconditional content container to avoid the reproduced nested-inspector layout failures. Filtering, alert actions, selection, asynchronous detail hydration, and detail rendering are retained; presentation now uses the common fixed 320-point pane, existing close actions, and Escape dismissal.",
       "upstream_sha256": "a9db5467e25ae5bd8cc99af1e60ee423445df6595e6e26388e84f5ab83c53df9"
     },
     "Features/AppSettingsView.swift": {
@@ -122,8 +127,8 @@
       "upstream_sha256": "b61388559d8814b8d56b324329f5e9b9414944f6b2f964794cc00a26aa1c60f2"
     },
     "Features/AuditView.swift": {
-      "local_sha256": "c8b206597894dc2ba16d427a19da90c5c019300e082aff0f3223007c6204164d",
-      "reason": "Reviewed shared zero-minimum main-content sizing before the native Audit inspector to prevent constraint feedback; event filtering, table selection, and detail rendering remain unchanged.",
+      "local_sha256": "a410bad5626b5611a8e0147d9bc39e028dd6665a15520108322f8e682e8fcce6",
+      "reason": "Reviewed adoption of the shared inline detail pane with an unconditional content container. Event filtering, table selection, and detail rendering are retained; presentation now uses the common fixed 320-point pane, existing close actions, and Escape dismissal instead of a nested native inspector.",
       "upstream_sha256": "060eae04cbb1106ba16abdd668c348f7a9bd26c9ce3890591da8b6385cd46d2b"
     },
     "Features/CommandPaletteView.swift": {
@@ -142,8 +147,8 @@
       "upstream_sha256": "bc45a6e327b6fe20f42ca385dd6077ae441261f7663c5c68a45b021b74ead466"
     },
     "Features/LogsView.swift": {
-      "local_sha256": "935e25fbdff8ca1560a13d25393ed2c80048b6b52544582f35e39ef265c66c31",
-      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening. Reviewed shared zero-minimum main-content sizing before the native Logs inspector to prevent constraint feedback; log streaming, selection, filtering, and detail rendering remain unchanged.",
+      "local_sha256": "008b238ec45def01e297060b5ccd849f35c994caef7d19121c64443d9e79b88e",
+      "reason": "Reviewed standalone identity and retained compatibility behavior, plus adoption of the shared inline 320-point detail pane with an unconditional content container. The imperative at-bottom flag is held in a private non-observable reference retained by State so native row-reuse callbacks do not publish view invalidation. Existing streaming, filters, selection, row geometry, last-row checks, and auto-scroll guard are preserved. This tracker change does not assert Logs-only crash causality; native-inspector testing still failed with the tracker.",
       "upstream_sha256": "2d61cb0ae5f68c9d89c2d7268de5e0e9f498fde961a616670107650b7872b091"
     },
     "Features/MainWindow.swift": {

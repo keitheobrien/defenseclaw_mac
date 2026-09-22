@@ -36,10 +36,10 @@ enum RuntimeUICompatibilityContractTests {
                    "the Logs UI must not expose the unsupported runtime 0.8.10 surface: \(unsupportedSurface)")
         }
 
-        expect(logsSource.contains(".inspector(isPresented:"),
-               "the Logs view must retain the native inspector crash hotfix")
-        expect(logsSource.contains(".dcInspectorColumnWidth()"),
-               "the Logs inspector must retain its bounded column width")
+        expect(logsSource.contains(".dcInspector(isPresented:"),
+               "the Logs view must use the shared inline detail pane")
+        expect(!logsSource.contains(".inspector(isPresented:"),
+               "the Logs view must not restore the nested native inspector crash path")
 
         print("RuntimeUICompatibilityContractTests passed")
     }

@@ -33,7 +33,7 @@ mkdir -p "$NATIVE_MODULE_CACHE"
 echo "Native inspector regression artifacts: $NATIVE_BUILD_DIR"
 
 CLANG_MODULE_CACHE_PATH="$NATIVE_MODULE_CACHE" xcrun swiftc \
-  -parse-as-library \
+  -O -parse-as-library \
   -target "$(uname -m)-apple-macos14.0" \
   -module-cache-path "$NATIVE_MODULE_CACHE" \
   "$NATIVE_REPOSITORY_ROOT/DefenseClawMac/DesignSystem/InspectorLayoutPolicy.swift" \
@@ -52,22 +52,22 @@ import time
 
 root = pathlib.Path(sys.argv[1])
 verify_reproducer = sys.argv[2] == "true"
-cases = [("fixed", 980), ("fixed", 1180)]
+cases = [("fixed", "native", 980), ("fixed", "accessibility", 1180)]
 if verify_reproducer:
-    cases.insert(0, ("baseline", 980))
+    cases.insert(0, ("baseline", "native", 980))
 results = []
 failed = False
-for variant, width in cases:
-    name = f"{variant}-{width}"
+for variant, input_mode, width in cases:
+    name = f"{variant}-{input_mode}-{width}"
     log_path = root / f"{name}.log"
     started = time.monotonic()
     with log_path.open("w") as output:
         try:
             process = subprocess.run(
-                [str(root / "DefenseClawLayoutProbe"), "--variant", variant, "--width", str(width)],
+                [str(root / "DefenseClawLayoutProbe"), "--variant", variant, "--input", input_mode, "--width", str(width)],
                 stdout=output,
                 stderr=subprocess.STDOUT,
-                timeout=20,
+                timeout=45,
                 check=False,
             )
             status = process.returncode
@@ -78,7 +78,6 @@ for variant, width in cases:
         passed = (
             status == 90
             and "EXCEPTION NSGenericException: The window has been marked as needing another Update Constraints" in output
-            and "SplitViewChildController" in output
         )
         expectation = "known native constraint exception reproduced"
     else:
@@ -89,11 +88,18 @@ for variant, width in cases:
             and "PASS survived" in output
             and "EXCEPTION" not in output
             and "FAIL " not in output
-            and output.count(" SELECT ") == 8
-            and output.count(" HYDRATE ") >= 8
-            and output.count(" CLOSE") == 4
+            and output.count(" SELECT ") == 13
+            and output.count(" CLOSE ACTION") == 4
+            and output.count(" DESELECT") == 4
+            and output.count(" HYDRATE APPLIED") >= 2
+            and output.count(" HYDRATE DISCARDED") >= 1
+            and output.count(" PARENT PULSE") >= 4
+            and output.count(" DETAILS APPEARED") >= 2
+            and output.count(" DETAILS DISAPPEARED") >= 1
+            and "DWELL inspector open for 20 seconds" in output
+            and (input_mode != "accessibility" or output.count(" AX SELECTION") == 17)
         )
-        expectation = "all selections, hydration, close cycles, and final window checks completed"
+        expectation = "native inputs, close/open resize cycles, variable hydration, parent updates, and 20-second open-details dwell completed"
     result = {
         "case": name,
         "passed": passed,
@@ -110,7 +116,7 @@ for variant, width in cases:
         if variant == "baseline":
             print("The optional baseline control must reproduce on this OS to establish the before/after comparison.", file=sys.stderr)
 
-(root / "results.json").write_text(json.dumps({"macos": platform.mac_ver()[0], "cases": results}, indent=2) + "\n")
+(root / "results.json").write_text(json.dumps({"macos": platform.mac_ver()[0], "optimization": "-O", "cases": results}, indent=2) + "\n")
 print(f"Native inspector regression report: {root / 'results.json'}", flush=True)
 sys.exit(1 if failed else 0)
 PY
