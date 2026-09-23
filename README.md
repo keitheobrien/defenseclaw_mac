@@ -1,6 +1,8 @@
 # DefenseClaw for macOS
 
-Native menu-bar companion app for [cisco-ai-defense/defenseclaw](https://github.com/cisco-ai-defense/defenseclaw), replicating the `defenseclaw tui` terminal dashboard with SwiftUI and Swift Charts.
+Native macOS companion for [cisco-ai-defense/defenseclaw](https://github.com/cisco-ai-defense/defenseclaw), with a menu-bar dashboard, runtime monitoring, configuration, and gateway controls built with SwiftUI and Swift Charts.
+
+**Current release: [1.1.25](https://github.com/keitheobrien/defenseclaw_mac/releases/tag/v1.1.25)** — automatic gateway startup is enabled by default after setup and whenever the app opens, including after an app update.
 
 ![Overview dashboard](images/overview.png)
 
@@ -18,14 +20,38 @@ The General settings view shows app visibility controls plus independent update 
 
 ## Install
 
-Every release on [Releases](https://github.com/keitheobrien/defenseclaw_mac/releases) ships two artifacts (arm64, macOS 14+), each signed with Developer ID, hardened-runtime, and notarized by Apple with a stapled ticket:
+Requires **Apple silicon (arm64) and macOS 14 or later**. Both downloads are signed with Developer ID, use the hardened runtime, and are notarized by Apple with stapled tickets.
 
-- **`DefenseClawMac-<version>.dmg` — unified installer (recommended).** The app with the matching DefenseClaw runtime release bundled inside, verified against the upstream artifacts (SHA-256 + Sigstore) at build time. Mount, drag `DefenseClawMac.app` to Applications, open it, and click **Install DefenseClaw Runtime** on first run — the app lays the bundled runtime into `~/.defenseclaw` and `~/.local/bin` natively, with every step recorded in the Activity panel. No remote script is ever executed; network is used to fetch the CLI's Python dependencies from PyPI, plus uv and Python 3.12 only if this Mac doesn't have them. Settings ▸ General also offers **Install / Repair Runtime** (configuration, tokens, and the audit database are never touched, and a source-checkout dev install is never overwritten).
-- **`DefenseClawMac-<version>.zip` — app only.** The traditional build for Macs that already have (or separately manage) the DefenseClaw runtime. Unzip, move `DefenseClawMac.app` to `/Applications`, open normally.
+| Download 1.1.25 | Use when |
+| --- | --- |
+| [App-only ZIP](https://github.com/keitheobrien/defenseclaw_mac/releases/download/v1.1.25/DefenseClawMac-1.1.25.zip) | DefenseClaw is already installed or managed separately. This is also the built-in app updater's download. |
+| [Unified installer DMG](https://github.com/keitheobrien/defenseclaw_mac/releases/download/v1.1.25/DefenseClawMac-1.1.25.dmg) | Setting up a new Mac. Includes the authenticated DefenseClaw 0.8.10 runtime payload for a fresh installation. |
 
-Gateway Start, Stop, and Restart can use macOS administrator authorization when **Run gateway as administrator** is enabled in Overview or Settings → Connection. The signed background helper is registered on first use; macOS controls administrator approval. See [administrator gateway setup](docs/GATEWAY_ADMINISTRATOR.md) for background-service approval and Runtime Full Disk Access requirements.
+See [all releases](https://github.com/keitheobrien/defenseclaw_mac/releases) and the [1.1.25 verification record](docs/RELEASE_VERIFICATION_1.1.25_2026-09-22.md) for checksums and verification details.
 
-The app self-updates: Settings ▸ General checks GitHub Releases for a newer Mac-app build (the small app-only zip) and can download, swap, and relaunch in place, and it separately tracks the installed DefenseClaw runtime (`defenseclaw upgrade`). The two update tracks stay independent — the DMG's bundled payload is used only for first install or repair. Both check paths are throttled to respect GitHub's unauthenticated rate limit.
+1. Open the DMG or unzip the app, then move **DefenseClawMac.app** to **Applications**.
+2. Open the app. If no runtime is installed, choose **Install DefenseClaw Runtime** from the unified build, then complete setup. Runtime installation uses the bundled payload and downloads Python dependencies, plus uv and Python 3.12 when needed.
+3. Leave **Start gateway automatically** enabled. After successful setup, the app starts the gateway and checks its health. Results appear in **Activity**.
+
+An existing runtime is preserved. Runtime upgrades use the built-in authenticated updater; custom, partial, and source/development installations receive guidance instead of being overwritten by the bundled installer. Updating the Mac app does not replace the installed runtime.
+
+### Automatic gateway startup
+
+**Start gateway automatically** defaults to on in first-run setup and **Settings → Connection**. Each app launch checks gateway health and starts an offline gateway, including when the app relaunches after an update or restores a minimized window. An already-running gateway stays in place.
+
+Turning the setting off is remembered across launches and updates. Stopping the gateway manually keeps it stopped for the current app session; a new app launch checks again if automatic startup is enabled. Failed or canceled startup appears in Activity and can be retried from Overview. See [automatic startup behavior](docs/GATEWAY_AUTO_START.md) for details.
+
+### Administrator mode
+
+For a compatible runtime that needs machine-wide observation, enable **Run gateway as administrator** in **Overview** or **Settings → Connection**. Start, Stop, Restart, and automatic startup then use the signed background helper and macOS administrator authorization. Administrator mode is separate from automatic startup and is off by default.
+
+macOS may require background-service approval. Runtime **agent actions** also require Full Disk Access for `/usr/bin/eslogger`; access granted to a terminal does not transfer to the background gateway. Follow [administrator gateway setup](docs/GATEWAY_ADMINISTRATOR.md) for the approval steps and compatible-runtime requirements.
+
+### Updates
+
+Choose **DefenseClawMac → Check for Updates…** or use **Settings → General**. The app checks GitHub's latest release on launch and then every six hours; a manual check runs immediately. A newer Mac-app release offers the app-only ZIP, which the updater verifies, installs, and relaunches.
+
+The DefenseClaw runtime has a separate update control. Older installed runtimes are offered the published runtime upgrade; equal or newer versions stay in place. Source/development installations remain protected from replacement. If an update check is unavailable, check network access to GitHub and retry; an unavailable check does not mean the installation is up to date.
 
 ## Build & run
 
@@ -43,7 +69,7 @@ Build from source — no prebuilt binary ships in the git tree itself (`build/` 
 
 ## What it connects to
 
-A local DefenseClaw installation (companion app — it does not manage the backend):
+The selected local DefenseClaw installation supplies monitoring data. The app routes configuration and gateway controls through that installation:
 
 | Source | Path / address |
 |---|---|
@@ -61,14 +87,14 @@ Everything the app reads is unauthenticated (`/health`) or read-only; all state 
 
 ## Panels
 
-Sidebar groups mirror the TUI's 13 panels:
+The sidebar groups 14 panels:
 
 - **Monitor** — Overview, Alerts, Logs, Audit, Activity
 - **Govern** — Skills, MCPs, Plugins, Tools
-- **Discover** — Inventory, AI Discovery, Registries
+- **Discover** — Inventory, AI Discovery, Runtime, Registries
 - **Configure** — Setup
 
-⌘1–⌘9, ⌘0, and ⌘⇧1–⌘⇧3 jump between panels; ⌘R refreshes; ⌘F searches. A command palette (⌘⇧P) exposes the full DefenseClaw command registry, and ⌃M cycles the shared connector filter across every view.
+⌘1–⌘9, ⌘0, and ⌘⇧1–⌘⇧3 jump between monitoring, governance, and discovery panels; ⌘⇧S opens Setup; ⌘R refreshes; ⌘F searches. A command palette (⌘⇧P) exposes the full DefenseClaw command registry, and ⌃M cycles the shared connector filter across every view.
 
 ### Overview
 
@@ -80,9 +106,15 @@ The dashboard is a faithful port of the TUI's boxes:
 
 Select a connector (the roster chip, a Connectors-table row, or ⌃M) and the Configuration, Enforcement, and Scanners boxes rescope to that connector — including per-connector AIBOM coverage.
 
+### Runtime
+
+The **AI Discovery Runtime** panel shows coverage for inference heartbeat, shadow egress, and agent actions, along with process/connection counts and reported findings. Availability depends on the selected gateway's capabilities and permissions; administrator approval alone does not add sensors to an older runtime. The bundled published 0.8.10 payload predates these newer Runtime planes, so a compatible newer/source runtime is required to use them.
+
+**No findings** means nothing met the reporting floor in the returned snapshot. It is not a list of every observed process or connection. Check the coverage indicators as well: missing or stale coverage must not be treated as a clean result. **Refresh** reads the latest snapshot; **Poll now** requests a new scan when the runtime supports it.
+
 ### Setup
 
-**22 native setup wizards** covering the runtime's setup surface — connector (single / batch / remove), credentials, LLM, guardrail, guardrail actions, skill & MCP scanners, gateway, Cisco AI Defense, Splunk, Splunk dashboards, Galileo, local observability, observability destinations, webhooks, notification routing, custom providers, registries, trusted paths, token rotation, AI discovery, and sandbox. Each wizard is a native form that ends in a review step showing the exact `defenseclaw …` command before it runs, prefills from your live config where relevant so an untouched apply never resets current settings, and validates required fields before Run.
+**Native setup wizards** covering the runtime's setup surface — connector (single / batch / remove), credentials, LLM, guardrail, guardrail actions, skill & MCP scanners, gateway, Cisco AI Defense, Splunk, Splunk dashboards, Galileo, local observability, observability destinations, webhooks, notification routing, custom providers, registries, trusted paths, token rotation, AI discovery, and sandbox. Each wizard is a native form that ends in a review step showing the exact `defenseclaw …` command before it runs, prefills from your live config where relevant so an untouched apply never resets current settings, and validates required fields before Run.
 
 **Config editor** — a typed, sectioned editor whose catalog comes from the installed runtime. A built-in catalog is the offline fallback. Uncatalogued keys remain read-only until the runtime exposes a supported writer. Edits are diff-reviewed with secrets masked, saved through the runtime CLI, and queue a gateway restart.
 
