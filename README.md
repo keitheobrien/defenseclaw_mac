@@ -2,8 +2,6 @@
 
 Native macOS companion for [cisco-ai-defense/defenseclaw](https://github.com/cisco-ai-defense/defenseclaw), with a menu-bar dashboard, runtime monitoring, configuration, and gateway controls built with SwiftUI and Swift Charts.
 
-**Current release: [1.1.25](https://github.com/keitheobrien/defenseclaw_mac/releases/tag/v1.1.25)** — automatic gateway startup is enabled by default after setup and whenever the app opens, including after an app update.
-
 ![Overview dashboard](images/overview.png)
 
 The app lives in the menu bar: the shield icon shows live gateway/alert state, and the popover gives an at-a-glance summary with recent findings — even while the main window is closed or minimized.
@@ -22,12 +20,10 @@ The General settings view shows app visibility controls plus independent update 
 
 Requires **Apple silicon (arm64) and macOS 14 or later**. Both downloads are signed with Developer ID, use the hardened runtime, and are notarized by Apple with stapled tickets.
 
-| Download 1.1.25 | Use when |
+| Package | Use when |
 | --- | --- |
-| [App-only ZIP](https://github.com/keitheobrien/defenseclaw_mac/releases/download/v1.1.25/DefenseClawMac-1.1.25.zip) | DefenseClaw is already installed or managed separately. This is also the built-in app updater's download. |
-| [Unified installer DMG](https://github.com/keitheobrien/defenseclaw_mac/releases/download/v1.1.25/DefenseClawMac-1.1.25.dmg) | Setting up a new Mac. Includes the authenticated DefenseClaw 0.8.10 runtime payload for a fresh installation. |
-
-See [all releases](https://github.com/keitheobrien/defenseclaw_mac/releases) and the [1.1.25 verification record](docs/RELEASE_VERIFICATION_1.1.25_2026-09-22.md) for checksums and verification details.
+| **App-only ZIP** | DefenseClaw is already installed or managed separately. This is also the built-in app updater's download. |
+| **Unified installer DMG** | Setting up a new Mac. Includes an authenticated DefenseClaw runtime payload for a fresh installation. |
 
 1. Open the DMG or unzip the app, then move **DefenseClawMac.app** to **Applications**.
 2. Open the app. If no runtime is installed, choose **Install DefenseClaw Runtime** from the unified build, then complete setup. Runtime installation uses the bundled payload and downloads Python dependencies, plus uv and Python 3.12 when needed.
@@ -49,23 +45,27 @@ macOS may require background-service approval. Runtime **agent actions** also re
 
 ### Updates
 
-Choose **DefenseClawMac → Check for Updates…** or use **Settings → General**. The app checks GitHub's latest release on launch and then every six hours; a manual check runs immediately. A newer Mac-app release offers the app-only ZIP, which the updater verifies, installs, and relaunches.
+Choose **DefenseClawMac → Check for Updates…** or use **Settings → General**. The app checks GitHub for updates on launch and then every six hours; a manual check runs immediately. When a newer Mac-app version is available, you can use the updater to download and verify the app-only ZIP, install it, and relaunch the app.
 
-The DefenseClaw runtime has a separate update control. Older installed runtimes are offered the published runtime upgrade; equal or newer versions stay in place. Source/development installations remain protected from replacement. If an update check is unavailable, check network access to GitHub and retry; an unavailable check does not mean the installation is up to date.
+The DefenseClaw runtime has a separate update control. Older installed runtimes are offered the available runtime upgrade; equal or newer versions stay in place. Source/development installations remain protected from replacement. If an update check is unavailable, check network access to GitHub and retry; an unavailable check does not mean the installation is up to date.
 
 ## Build & run
 
-Build from source — no prebuilt binary ships in the git tree itself (`build/` is gitignored):
+Requires macOS 14+ and Xcode 16+. Open `DefenseClawMac.xcodeproj` in Xcode and Run, or build and launch a local development app with:
 
-- Open `DefenseClawMac.xcodeproj` in Xcode (16+) and Run, **or** from the command line:
-  ```
-  xcodebuild -project DefenseClawMac.xcodeproj -scheme DefenseClawMac -configuration Release build
-  ```
-  then copy the app out of derived data:
-  ```
-  open "$(xcodebuild -project DefenseClawMac.xcodeproj -scheme DefenseClawMac -configuration Release -showBuildSettings | awk '/BUILT_PRODUCTS_DIR/{print $3; exit}')/DefenseClawMac.app"
-  ```
-- Requires macOS 14+ and Xcode 16+. No external dependencies (SQLite via the SDK's `SQLite3` module; YAML via a built-in minimal parser). Local source builds are for development; distribution releases are built separately with Developer ID signing and Apple notarization.
+```bash
+./script/build_and_run.sh --verify
+```
+
+The script builds a Debug app and confirms that it remains running after launch. For a compile-only check without a distribution certificate:
+
+```bash
+xcodebuild -project DefenseClawMac.xcodeproj -scheme DefenseClawMac \
+  -configuration Debug -destination 'generic/platform=macOS' \
+  CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= build
+```
+
+The app uses the SDK's SQLite3 module and a built-in YAML parser. Generated build output is ignored by Git. Local development builds use ad-hoc signing; administrator gateway mode requires a signed packaged app.
 
 ## What it connects to
 
@@ -108,7 +108,7 @@ Select a connector (the roster chip, a Connectors-table row, or ⌃M) and the Co
 
 ### Runtime
 
-The **AI Discovery Runtime** panel shows coverage for inference heartbeat, shadow egress, and agent actions, along with process/connection counts and reported findings. Availability depends on the selected gateway's capabilities and permissions; administrator approval alone does not add sensors to an older runtime. The bundled published 0.8.10 payload predates these newer Runtime planes, so a compatible newer/source runtime is required to use them.
+The **AI Discovery Runtime** panel shows coverage for inference heartbeat, shadow egress, and agent actions, along with process/connection counts and reported findings. Availability depends on the selected gateway's capabilities and permissions; administrator approval alone does not add sensors to an older runtime. Unsupported gateways show guidance in the Runtime panel.
 
 **No findings** means nothing met the reporting floor in the returned snapshot. It is not a list of every observed process or connection. Check the coverage indicators as well: missing or stale coverage must not be treated as a clean result. **Refresh** reads the latest snapshot; **Poll now** requests a new scan when the runtime supports it.
 
