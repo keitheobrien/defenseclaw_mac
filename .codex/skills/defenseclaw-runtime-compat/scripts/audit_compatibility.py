@@ -110,7 +110,9 @@ def load_registry(path: Path) -> tuple[tuple[object, ...], ...]:
 
 
 def swift_string(value: str) -> str:
-    return json.dumps(value, ensure_ascii=True)
+    escapes = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t"}
+    return '"' + "".join(escapes.get(char, f"\\u{{{ord(char):04x}}}" if ord(char) < 32 else char)
+                         for char in value) + '"'
 
 
 def render_registry(entries: tuple[tuple[object, ...], ...]) -> str:
@@ -187,7 +189,13 @@ def parse_upstream_version(upstream: Path) -> str:
 
 
 def parse_config_version(upstream: Path) -> int:
-    text = (upstream / "cli/defenseclaw/migrations.py").read_text(encoding="utf-8")
+    config = upstream / "cli/defenseclaw/config.py"
+    if config.exists():
+        current = re.search(r"^CURRENT_CONFIG_VERSION\s*=\s*(\d+)\s*$", config.read_text(encoding="utf-8"), re.MULTILINE)
+        if current:
+            return int(current.group(1))
+    migrations = upstream / "cli/defenseclaw/migrations.py"
+    text = migrations.read_text(encoding="utf-8") if migrations.exists() else ""
     match = re.search(r"SUPPORTED_CONFIG_VERSIONS:\s*tuple\[int, \.\.\.\]\s*=\s*\(([^)]*)\)", text)
     if not match:
         raise ValueError("SUPPORTED_CONFIG_VERSIONS not found")
@@ -522,7 +530,9 @@ def run_tests(audit: Audit, mac_root: Path) -> None:
     for script in scripts:
         name = script.name
         result = run([str(script)], cwd=mac_root, timeout=180)
-        if result.returncode == 0:
+        if result.returncode == 0 and "SKIP " in result.stdout:
+            audit.warn(f"script/{name}: skipped; requires separate opt-in verification")
+        elif result.returncode == 0:
             audit.pass_(f"script/{name}")
         else:
             tail = " | ".join(result.stdout.strip().splitlines()[-3:])

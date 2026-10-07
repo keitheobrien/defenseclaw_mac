@@ -50,6 +50,7 @@ struct ResourceBoundaryTests {
         try await gatewayAcceptsLegitimateResponse()
         try await gatewayDecodesOptionalAIDiscoveryMetadata()
         try await gatewayRuntimeCapabilities()
+        try await gatewaySandboxCapabilities()
         try await gatewayRejectsDeclaredOversizedResponse()
         try await gatewayStopsUnknownLengthOversizedResponse()
         print("Resource boundary tests passed")
@@ -317,6 +318,37 @@ struct ResourceBoundaryTests {
             try await client.scanAIRuntime()
             preconditionFailure("read-only client must refuse Runtime mutations")
         } catch { }
+        StubGatewayURLProtocol.body = Data("{}".utf8)
+    }
+
+    private static func gatewaySandboxCapabilities() async throws {
+        let client = gatewayClient(maximumResponseBytes: 4096)
+        StubGatewayURLProtocol.headers = ["Content-Type": "application/json"]
+        StubGatewayURLProtocol.statusCode = 200
+        StubGatewayURLProtocol.body = Data(#"{"enabled":false,"available":false}"#.utf8)
+        let status = try await client.sandboxStatus()
+        expect(!status.enabled && !status.available, "disabled sandbox coverage is explicit")
+        StubGatewayURLProtocol.body = Data("{}".utf8)
+        do {
+            _ = try await client.sandboxStatus()
+            preconditionFailure("malformed sandbox status cannot appear disabled")
+        } catch GatewayError.badResponse { }
+        do {
+            _ = try await client.sandboxes()
+            preconditionFailure("missing sandbox list cannot appear empty")
+        } catch GatewayError.badResponse { }
+        StubGatewayURLProtocol.body = Data(#"{"sandboxes":[]}"#.utf8)
+        let rows = try await client.sandboxes()
+        expect(rows.isEmpty, "valid empty sandbox list remains empty")
+        StubGatewayURLProtocol.statusCode = 403
+        StubGatewayURLProtocol.body = Data(#"{"error":"policy denies sandbox approval"}"#.utf8)
+        do {
+            _ = try await client.sandboxApprovals()
+            preconditionFailure("sandbox policy refusal must surface")
+        } catch GatewayError.degraded(let code, _) {
+            expect(code == 403, "sandbox policy refusal is not mislabeled as an expired login")
+        }
+        StubGatewayURLProtocol.statusCode = 200
         StubGatewayURLProtocol.body = Data("{}".utf8)
     }
 

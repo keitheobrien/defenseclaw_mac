@@ -107,7 +107,8 @@ actor GatewayClient {
             guard let http = response as? HTTPURLResponse else {
                 throw GatewayError.badResponse("non-HTTP response")
             }
-            if http.statusCode == 401 || http.statusCode == 403 {
+            let sandboxRefusal = http.statusCode == 403 && path.hasPrefix(Self.sandboxPrefix)
+            if http.statusCode == 401 || (http.statusCode == 403 && !sandboxRefusal) {
                 throw GatewayError.unauthorized
             }
             let expectedLength = http.expectedContentLength
@@ -592,6 +593,49 @@ actor GatewayClient {
 
     func scanAIRuntime() async throws {
         try await post("/api/v1/ai-usage/runtime/scan", timeout: Self.scanTimeout)
+    }
+
+    // MARK: - OpenShell sandboxes (/api/v1/sandbox, internal/openshell/sandboxapi)
+
+    static let sandboxPrefix = "/api/v1/sandbox/"
+    // Stop and undo run the CLI (SandboxesView), which says when the stop
+    // ends a detached run and remembers what a copy held as it stopped; the
+    // daemon's stop keeps the run's log for `sandbox logs`.
+
+    func sandboxStatus() async throws -> SandboxStatus {
+        let json = try await getJSON("/api/v1/sandbox/status")
+        guard let object = json as? [String: Any], object["enabled"] is Bool,
+              object["available"] is Bool else {
+            throw GatewayError.badResponse("/api/v1/sandbox/status missing coverage state")
+        }
+        return SandboxDecoding.status(from: json)
+    }
+
+    func sandboxes() async throws -> [SandboxRow] {
+        let json = try await getJSON("/api/v1/sandbox/sandboxes")
+        guard (json as? [String: Any])?["sandboxes"] is [Any] else {
+            throw GatewayError.badResponse("/api/v1/sandbox/sandboxes has no sandboxes list")
+        }
+        return SandboxDecoding.sandboxes(from: json)
+    }
+
+    func sandboxApprovals() async throws -> [SandboxAsk] {
+        let json = try await getJSON("/api/v1/sandbox/approvals")
+        guard (json as? [String: Any])?["approvals"] is [Any] else {
+            throw GatewayError.badResponse("/api/v1/sandbox/approvals has no approvals list")
+        }
+        return SandboxDecoding.approvals(from: json)
+    }
+
+    /// Buffered activity after `since` (the app polls; the TUI streams).
+    func sandboxActivity(since: Int) async throws -> [SandboxActivity] {
+        let items = since > 0 ? [URLQueryItem(name: "since", value: String(since))] : []
+        let data = try await request("GET", "/api/v1/sandbox/activity", queryItems: items)
+        let json = try JSONSerialization.jsonObject(with: data)
+        guard (json as? [String: Any])?["events"] is [Any] else {
+            throw GatewayError.badResponse("/api/v1/sandbox/activity has no events list")
+        }
+        return SandboxDecoding.activity(from: json)
     }
 
     func aiComponents() async throws -> [AIComponent] {

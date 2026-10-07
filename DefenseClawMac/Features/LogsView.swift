@@ -40,6 +40,7 @@ struct LogsView: View {
     /// imperative scroll-follow flag outside SwiftUI observation so those
     /// callbacks cannot invalidate the List while it is laying out rows.
     @State private var scrollFollow = ScrollFollowState()
+    @State private var showRedactionPolicy = false
 
     @MainActor
     private final class ScrollFollowState {
@@ -152,6 +153,16 @@ struct LogsView: View {
         }
     }
 
+    private var redactionButton: some View {
+        Button("Redaction policy…") { showRedactionPolicy = true }
+            .controlSize(.small)
+            .disabled(appState.runtimeSetupCommands?.contains("redaction") != true)
+            .help("Inspect or apply the v8 redaction policy")
+            .sheet(isPresented: $showRedactionPolicy) {
+                RedactionPolicySheet().environment(appState)
+            }
+    }
+
     private var filterBar: some View {
         @Bindable var state = appState
         return VStack(alignment: .leading, spacing: 6) {
@@ -159,10 +170,12 @@ struct LogsView: View {
                 HStack(spacing: 12) {
                     streamPicker.frame(maxWidth: 440)
                     Spacer()
+                    redactionButton
                     ConnectorFilterChip(names: appState.activeConnectorNames, selection: $state.connectorFilter)
                 }
                 HStack(spacing: 10) {
                     streamPicker.frame(maxWidth: .infinity)
+                    redactionButton
                     ConnectorFilterChip(names: appState.activeConnectorNames, selection: $state.connectorFilter)
                 }
             }

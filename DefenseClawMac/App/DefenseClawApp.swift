@@ -20,6 +20,7 @@
 
 import SwiftUI
 import ServiceManagement
+import UserNotifications
 
 @main
 struct DefenseClawApp: App {
@@ -126,6 +127,12 @@ struct DefenseClawApp: App {
                     } else if index == 9 {
                         Button(panel.title) { appState.selectedPanel = panel }
                             .keyboardShortcut("0", modifiers: .command)
+                    } else if panel == .policies {
+                        Button(panel.title) { appState.selectedPanel = panel }
+                            .keyboardShortcut("p", modifiers: [.command, .option])
+                    } else if panel == .sandboxes {
+                        Button(panel.title) { appState.selectedPanel = panel }
+                            .keyboardShortcut("b", modifiers: [.command, .shift])
                     } else if panel == .setup {
                         // ⌘⇧3 would collide with macOS's screenshot hotkey.
                         Button(panel.title) { appState.selectedPanel = panel }
@@ -187,8 +194,12 @@ private struct MenuBarIcon: View {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     static var recreateMainWindow: (() -> Void)?
+    static var sandboxNotificationHandler: ((String, [AnyHashable: Any]) -> Void)?
+    static let sandboxBlockedCategory = SandboxNotificationCategories.blocked
+    static let sandboxReviewCategory = SandboxNotificationCategories.review
+    static let sandboxUnblockAction = SandboxNotificationCategories.unblockAction
     static var startApplication: (() -> Void)?
     private var miniaturizeObserver: NSObjectProtocol?
 
@@ -198,6 +209,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Gateway startup belongs to the application lifecycle, independently.
         Self.startApplication?()
         DCToolbarQuickHelpMonitor.shared.start()
+        let notifications = UNUserNotificationCenter.current()
+        notifications.setNotificationCategories(SandboxNotificationCategories.all)
+        notifications.delegate = self
 
         // Optional hide-instead-of-minimize behavior. Standard macOS minimize is
         // the default; people can opt into a menu-bar-only transition in Settings.
@@ -234,6 +248,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag { AppDelegate.openMainWindow() }
         return true
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse
+    ) async {
+        let content = response.notification.request.content
+        guard SandboxNotificationCategories.isSandboxCategory(content.categoryIdentifier) else { return }
+        let action = response.actionIdentifier
+        let host = (content.userInfo["host"] as? String) ?? ""
+        let sandbox = (content.userInfo["sandbox"] as? String) ?? ""
+        await MainActor.run {
+            Self.sandboxNotificationHandler?(action, ["host": host, "sandbox": sandbox])
+        }
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter, willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        SandboxNotificationCategories.isSandboxCategory(notification.request.content.categoryIdentifier)
+            ? [.banner, .list, .sound] : []
     }
 
     func applyActivationPolicy() {

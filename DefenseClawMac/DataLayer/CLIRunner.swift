@@ -582,9 +582,8 @@ actor CLIRunner {
         locateBinary(named: "defenseclaw")
     }
 
-    /// Prefer the selected installation's interpreter, then the interpreter
-    /// adjacent to the resolved CLI. The second path covers source and PATH
-    /// installs whose venv does not live below DEFENSECLAW_HOME.
+    /// Keep catalog imports on the selected CLI's interpreter, including a
+    /// Settings CLI override. Fall back to the context for standalone launchers.
     func locateRuntimePython() -> String? {
         Self.runtimePythonCandidates(
             contextPythonPath: installationContext.runtimePythonURL.path,
@@ -596,7 +595,7 @@ actor CLIRunner {
         contextPythonPath: String,
         selectedCLIPath: String?
     ) -> [String] {
-        var candidates = [contextPythonPath]
+        var candidates: [String] = []
         if let selectedCLIPath, !selectedCLIPath.isEmpty {
             let resolvedCLI = URL(fileURLWithPath: selectedCLIPath)
                 .resolvingSymlinksInPath()
@@ -608,6 +607,7 @@ actor CLIRunner {
                 candidates.append(siblingPython)
             }
         }
+        if !candidates.contains(contextPythonPath) { candidates.append(contextPythonPath) }
         return candidates
     }
 

@@ -155,7 +155,8 @@ actor AuditStore {
                 }
                 let rowBytes = row.values.reduce(0) { $0 + (($1 as? String)?.utf8.count ?? 8) }
                 if rowBytes > maximumBytes - retainedBytes {
-                    lastQuerySucceeded = true // A valid bounded prefix, not a failed read.
+                    // A first row that exceeds the budget is not an empty history.
+                    lastQuerySucceeded = !rows.isEmpty
                     break
                 }
                 retainedBytes += rowBytes

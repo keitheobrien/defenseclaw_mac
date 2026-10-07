@@ -25,7 +25,7 @@ struct MainWindow: View {
 
     private let groups: [(String, [PanelID])] = [
         ("Monitor", [.overview, .alerts, .logs, .audit, .activity]),
-        ("Govern", [.skills, .mcps, .plugins, .tools]),
+        ("Govern", [.skills, .mcps, .plugins, .tools, .policies, .sandboxes]),
         ("Discover", [.inventory, .aiDiscovery, .aiRuntime, .registries]),
         ("Configure", [.setup]),
     ]
@@ -173,6 +173,8 @@ struct MainWindow: View {
         case .aiRuntime: AIRuntimeView()
         case .registries: RegistriesView()
         case .setup: SetupView()
+        case .policies: PoliciesView()
+        case .sandboxes: SandboxesView()
         }
     }
 
