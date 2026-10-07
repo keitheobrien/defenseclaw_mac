@@ -389,6 +389,7 @@ private struct NotificationSettings: View {
     @AppStorage(SettingsKeys.notifyCritical) private var notifyCritical = true
     @AppStorage(SettingsKeys.notifyHigh) private var notifyHigh = true
     @AppStorage(SettingsKeys.notifyGatewayOffline) private var notifyGatewayOffline = true
+    @AppStorage(SettingsKeys.notifySandboxEvents) private var notifySandboxEvents = true
     @AppStorage(SettingsKeys.seenAlertHighWater) private var seenAlertHighWater: Double = 0
 
     var body: some View {
@@ -397,6 +398,7 @@ private struct NotificationSettings: View {
                 Toggle("Notify on CRITICAL findings", isOn: $notifyCritical)
                 Toggle("Notify on HIGH findings", isOn: $notifyHigh)
                 Toggle("Notify when gateway goes offline / recovers", isOn: $notifyGatewayOffline)
+                Toggle("Notify on sandbox blocks and approval requests", isOn: $notifySandboxEvents)
                 Text("Notifications include target and severity only — never prompt or payload contents.")
                     .font(.caption)
                     .foregroundStyle(.secondary)

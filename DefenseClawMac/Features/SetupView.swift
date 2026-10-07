@@ -92,6 +92,7 @@ struct WizardDefinition: Identifiable {
 struct SetupView: View {
     @Environment(AppState.self) private var appState
     @State private var activeWizard: WizardDefinition?
+    @State private var showRedactionPolicy = false
 
     var body: some View {
         ScrollView {
@@ -105,6 +106,10 @@ struct SetupView: View {
                         .background(Cisco.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
                 }
                 Text("Setup Areas").font(.title3.weight(.semibold))
+                Button { showRedactionPolicy = true } label: {
+                    Label("Redaction Policy — inspect profiles, buckets, destinations, and routes", systemImage: "eye.slash")
+                }
+                .disabled(appState.runtimeSetupCommands?.contains("redaction") != true)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 230), spacing: 12)], spacing: 12) {
                     ForEach(TUIWizards.all) { wizard in
                         Button {
@@ -146,6 +151,9 @@ struct SetupView: View {
         .sheet(item: $activeWizard) { wizard in
             WizardSheet(wizard: wizard)
                 .environment(appState)
+        }
+        .sheet(isPresented: $showRedactionPolicy) {
+            RedactionPolicySheet().environment(appState)
         }
     }
 }
@@ -537,7 +545,7 @@ struct ConfigEditorView: View {
 
     private var sections: [ConfigEditorSection] {
         var all = dynamicSections
-            ?? ConfigEditorCatalog.sections(activeConnectors: appState.activeConnectorNames)
+            ?? ConfigEditorCatalog.sections(activeConnectors: appState.activeConnectorNames, config: appState.config.raw)
         if let uncatalogued { all.append(uncatalogued) }
         return all
     }
@@ -863,7 +871,7 @@ struct ConfigEditorView: View {
             } else {
                 guard installationGeneration == appState.installationGeneration else { return }
                 freshDynamicSections = nil
-                active = ConfigEditorCatalog.sections(activeConnectors: appState.activeConnectorNames)
+                active = ConfigEditorCatalog.sections(activeConnectors: appState.activeConnectorNames, config: appState.config.raw)
                 freshCatalogSource = "built-in catalog (runtime dump unavailable)"
                 for field in active.flatMap(\.fields) where !field.key.isEmpty {
                     if field.kind == .password { continue }

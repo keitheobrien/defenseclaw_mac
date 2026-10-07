@@ -1,0 +1,59 @@
+# Compatibility audit passed
+
+- **PASS** upstream mainline 95159fdb849d265f31e31a0ef92eff5e40ebbee0 reports runtime 1.0.0
+- **PASS** upstream supports config_version 8; Mac app version is 1.1.26
+- **PASS** command palette matches all 253 upstream entries
+- **PASS** removed config-v7 flags, keys, and commands are absent
+- **PASS** combined installer uses signed schema-2 protected runtime artifacts
+- **PASS** installed runtime 1.0.0 matches upstream (/Users/kobrien/.local/bin/defenseclaw)
+- **PASS** installed runtime source matches upstream commit (/Users/kobrien/git/defenseclaw)
+- **PASS** runtime help contract is available for setup observability
+- **PASS** runtime help contract is available for agent discovery enable
+- **PASS** runtime help contract is available for setup provider add
+- **PASS** runtime help contract is available for setup webhook add
+- **PASS** installed runtime dependencies satisfy upstream requirements
+- **PASS** runtime setup catalog exposes 24 sections
+- **PASS** wrote reviewed baseline with 38 intentional source differences
+- **PASS** script/test_ai_discovery_actions.sh
+- **PASS** script/test_ai_model_discovery.sh
+- **PASS** script/test_alert_queue_projection.sh
+- **PASS** script/test_app_state_signal_safety.sh
+- **PASS** script/test_canonical_event_history.sh
+- **PASS** script/test_catalog_action_safety.sh
+- **PASS** script/test_cli_cancellation.sh
+- **PASS** script/test_connector_inventory_compatibility.sh
+- **PASS** script/test_connector_onboarding.sh
+- **PASS** script/test_dependency_lock_validator.sh
+- **PASS** script/test_first_run_connector_selection.sh
+- **PASS** script/test_gateway_admin_helper.sh
+- **PASS** script/test_gateway_admin_packaging.sh
+- **PASS** script/test_gateway_administrator.sh
+- **PASS** script/test_gateway_auto_start.sh
+- **PASS** script/test_gateway_signing_contract.sh
+- **PASS** script/test_inspector_layout_policy.sh
+- **WARN** script/test_inspector_native_layout.sh: skipped; requires separate opt-in verification
+- **PASS** script/test_installation_context.sh
+- **PASS** script/test_inventory_capability_warnings.sh
+- **PASS** script/test_local_model_discovery.sh
+- **PASS** script/test_main_window_lifecycle.sh
+- **PASS** script/test_numeric_safety.sh
+- **PASS** script/test_output_safety.sh
+- **PASS** script/test_overview_read_only_guidance.sh
+- **PASS** script/test_policy_catalog.sh
+- **PASS** script/test_policy_models.sh
+- **PASS** script/test_redaction_commands.sh
+- **PASS** script/test_resource_boundaries.sh
+- **PASS** script/test_runtime_compat_audit.sh
+- **PASS** script/test_runtime_contract_surfaces.sh
+- **PASS** script/test_runtime_install_filesystem.sh
+- **PASS** script/test_runtime_protected_artifact.sh
+- **PASS** script/test_runtime_ui_compatibility.sh
+- **PASS** script/test_sandbox_models.sh
+- **PASS** script/test_secret_file_safety.sh
+- **PASS** script/test_setup_definitions_parity.sh
+- **PASS** script/test_structured_detail_parser.sh
+- **PASS** script/test_supply_chain_safety.sh
+- **PASS** script/test_toolbar_help.sh
+- **PASS** script/test_update_checker_safety.sh
+- **PASS** script/test_update_checker_verification.sh
+- **PASS** Debug macOS build succeeded

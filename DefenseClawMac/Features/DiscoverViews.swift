@@ -172,13 +172,12 @@ struct InventoryView: View {
                 }
             }
         }
-        .inspector(isPresented: Binding(
+        .dcInspector(isPresented: Binding(
             get: { selectedItem != nil },
             set: { if !$0 { selectedID = nil } }
         )) {
             if let item = selectedItem {
                 inventoryInspector(item)
-                    .inspectorColumnWidth(min: 320, ideal: 400)
             }
         }
         .searchable(text: $search, placement: .toolbar, prompt: "Search inventory")
@@ -445,11 +444,12 @@ struct AIDiscoveryView: View {
     @State private var error: String?
     @State private var loaded = false
     @State private var scanRequested = false
+    @State private var showModels = false
 
     /// Grouped rows filtered like the TUI's `_apply_filter`, including local
     /// model identity without treating status/format as search dimensions.
     private var filtered: [AIDiscoveryRow] {
-        let rows = snapshot.rows
+        let rows = snapshot.productRows
         guard !search.isEmpty else { return rows }
         return rows.filter { AIDiscoveryGrouping.matches($0, query: search) }
     }
@@ -504,7 +504,13 @@ struct AIDiscoveryView: View {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .font(.caption).foregroundStyle(Cisco.red).padding(6)
             }
-            if filtered.isEmpty {
+            Picker("Discoveries", selection: $showModels) {
+                Text("Products (\(snapshot.productRows.count))").tag(false)
+                Text("Models (\(snapshot.modelRows.count))").tag(true)
+            }.pickerStyle(.segmented).padding(12)
+            if showModels {
+                LocalModelsView(models: snapshot.modelRows, search: search)
+            } else if filtered.isEmpty {
                 DCEmptyState(
                     title: emptyState.title,
                     message: emptyState.message,
@@ -515,16 +521,16 @@ struct AIDiscoveryView: View {
                 discoveryTable
             }
         }
-        .inspector(isPresented: Binding(
+        .dcInspector(isPresented: Binding(
             get: { selected != nil },
             set: { if !$0 { selected = nil } }
         )) {
             if let row = selected {
                 rowInspector(row)
-                    .inspectorColumnWidth(min: 320, ideal: 400)
             }
         }
         .searchable(text: $search, placement: .toolbar, prompt: "Filter products and models")
+        .onChange(of: showModels) { _, _ in selected = nil }
         .toolbar {
             ToolbarItemGroup {
                 Button {
@@ -933,9 +939,8 @@ struct RegistriesView: View {
             registryContent
         }
         .searchable(text: $search, placement: .toolbar, prompt: tab == .sources ? "Search sources" : "Search entries")
-        .inspector(isPresented: inspectorPresented) {
+        .dcInspector(isPresented: inspectorPresented) {
             inspectorContent
-                .inspectorColumnWidth(min: 320, ideal: 400)
         }
         .toolbar {
             ToolbarItemGroup {

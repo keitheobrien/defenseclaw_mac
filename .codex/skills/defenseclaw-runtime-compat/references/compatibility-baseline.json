@@ -2,182 +2,197 @@
   "config_version": 8,
   "intentional_source_differences": {
     "App/AppState.swift": {
-      "local_sha256": "b2b416dfeb9124e043ab05ebe4a1700ee8513d53307f36850c153ab9bbd4addc",
-      "reason": "Reviewed standalone installation isolation and update flow: refresh explicit successful runtime identity, show newer published releases including source installs without replacing them, clear stale upgrade targets, and refresh release metadata once per launch. Reviewed default-enabled automatic startup after binding a configured installation, with health-before-start, recorded exact lifecycle routing, stale-command suppression, and overlap guards. Background release lookups do not consume the startup opportunity; active download, installation, and runtime-install operations defer it.",
-      "upstream_sha256": "c67474d84431d4593309e786c3c6946f537c25696e8f813f7074342d4c895a02"
+      "local_sha256": "400bb8bc4ec8d80a787f48e717c9585dfcdcbf39d26ec01dca4cab316d7f5cdc",
+      "reason": "Preserve standalone lifecycle and runtime upgrade controls; add sandbox polling, CLI Activity decisions, snapshot and privilege guards.",
+      "upstream_sha256": "20c893580794feee6b6c2d74a912b99304eee22f3c59d00c7233652a77444f09"
     },
     "App/DefenseClawApp.swift": {
-      "local_sha256": "701b128687779d50ab30c9f006566afc7d60c3b73802b485243a4b711c3f73f9",
-      "reason": "Reviewed starting the shared AppState from the main-actor applicationDidFinishLaunching callback so restored minimized or hidden windows do not defer gateway startup until window appearance. The callback captures the same state weakly, and AppState.start guards once before suspension, retaining the existing onAppear fallback without duplicate startup.",
-      "upstream_sha256": "000e523063ef39a8358d9feef22f3df559ff54c7d57155992e8edf380b65a7ae"
+      "local_sha256": "bd905801a60475f28ae0050ea13d7d542d1c87df839dde0bce78dd579a324816",
+      "reason": "Preserve standalone settings/lifecycle/update menus; add Policies/Sandboxes shortcuts and sandbox notification delegate.",
+      "upstream_sha256": "bf3353598aa9d251e33432d5246d4dcbb0ff1b9d3ccd727ff47f71a200441301"
     },
     "DataLayer/AIDiscoveryActionPolicy.swift": {
       "local_sha256": "d44fdacb5eb796828da0979126de1d708cc705e515525795ad20e14ae5b2584e",
-      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "reason": "Standalone runtime-capability detection and supported action filtering retained; covered by AI discovery action tests.",
       "upstream_sha256": "6d625b828e70fef1c31962b5ab79f9454a4d6441e32ae65922ef3dbe8227a93b"
-    },
-    "DataLayer/AIRuntimeModels.swift": {
-      "local_sha256": "311b051a33374c91262ab085ada941e58688947a2363784b32e878f5b61fc129",
-      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
-      "upstream_sha256": "7310dff8f5446e114c997ef391227390638cc4fadf7e3e9997ee00ff43b69fe4"
     },
     "DataLayer/AlertDispositionCommand.swift": {
       "local_sha256": "f4347ba51e727c6c01aedab9473d4bf701dcc3d1679ad9835aaacc23eee12472",
-      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "reason": "Standalone stable-ID disposition and acknowledgement command safety retained; covered by alert queue projection tests.",
       "upstream_sha256": "a68b927ff7f57c7d81a819ea2bdfe6c050ab0bd38342a8161e9253e694fd5b7b"
     },
     "DataLayer/AuditStore.swift": {
-      "local_sha256": "52dc70fcf0d8fcf0c9edea39a40a45d2d964163d17cd3a2fc5ba8edd6fc0c837",
-      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
-      "upstream_sha256": "7fe1c0362d5d70aee2244421a9552dd775dcedb8d96fc755968bf06dcda6d437"
+      "local_sha256": "ed5c7798e7e22fe466fcb0b92a5e0ca11269db591dd12165dca0b727a7ace602",
+      "reason": "Canonical bounded read behavior aligned; explanatory comment differs.",
+      "upstream_sha256": "7e55cd21c9d592aeb9e3f7296e45345e5186c431c6b2ac4ed62da31eaecf4671"
     },
     "DataLayer/CLIRunner.swift": {
-      "local_sha256": "b2de16f3caa14b63934ffe670f6418fa9d038786d78e2423d56d44934bfa9687",
-      "reason": "Reviewed standalone bounded execution and cancellation hardening plus exact Start/Stop/Restart administrator routing through the signed helper; reject extra arguments, stdin, environment, read-only selections, and overlapping privileged requests. Reviewed cancellation after consuming an Activity reservation and before dispatch, preventing an already-cancelled caller from launching a subprocess or administrator request.",
-      "upstream_sha256": "adb86e4afa0c9a2b18b813ee7b01da40795ef8d876df3137e1dc9af65fc883a1"
+      "local_sha256": "7c753ca1d19995664359477ca2b5ccc40ae906cec388dcf6f18f184fc78cce82",
+      "reason": "Resolve catalog Python adjacent to the selected CLI before fallback so Settings overrides and source installations use the same runtime.",
+      "upstream_sha256": "b2de16f3caa14b63934ffe670f6418fa9d038786d78e2423d56d44934bfa9687"
     },
     "DataLayer/CatalogCLI.swift": {
-      "local_sha256": "7f70cf90f30932646bde17de6ef16d6bc0ba814c9f74e758c2feeb5e6811904f",
-      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
-      "upstream_sha256": "c09adddfe3e53f0a9bebef86afea4843e0461c6ec49ce82cadae049fabf2f497"
-    },
-    "DataLayer/CommandActivityStore.swift": {
-      "local_sha256": "0023973544bc13c93e7eb89cb28e4adf308f5ec4f298872de128d6a13d7445b2",
-      "reason": "Reviewed administrator activity labels, cancellation outcomes, and actionable background-service approval guidance while retaining mutation recording and redaction.",
-      "upstream_sha256": "d889c6b01e85113614e309bfc317b2cb34c4f0a2d74f0baffbb035228ef69b44"
+      "local_sha256": "61d69e4e897a97f85796792fd375ee935359349f5bca2c4c1b3ddcc1e31f35dc",
+      "reason": "Preserve standalone fallback hardening; accept only explicit complete partial MCP discovery, show diagnostics separately and disable mutations.",
+      "upstream_sha256": "7f68499d5e6c723b59da8a016cd1a7bad694dd4cd2ea3f66940ed1308ab0c837"
     },
     "DataLayer/CommandRegistry.swift": {
-      "local_sha256": "c11111e8e739b1d2aa7661e9f2621d23d1cacd7f92b92ab836ae50a86c2672d2",
-      "reason": "Reviewed 235-entry upstream registry with the existing webhook usage correction and installed-runtime capability gates; new Kiro and existing Amp commands stay hidden unless setup help advertises support.",
-      "upstream_sha256": "2676ba4a90c836d9c7a2909d45d9f33a71396ae1d70d7f4224ee5089b7d06dcd"
-    },
-    "DataLayer/ConnectorOnboarding.swift": {
-      "local_sha256": "4c2d35192646a779e17eb8f50ae1b8fa31c5b26e4f0e67d83b2b4f2f768b2311",
-      "reason": "Reviewed fail-closed validation of the CLI structured initialization report before additive setup or gateway startup. Both the selected release and current upstream expose root status plus setup/readiness step arrays; only ready/partial reports with recognized nonfailure step statuses proceed, while malformed, incomplete, or failed reports remain visible to the user.",
-      "upstream_sha256": "b45494f0eeb93bb4df2bc2d570ab0131325278bb4eff3ac307fdf4941a180d57"
-    },
-    "DataLayer/EventStreamReader.swift": {
-      "local_sha256": "3a6cee46a20ca9968bd305bf0a56e8a925093571a5b32607d763cf4719e21081",
-      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
-      "upstream_sha256": "c6e4ea6e47c9c1a1bd2fcd32512ead6d03cda965c818c14ba757d66e76e5214f"
+      "local_sha256": "e1769931735a8eeb2e4744cbb1e367eb2b20e0f68d6de09f6b2fdf19530d76d5",
+      "reason": "Generated 253-command TUI registry with standalone command identity, capability, quoting and secret protections.",
+      "upstream_sha256": "2457cfa873d329af613e704bf967c32bfb2dbb5dba5491ecb81cb546407abe67"
     },
     "DataLayer/GatewayAdminProtocol.swift": {
       "local_sha256": "13e94d5c984441028ca4cbf0d3d5bc3fafcbd544ed9accddcb5a90ed421c8cc6",
-      "reason": "Reviewed new shared administrator XPC boundary: fixed lifecycle actions, selected installation paths and external Authorization Services form only; strict app/helper Developer ID requirements and exact per-operation administrator rule.",
-      "upstream_sha256": "missing"
+      "reason": "Standalone bundle/service/authorization identity and pinned Developer ID team; retains fail-closed signature requirements.",
+      "upstream_sha256": "96a698c47ff59fea05b16c320e8a3570edb65aed1870da3813893d5779997159"
     },
     "DataLayer/GatewayAdministratorClient.swift": {
       "local_sha256": "3e86c47ab6323184e619b72d199c186410932cf42e70d014b62c5944108c75c0",
-      "reason": "Reviewed signed SMAppService registration and mutually authenticated XPC, native authorization handoff, pre-dispatch cancellation, explicit denied/cancelled/indeterminate results, and no password collection or arbitrary privileged execution.",
-      "upstream_sha256": "missing"
+      "reason": "Standalone pinned-team helper authorization path retained.",
+      "upstream_sha256": "f6c2e079398faf539ba8a03c56bfcd81d2553b64b355009d66309d8c5d6c4112"
     },
     "DataLayer/GatewayAutoStartCoordinator.swift": {
       "local_sha256": "7974b7b319cdb2b79d184753a560d714a2c10f58cc7d5ebc32c4ef9fdb5bdeac",
-      "reason": "Reviewed a shared default-enabled preference and main-actor coordinator with injected health/start operations. It makes one resolved decision per launch/installation generation, preserves a running gateway, starts only after confirmed offline status, defers ineligible or busy state, rejects stale snapshots, deduplicates concurrent triggers, and does not repeat failed or cancelled attempts.",
-      "upstream_sha256": "missing"
+      "reason": "License header only; startup policy retained.",
+      "upstream_sha256": "a313917dfd5167559eb127434d754fff279d5dd2b1fc62004311aba3fe98baf2"
     },
     "DataLayer/GatewayClient.swift": {
-      "local_sha256": "79ee4b3af60c11be333bee1d5f54c9eedff7c1bb18dbca42b84a9d4488a090f6",
-      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
-      "upstream_sha256": "2886fd85f2c630beb712af0538dec59b9ab6434b728889110df67981ef2a7f8e"
+      "local_sha256": "db629e8140194d0bf7d5f98e3bc70f3ea79c9dd8483fc7348de9e0608e77d712",
+      "reason": "Read-only sandbox endpoints with strict coverage shape and policy-403 handling; mutations go through CLI Activity.",
+      "upstream_sha256": "b7c498908cce0e5f2adcf2ab30e5cda5f3dae01b65df571cf933613ea0c8ec61"
+    },
+    "DataLayer/InstallationContext.swift": {
+      "local_sha256": "9ebd112121160ccd006f472b53ab2fed430d06aceb4ebf8485b2167e7c3635aa",
+      "reason": "Follow a verified default unmanaged source-launcher venv; preserve explicit and managed selection, config paths and data paths.",
+      "upstream_sha256": "888b80795ad128234f97dd093949ebaec7adb415c4c2bf9305893a955cb5e3d7"
     },
     "DataLayer/Models.swift": {
-      "local_sha256": "f55d3fe75c3bba50cc7c98794a70fd568be9998610db777da0a95e35c1d2bd9d",
-      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
-      "upstream_sha256": "5a45c89c5125123a7a42f89c11422df9f7840748131b4c9be648ed9716a9c6fd"
+      "local_sha256": "6f024ca58bf963f7e533c4ef55e558ea670dd139aa406bac836bf25dd7a93e28",
+      "reason": "Current model provenance/filter/grouping types plus distinct productRows; legacy grouping retained for compatibility.",
+      "upstream_sha256": "29310cb78413c8b63cfb0e3ae8e3869b39aca9a1ff1fb9215d286b8b05be0a66"
+    },
+    "DataLayer/PolicyCatalog.swift": {
+      "local_sha256": "4afcf77910c073031a612dac734aaf501b7af2de8b9ab3291e660f963a094591",
+      "reason": "New typed runtime policy projection, catalog completeness checks and command gate.",
+      "upstream_sha256": "missing"
+    },
+    "DataLayer/RedactionCommands.swift": {
+      "local_sha256": "17a54de96c92524bd8580fd11e12c17b5417827abd6dc4a9ab645281b21a42af",
+      "reason": "Extracted current redaction argv builder for independent tests; defaults to preview.",
+      "upstream_sha256": "missing"
     },
     "DataLayer/RuntimeInstallFilesystem.swift": {
       "local_sha256": "c5daeef09ac11bf791a053fcfdfe054edf538a7eee22041b4f3d3b8ecb222569",
-      "reason": "Reviewed standalone descriptor-bound no-replace installation and rollback hardening, including existing ACP-only runtime preservation. Retains three-target activation because new ACP payload transactions are explicitly rejected until supported.",
-      "upstream_sha256": "202028c356870d8a3de2f2ff7728e132370da1d3bb36e46a6f8ce6a527f79775"
+      "reason": "Standalone safe install ownership/partial/source/custom runtime handling retained.",
+      "upstream_sha256": "missing"
     },
     "DataLayer/RuntimeInstaller.swift": {
       "local_sha256": "e82ccab0fcd245e75fbfcabd68c4ef2d154b74ed23715af168caa3e5ec82502f",
-      "reason": "Reviewed standalone authenticated protected-payload installer and existing-runtime preservation. Rejects ACP manifest entries and runtime0.8.11 or newer until the complete ACP activation/rollback protocol is implemented; released0.8.10 remains supported.",
-      "upstream_sha256": "9762df4ad32c711025805e3afd524924110548aff7048b660fb00b45e850f900"
+      "reason": "Standalone signed protected-runtime installation and upgrade behavior retained.",
+      "upstream_sha256": "missing"
+    },
+    "DataLayer/SkillScanner.swift": {
+      "local_sha256": "98b58d9aec7a3fbd12e215a03d5cd4cd3a65e779ed91fb595478915e2b734367",
+      "reason": "Existing standalone catalog fallback preserved.",
+      "upstream_sha256": "e41406105ec9d94f15b029e75ace58c6d8c6a5362e784532a076f858865a8371"
     },
     "DataLayer/StructuredDetailParser.swift": {
       "local_sha256": "9fdd308a78d584bb5040b82e8e7184e21d64417b08755200333ad8964d7cc040",
-      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "reason": "Standalone bounded parsing and safe detail formatting retained; covered by structured detail parser tests.",
       "upstream_sha256": "5ffc9f7f08e3613d7976201a71d1acaf1d0c05f57b81035dc7fa68d86543d480"
     },
     "DataLayer/UpdateChecker.swift": {
       "local_sha256": "22084d54a4412f631422e4fbabd8fc7db68fa0e9bcf7a18da409cfdde2f260e0",
-      "reason": "Reviewed standalone signed app-update protocol and preservation policy; parse only explicit DefenseClaw version lines so Go warnings cannot become versions, and compare release numbers without downgrading equal/newer source builds.",
-      "upstream_sha256": "4c0b38e794fac694d0b558e254cd73976a9b7abeba4e044722aa317e88610f0c"
-    },
-    "DesignSystem/Components.swift": {
-      "local_sha256": "1b22808bfe17933acf44840ce1dcd9bda802b7163375f623200f0704e0b9183b",
-      "reason": "Reviewed removal of the native inspector column-width modifier now that the shared inline detail pane owns its explicit 320-point width; unrelated shared components remain unchanged.",
-      "upstream_sha256": "a62ad0fb01f7ecbdb7bbd7c67830dd7c0485ed99da931006467d83dc06cbcb0d"
+      "reason": "Standalone GitHub release repository, app asset naming, digest/signature validation and rollback retained.",
+      "upstream_sha256": "d512b5f206e3f3defc70abcf4f4c5da578d4947051039d204a2042fe6abcb24a"
     },
     "DesignSystem/InspectorLayoutPolicy.swift": {
       "local_sha256": "1c848f727c50fa1327da556523db5c84be4eb4abf7b4c48c499ecec023f1fc79",
-      "reason": "Reviewed shared inline detail presentation with flexible zero-minimum main content, a divider, and a fixed 320-point accessible Details region. This avoids the nested native inspector split controller that continued to fail optimized full-app selection/resize checks. Escape dismisses through the presentation binding; the former 250-to-380-point native resizing affordance is intentionally removed. Outer navigation and window sizing remain unchanged.",
-      "upstream_sha256": "c72c1c0e2a75d7ec150886e989a6f16a4d6e4afb001ce1e1bb770108d408af3f"
+      "reason": "License header only; existing native constraint-loop fix retained.",
+      "upstream_sha256": "b2d3fd17c69d00711cf9dab2a842e1f83a099ab0b8c360d8ef2e00a78c8893dc"
     },
     "DesignSystem/QuickHoverHelp.swift": {
       "local_sha256": "b1173bbd1359de982efaa3819e7a1ab1375bde9b70abc303a9e77acaa1b0e462",
-      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
+      "reason": "Standalone tooltip timing and toolbar help retained; covered by toolbar-help tests.",
       "upstream_sha256": "83df45f06cd85590d5d400d0eb2c493c384fc0bc503840cdc7a35f255a60e1e7"
     },
-    "Features/AIRuntimeView.swift": {
-      "local_sha256": "30b4af8fb6c09350694dee23716cd5e78bf43437fcc8bb04867ea1b64822d4e6",
-      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
-      "upstream_sha256": "9118bdeedab6cd1a800f90473446ac55c582175eec4cb4a21bf2c70c888f3b95"
-    },
-    "Features/ActivityView.swift": {
-      "local_sha256": "350a93ad05896e2e12ef218c213b0ae234084469ce36c2287a924bdd3e19de38",
-      "reason": "Reviewed adoption of the shared inline detail pane with an unconditional content container. Command and mutation selections, recorded activity, and detail rendering are retained; presentation now uses the common fixed 320-point pane, existing close actions, and Escape dismissal instead of a nested native inspector.",
-      "upstream_sha256": "cdc1eb0b55e663e1576e09dda141e73f6d123c21a9b56f4ab8dc75e23cb543e0"
-    },
-    "Features/AlertsView.swift": {
-      "local_sha256": "e05687e14ee038eac03801c0fa07a9086c6c6edac150257e0086ea67e977457b",
-      "reason": "Reviewed adoption of the shared inline detail pane with an unconditional content container to avoid the reproduced nested-inspector layout failures. Filtering, alert actions, selection, asynchronous detail hydration, and detail rendering are retained; presentation now uses the common fixed 320-point pane, existing close actions, and Escape dismissal.",
-      "upstream_sha256": "a9db5467e25ae5bd8cc99af1e60ee423445df6595e6e26388e84f5ab83c53df9"
-    },
     "Features/AppSettingsView.swift": {
-      "local_sha256": "5c64ad6c7d03b5100eff2486aa415e551564e1134ea33d6f4b8aa4fc2c9b7ffe",
-      "reason": "Reviewed administrator-mode and macOS permission controls, installed gateway identity guidance, independent app/runtime updates, source-runtime preservation, and newer-than-published status. Reviewed the shared default-enabled Start gateway automatically preference with explicit opt-out persistence and managed/read-only control restrictions.",
-      "upstream_sha256": "b61388559d8814b8d56b324329f5e9b9414944f6b2f964794cc00a26aa1c60f2"
+      "local_sha256": "fd0b01dc09c0801169a3efd5e593682751523b2d560208dbc73313da1330b9f1",
+      "reason": "Standalone runtime/app updater preferences retained; sandbox notification toggle added.",
+      "upstream_sha256": "ad6734335dec9e4057338a8a25be18cfc1ff88992e2e664b2ab9052d7ce46642"
     },
-    "Features/AuditView.swift": {
-      "local_sha256": "a410bad5626b5611a8e0147d9bc39e028dd6665a15520108322f8e682e8fcce6",
-      "reason": "Reviewed adoption of the shared inline detail pane with an unconditional content container. Event filtering, table selection, and detail rendering are retained; presentation now uses the common fixed 320-point pane, existing close actions, and Escape dismissal instead of a nested native inspector.",
-      "upstream_sha256": "060eae04cbb1106ba16abdd668c348f7a9bd26c9ce3890591da8b6385cd46d2b"
-    },
-    "Features/CommandPaletteView.swift": {
-      "local_sha256": "3a2a6346d44cc337ada6a504e2876432732716097fdda7007eb438f3aa32f8c9",
-      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
-      "upstream_sha256": "c55e15243b9a4cd3825b5f4f703cf9c92e9f5be82fe14cce35d24f34d461f90d"
+    "Features/CatalogViews.swift": {
+      "local_sha256": "fa37ba1d952f46a20aec6034313cd617172792c1183239303b2de79b89484136",
+      "reason": "Display readable partial MCP entries with an incomplete-discovery warning and disabled actions; do not offer unrelated audit repair.",
+      "upstream_sha256": "f7bd80582cb9d0ddcf5025c733fa6faaa6ebd0fecb6ecbb6de208932c445321a"
     },
     "Features/ConfigEditorDefinitions.swift": {
-      "local_sha256": "ef6dbfb68874d8d79a4961f56f70c2297dce0f7f45ee6d7eadfc57d37b672fc6",
-      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening.",
-      "upstream_sha256": "ab59e479aaaaa7c3ab305646876288752324c736a012a7865ce0107826916d2a"
+      "local_sha256": "34e28acc3bc60ab870806c006716f08f5ce5a41ebb09ab66742a896ac699950d",
+      "reason": "Current OpenShell fields/admin locks and derived-port validation; older-runtime offline fallback retained.",
+      "upstream_sha256": "c6e3e2abb506bdc2a4615d4948f85fa7d8f5fa48c1e82889cb4b7eea504e44d7"
+    },
+    "Features/DiscoverViews.swift": {
+      "local_sha256": "68def93b07031155694bafda64d2a84c61124c868716b4b7419cd3d6b91c93f9",
+      "reason": "Products/models split and stable inspector container; standalone existing inventory behaviors retained.",
+      "upstream_sha256": "c625a1aeb85a2d78df247625d95103180de6fa159371112a68960d09ff4419b1"
     },
     "Features/FirstRunView.swift": {
       "local_sha256": "edf2f442dcada9473dcd67911cf8cd0ff9565095ce4b377af2a15492231b2c2e",
-      "reason": "Reviewed standalone identity, retained standalone behavior, or compatibility hardening. Reviewed the shared automatic-start preference, structured setup-completion validation, cancellable setup task, and awaited configuration reload before a separately recorded final gateway start. The setup sheet remains open on failed, cancelled, or deferred completion, and initializer-side gateway startup is disabled so administrator routing remains consistent.",
-      "upstream_sha256": "bc45a6e327b6fe20f42ca385dd6077ae441261f7663c5c68a45b021b74ead466"
+      "reason": "Existing standalone runtime preservation, default gateway startup and selected-installation safety retained.",
+      "upstream_sha256": "a4163375df6e3a842da0aa5c7b7f444855073470872fcb2d321874faaea35a3d"
+    },
+    "Features/LocalModelsView.swift": {
+      "local_sha256": "bd0ba4c0f6d49c8cf3fe92040d4513ced577cff38515817603a9022b3866c917",
+      "reason": "New native model table, focused/all filters, lineage and runtime inspector.",
+      "upstream_sha256": "missing"
     },
     "Features/LogsView.swift": {
-      "local_sha256": "008b238ec45def01e297060b5ccd849f35c994caef7d19121c64443d9e79b88e",
-      "reason": "Reviewed standalone identity and retained compatibility behavior, plus adoption of the shared inline 320-point detail pane with an unconditional content container. The imperative at-bottom flag is held in a private non-observable reference retained by State so native row-reuse callbacks do not publish view invalidation. Existing streaming, filters, selection, row geometry, last-row checks, and auto-scroll guard are preserved. This tracker change does not assert Logs-only crash causality; native-inspector testing still failed with the tracker.",
-      "upstream_sha256": "2d61cb0ae5f68c9d89c2d7268de5e0e9f498fde961a616670107650b7872b091"
+      "local_sha256": "298425e9b33d65fdb267508d2894bad468f5f040cefb75d0eb274ad47aadfb10",
+      "reason": "Preserve canonical SQLite reader and stable inspector; add capability-gated redaction sheet.",
+      "upstream_sha256": "35c02a9424209a2468cb49f234f9e31ee864aceca32ab0b5f3944283e7a31383"
     },
     "Features/MainWindow.swift": {
-      "local_sha256": "92d6d0aa4803841e766d951f859ae55c62d66c73f2f924dc1032951177672360",
-      "reason": "Reviewed runtime release prompt for source-managed installations: show newer release availability and notes but withhold app-managed replacement commands. Reviewed keeping the first-run sheet open while setup still needs completion, even when initialization has already created a configuration file.",
-      "upstream_sha256": "d2c8055f1f4422fa98f53bcda1e3356a7ffcedf2a7035fb74dceaf495bc4c51c"
+      "local_sha256": "5be962eeaf7032b94b34054a000d2e5a850666e305dbd9c6852d94ec698f3740",
+      "reason": "Standalone update banners and first-run behavior retained; new panel routing and sidebar entries.",
+      "upstream_sha256": "6f5731199f8bffbf435b110e318c443450799ca9792e8ea096eb06cb72ed82ee"
     },
     "Features/OverviewView.swift": {
-      "local_sha256": "13b05f0edae7cc9250dd5eb33ee0cbe07053731ca74e517041f98b42d2746cc7",
-      "reason": "Reviewed visible administrator gateway Start/Stop/Restart controls routed through recorded CLIRunner execution, read-only restrictions, and background/FDA guidance. Reviewed disabling overlapping manual gateway lifecycle controls while automatic startup is in progress; existing recorded commands and administrator behavior remain unchanged.",
-      "upstream_sha256": "d4fe640cd9f18b39308af0bbaeea3257b37e738e3429c50df7f862480191a775"
+      "local_sha256": "b3406eb35118a9a122d7e05b341182ef751ced3fb4d98a8400638938562207cf",
+      "reason": "Existing standalone gateway start/doctor guidance retained; sandbox status card added.",
+      "upstream_sha256": "56bf72998cb694f88941d78ca73b97a33ef1d58366dd65cca537cec0f0d179a4"
+    },
+    "Features/PoliciesView.swift": {
+      "local_sha256": "d365347e677dd84063478a9de874f72c4ae2f372536b1374e815b2a455fd92cc",
+      "reason": "New native seven-view policy panel with stale/managed guards and consequence/weakening confirmation.",
+      "upstream_sha256": "missing"
+    },
+    "Features/RedactionPolicyView.swift": {
+      "local_sha256": "7d5ec83c869f45a99623d6a552454b767e51749213caadc022274082d4b2ae55",
+      "reason": "Current runtime redaction sheet using separately tested command builder.",
+      "upstream_sha256": "missing"
+    },
+    "Features/SandboxesView.swift": {
+      "local_sha256": "8a4457982f4cf265ae2a2c5c83fd00cdd5e0b1cbc94e04e1de040ae03df71dc6",
+      "reason": "Current native sandbox UI; argument-safe copied command and stale-state guard before CLI mutations.",
+      "upstream_sha256": "c7552b68099f9a4e6ba9d8ea1f55e2517fd192cfb12b56c10b99d5b1d10c2102"
+    },
+    "Features/SetupDefinitions.swift": {
+      "local_sha256": "b5074431198fff7dd2f9323f9117840d2a411847d5039e749022803f27b461af",
+      "reason": "Current sandbox and ACP builders while retaining standalone provider/scanner safety.",
+      "upstream_sha256": "c136c6d5c73772d4b00756e12b32422a522001c1d7c4c1ebdf7e5c763437b639"
+    },
+    "Features/SetupView.swift": {
+      "local_sha256": "313cd6997ad7bc1c749962e6cd9fe5fc25b387a870a3f3ad9d948df1e733691d",
+      "reason": "Pass selected configuration to sandbox lock-aware fallback; capability-gated redaction entry.",
+      "upstream_sha256": "0570f0f558cbbb63f4a0c439141e8031e9fe4b26ca6ce9e28e7a545b2e954689"
+    },
+    "Resources/policy_catalog_bridge.py": {
+      "local_sha256": "5f94c5ca4261f4bbcc4baa207b9effa84bf517754df5c351979968230c1cf7b8",
+      "reason": "Read-only projection of selected runtime TUI policy model; friendly unsupported-module error on older releases; no config dump or mutations.",
+      "upstream_sha256": "missing"
     }
   },
-  "mac_app_version": "1.1.25",
-  "runtime_version": "0.8.10",
-  "upstream_commit": "f05a9d3cb115c18f2c7903590a82dadf8835f2ae"
+  "mac_app_version": "1.1.26",
+  "runtime_version": "1.0.0",
+  "upstream_commit": "95159fdb849d265f31e31a0ef92eff5e40ebbee0"
 }

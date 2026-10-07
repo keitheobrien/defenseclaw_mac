@@ -114,7 +114,26 @@ struct SetupDefinitionsParityTests {
         secureSetupSecretsUseChildEnvironment()
         webhookBuilderCoversCurrentNotifierOptions()
         webhookValidationRequiresProviderCredentials()
+        sandboxSetupMatchesCurrentMacWorkflow()
+        acpSetupKeepsEnrollmentScoped()
         print("Setup definition parity tests passed")
+    }
+
+    private static func acpSetupKeepsEnrollmentScoped() {
+        expect(TUIWizards.acpCommands([:], false) == [["acp", "setup", "--client", "zed", "--agent", "kiro", "--profile", "default"]], "ACP defaults to observing")
+        let values = ["client": "jetbrains", "agent": "copilot", "profile": "strict", "activate": "yes", "managed": "yes", "runtime-data-dir": "/tmp/fixture", "token-file": "/tmp/fixture/acp/jetbrains-copilot.token"]
+        expect(TUIWizards.acpValidation(values) == nil, "managed ACP requires valid paths")
+        expect(TUIWizards.acpCommands(values, false)[0].suffix(5) == ["--managed", "--runtime-data-dir", "/tmp/fixture", "--token-file", "/tmp/fixture/acp/jetbrains-copilot.token"], "ACP enrollment uses a file path rather than a secret argv value")
+        expect(TUIWizards.acpValidation(["managed": "yes"]) != nil, "missing provisioning paths block enrollment")
+        expect(!TUIWizards.acpCommands(["managed": "no", "token-file": "stale"], false)[0].contains("stale"), "unmanaged enrollment drops stale managed fields")
+    }
+
+    private static func sandboxSetupMatchesCurrentMacWorkflow() {
+        expect(TUIWizards.sandboxCommands([:], false) == [["sandbox", "setup", "--non-interactive", "--harness", "claudecode", "--harness", "codex", "--no-wrappers"]], "sandbox defaults select both harnesses without installing dependencies")
+        expect(TUIWizards.sandboxCommands(["action": "doctor"], false) == [["sandbox", "doctor"]], "sandbox doctor is read only")
+        expect(TUIWizards.sandboxCommands(["harness-codex": "no", "wrappers": "yes", "build-images": "no"], false) == [["sandbox", "setup", "--non-interactive", "--harness", "claudecode", "--wrappers", "--skip-images"]], "sandbox flags match current macOS setup")
+        expect(TUIWizards.sandboxValidation(["harness-claudecode": "no", "harness-codex": "no"]) != nil, "empty harness selection is rejected")
+        expect(TUIWizards.sandboxValidation(["action": "doctor"]) == nil, "doctor does not require a harness")
     }
 
     private static func emitsOnlyCurrentDiscoveryCLIOptions() {

@@ -1,0 +1,22 @@
+{
+  "macos": "27.0.1",
+  "optimization": "-O",
+  "cases": [
+    {
+      "case": "fixed-native-980",
+      "passed": true,
+      "exit_status": 0,
+      "duration_seconds": 30.63,
+      "expectation": "native inputs, close/open resize cycles, variable hydration, parent updates, and 20-second open-details dwell completed",
+      "log": "/var/folders/r9/6nkm3f8s4_j2fbgvxrzx3rxh0000gn/T/defenseclaw-inspector-native-tests.Nodo5O/fixed-native-980.log"
+    },
+    {
+      "case": "fixed-accessibility-1180",
+      "passed": true,
+      "exit_status": 0,
+      "duration_seconds": 29.91,
+      "expectation": "native inputs, close/open resize cycles, variable hydration, parent updates, and 20-second open-details dwell completed",
+      "log": "/var/folders/r9/6nkm3f8s4_j2fbgvxrzx3rxh0000gn/T/defenseclaw-inspector-native-tests.Nodo5O/fixed-accessibility-1180.log"
+    }
+  ]
+}

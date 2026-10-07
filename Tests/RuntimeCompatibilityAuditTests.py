@@ -2,6 +2,7 @@
 
 import importlib.util
 import unittest
+import tempfile
 from pathlib import Path
 
 
@@ -21,6 +22,23 @@ SPEC.loader.exec_module(AUDIT)
 
 
 class RuntimeCompatibilityAuditTests(unittest.TestCase):
+    def test_swift_string_preserves_unicode_and_escapes_control_characters(self) -> None:
+        self.assertEqual(AUDIT.swift_string("Setup → Sandbox"), '"Setup → Sandbox"')
+        self.assertEqual(AUDIT.swift_string("a\x01b"), '"a\\u{0001}b"')
+        self.assertEqual(AUDIT.swift_string(r"literal \u1234 \b"), r'"literal \\u1234 \\b"')
+
+    def test_current_and_legacy_config_versions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "cli/defenseclaw"
+            package.mkdir(parents=True)
+            with self.assertRaises(ValueError):
+                AUDIT.parse_config_version(root)
+            (package / "migrations.py").write_text("SUPPORTED_CONFIG_VERSIONS: tuple[int, ...] = (7, 8)\n")
+            self.assertEqual(AUDIT.parse_config_version(root), 8)
+            (package / "config.py").write_text("CURRENT_CONFIG_VERSION = 9\n")
+            self.assertEqual(AUDIT.parse_config_version(root), 9)
+
     def test_protected_wheel_decode_is_not_a_legacy_assignment(self) -> None:
         source = 'DECODED_WHEEL="$RUNTIME_DIR/defenseclaw-${RUNTIME_VERSION}-py3-none-any.whl"\n'
         value = '"$RUNTIME_DIR/defenseclaw-${RUNTIME_VERSION}-py3-none-any.whl"'
