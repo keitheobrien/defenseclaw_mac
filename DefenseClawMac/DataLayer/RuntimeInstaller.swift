@@ -74,6 +74,14 @@ struct RuntimePayload: Sendable {
     /// distribution hashes; the root wheel remains separately authenticated.
     var dependencyLockURL: URL
     var dependencyLockSHA256: String
+    struct Component: Sendable {
+        enum Role: String, Sendable { case acp, installer, version }
+        var role: Role
+        var url: URL
+        var sha256: String
+    }
+    var flatComponents: [Component] = []
+    var usesProtectedWheel: Bool = true
 
     /// Loaded once per launch — the bundle is immutable while running.
     static let bundled: RuntimePayload? = load()
@@ -85,6 +93,11 @@ struct RuntimePayload: Sendable {
 
     static func load(from payloadDir: URL) -> RuntimePayload? {
         let manifestURL = payloadDir.appendingPathComponent("payload-manifest.json")
+        if let data = try? Data(contentsOf: manifestURL),
+           let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+           root["schema_version"] as? Int == 3 {
+            return loadFlat(from: payloadDir, manifest: root)
+        }
         guard let data = try? Data(contentsOf: manifestURL),
               let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let version = root["runtime_version"] as? String,
@@ -116,6 +129,37 @@ struct RuntimePayload: Sendable {
             dependencyLockURL: payloadDir.appendingPathComponent(dependencyLockFile),
             dependencyLockSHA256: dependencyLockSHA
         )
+    }
+
+    /// Schema 3 binds the complete 1.x transaction, including ACP and the
+    /// release-owned installer used by subsequent upgrades and rollback.
+    private static func loadFlat(from directory: URL, manifest: [String: Any]) -> RuntimePayload? {
+        guard let version = manifest["runtime_version"] as? String,
+              version.utf8.allSatisfy({ (48...57).contains($0) || $0 == 46 }),
+              version.range(of: #"^1\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$"#, options: .regularExpression) != nil,
+              manifest["arch"] as? String == "arm64",
+              manifest["runtime_tag"] as? String == version else { return nil }
+        func file(_ key: String, _ expected: String) -> (URL, String)? {
+            guard let item = manifest[key] as? [String: Any],
+                  item["file"] as? String == expected,
+                  let hash = item["sha256"] as? String, hash.count == 64,
+                  hash.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { return nil }
+            return (directory.appendingPathComponent(expected), hash)
+        }
+        guard let gateway = file("gateway", "defenseclaw-gateway"),
+              let wheel = file("wheel", "defenseclaw-\(version)-py3-none-any.whl"),
+              let lock = file("dependency_lock", "runtime-requirements.lock"),
+              let acp = file("acp_guard", "defenseclaw-acp"),
+              let installer = file("installer", "install.sh"),
+              let versionFile = file("version_file", "VERSION") else { return nil }
+        return RuntimePayload(version: version, tag: version, arch: "arm64",
+                              gatewayURL: gateway.0, gatewaySHA256: gateway.1,
+                              wheelURL: wheel.0, wheelSHA256: wheel.1,
+                              dependencyLockURL: lock.0, dependencyLockSHA256: lock.1,
+                              flatComponents: [Component(role: .acp, url: acp.0, sha256: acp.1),
+                                               Component(role: .installer, url: installer.0, sha256: installer.1),
+                                               Component(role: .version, url: versionFile.0, sha256: versionFile.1)],
+                              usesProtectedWheel: false)
     }
 
     /// Runtime 0.8.11 introduces an ACP binary that must activate with the
@@ -150,8 +194,13 @@ struct RuntimePayload: Sendable {
         guard wheelActual == wheelSHA256 else {
             return "Bundled wheel does not match its manifest checksum."
         }
-        guard Self.protectedPayloadSHA256(of: wheelURL) != nil else {
+        guard !usesProtectedWheel || Self.protectedPayloadSHA256(of: wheelURL) != nil else {
             return "Bundled wheel is not a valid protected release artifact."
+        }
+        for component in flatComponents {
+            guard Self.sha256(of: component.url) == component.sha256 else {
+                return "Bundled \(component.role.rawValue) does not match its manifest checksum."
+            }
         }
         if let overridesURL {
             guard let overridesSHA256 else {
@@ -294,6 +343,19 @@ struct RuntimePayload: Sendable {
 /// Produces the runnable, signed-release resolver command shared by native-app
 /// upgrade surfaces. The release tag is validated before URL interpolation.
 enum RuntimeUpgradeResolverCommand {
+    static func builtin(cliPath: String, home: String, config: String, venv: String, releaseTag: String) -> String? {
+        let version = releaseTag.hasPrefix("v") ? String(releaseTag.dropFirst()) : releaseTag
+        guard version.hasPrefix("1."), version.utf8.allSatisfy({ (48...57).contains($0) || $0 == 46 }),
+              version.split(separator: ".", omittingEmptySubsequences: false).count == 3,
+              authenticated(releaseTag: version) != nil else { return nil }
+        let values = [home, config, venv, cliPath, version]
+        guard values.allSatisfy({ !$0.isEmpty && !$0.contains(where: { $0.isNewline || $0 == "\0" }) }) else { return nil }
+        func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'" }
+        // Keep the independently versioned Mac app out of the upstream
+        // installer's optional app-replacement transaction.
+        return "/usr/bin/env DEFENSECLAW_APP_PATH=none DEFENSECLAW_HOME=\(quote(home)) DEFENSECLAW_CONFIG=\(quote(config)) DEFENSECLAW_VENV=\(quote(venv)) \(quote(cliPath)) upgrade --yes --version \(quote(version))"
+    }
+
     static func authenticated(releaseTag: String) -> String? {
         let tag = releaseTag.hasPrefix("v") ? String(releaseTag.dropFirst()) : releaseTag
         guard tag.range(
@@ -637,8 +699,8 @@ extension AppState {
                 destination: materializedWheel,
                 expectedParentIdentity: dataHomeIdentity,
                 mode: 0o600,
-                stripPrefix: RuntimePayload.protectedArtifactMagic,
-                decodeXORByte: RuntimePayload.protectedArtifactXORByte,
+                stripPrefix: payload.usesProtectedWheel ? RuntimePayload.protectedArtifactMagic : nil,
+                decodeXORByte: payload.usesProtectedWheel ? RuntimePayload.protectedArtifactXORByte : nil,
                 expectedSourceSHA256: payload.wheelSHA256
             )
             materializedDependencyLockIdentity = try RuntimeInstallFilesystem.installRegularFileNoReplace(
@@ -699,6 +761,7 @@ extension AppState {
             arguments: [
                 "pip", "install", "--python", stagingDir + "/bin/python",
                 "--require-hashes",
+                "--no-deps",
                 "--requirements", materializedDependencyLock,
             ],
             successEffects: ["Authenticated Python dependency set installed"]
@@ -827,7 +890,11 @@ extension AppState {
             return
         }
         var cliStageIdentity: RuntimeInstallFilesystem.PathIdentity?
+        var additionalStages: [(staged: String, destination: String, identity: RuntimeInstallFilesystem.PathIdentity)] = []
         func cleanupKnownStages() {
+            for stage in additionalStages.reversed() {
+                _ = RuntimeInstallFilesystem.cleanupOwnedPath(stage.staged, identity: stage.identity)
+            }
             if let gatewayStageIdentity {
                 RuntimeInstallFilesystem.cleanupOwnedPath(
                     gatewayStage,
@@ -857,7 +924,7 @@ extension AppState {
             binary: "/usr/bin/codesign",
             arguments: [
                 "--verify", "--strict", "-R",
-                #"=identifier "com.cisco.defenseclaw.gateway""#,
+                #"=anchor apple generic and identifier "com.cisco.defenseclaw.gateway" and certificate leaf[subject.OU] = "9R236BB67S""#,
                 "--verbose=4", gatewayStage,
             ],
             category: "info"
@@ -892,6 +959,61 @@ extension AppState {
                 "Staged gateway did not report expected version \(payload.version), or its parent/inode changed; nothing was activated."
             )
             return
+        }
+
+        for component in payload.flatComponents {
+            let parent = component.role == .acp ? binDir : dataHome
+            let parentIdentity = component.role == .acp ? binDirectoryIdentity : dataHomeIdentity
+            let name: String
+            switch component.role {
+            case .acp: name = "defenseclaw-acp"
+            case .installer: name = "installer"
+            case .version: name = "VERSION"
+            }
+            let destination = parent + "/" + name
+            let stage = destination + ".install-" + UUID().uuidString
+            do {
+                guard RuntimeInstallFilesystem.pathIdentity(parent) == parentIdentity else {
+                    throw RuntimeInstallFilesystem.ActivationError.parentChanged(parent)
+                }
+                if component.role == .installer {
+                    let identity = try RuntimeInstallFilesystem.createOwnedDirectory(stage)
+                    additionalStages.append((stage, destination, identity))
+                    _ = try RuntimeInstallFilesystem.installRegularFileNoReplace(
+                        source: component.url.path, destination: stage + "/install.sh",
+                        expectedParentIdentity: identity, mode: 0o600, expectedSourceSHA256: component.sha256)
+                } else {
+                    let identity = try RuntimeInstallFilesystem.installRegularFileNoReplace(
+                        source: component.url.path, destination: stage, expectedParentIdentity: parentIdentity,
+                        mode: component.role == .acp ? 0o755 : 0o600, expectedSourceSHA256: component.sha256)
+                    additionalStages.append((stage, destination, identity))
+                }
+            } catch {
+                cleanupKnownStages()
+                runtimeInstallState = .failed("Could not stage the complete runtime: \(error.localizedDescription)")
+                return
+            }
+            guard RuntimeInstallFilesystem.pathIdentity(parent) == parentIdentity else {
+                cleanupKnownStages()
+                runtimeInstallState = .failed("Runtime staging parent changed; nothing was activated.")
+                return
+            }
+            if component.role == .acp {
+                let signature = await installerStep("Verify ACP signature", binary: "/usr/bin/codesign",
+                    arguments: ["--verify", "--strict", "-R", #"=anchor apple generic and identifier "com.cisco.defenseclaw.acp" and certificate leaf[subject.OU] = "9R236BB67S""#, stage], category: "info")
+                guard signature.succeeded else {
+                    cleanupKnownStages()
+                    runtimeInstallState = .failed("ACP signature verification failed; nothing was activated.")
+                    return
+                }
+                let version = await installerStep("Verify staged ACP version", binary: stage, arguments: ["--version"], category: "info")
+                guard version.succeeded, UpdateChecker.parseVersion(version.output) == payload.version,
+                      RuntimePayload.sha256(of: URL(fileURLWithPath: stage)) == component.sha256 else {
+                    cleanupKnownStages()
+                    runtimeInstallState = .failed("ACP version or checksum verification failed; nothing was activated.")
+                    return
+                }
+            }
         }
 
         runtimeInstallState = .running("Staging DefenseClaw CLI link")
@@ -941,12 +1063,12 @@ extension AppState {
                 (staged: stagingDir, destination: venvDir),
                 (staged: gatewayStage, destination: gatewayDest),
                 (staged: cliStage, destination: cliDest),
-            ])
+            ] + additionalStages.map { (staged: $0.staged, destination: $0.destination) })
             // Ensure preparation captured exactly the inodes created by this
             // attempt before entering the no-replace transaction.
-            guard activationTargets.map(\.stagedIdentity) == [
+            guard activationTargets.map(\.stagedIdentity) == ([
                 venvStageIdentity, gatewayStageIdentity, cliStageIdentity,
-            ] else {
+            ] + additionalStages.map(\.identity)) else {
                 throw RuntimeInstallFilesystem.ActivationError.missingOrChangedStage(stagingDir)
             }
             activation = try RuntimeInstallFilesystem.activateNoReplace(
@@ -954,6 +1076,9 @@ extension AppState {
                 journalPath: activationJournal
             )
         } catch {
+            for stage in additionalStages.reversed() {
+                _ = RuntimeInstallFilesystem.cleanupOwnedPath(stage.staged, identity: stage.identity)
+            }
             _ = RuntimeInstallFilesystem.cleanupOwnedPath(
                 stagingDir,
                 identity: venvStageIdentity

@@ -148,7 +148,7 @@ struct ObservabilityDestinationRow: Identifiable, Sendable {
 struct ConnectorHealth: Identifiable, Sendable {
     var name: String
     var mode: String          // from config guardrail.connectors.<name>.mode
-    var rulePack: String      // from config …rule_pack_dir (basename)
+    var rulePack: String      // from config …rule_pack (v8: rule_pack_dir basename)
     var lastActivity: Date?   // derived from audit events (connector= kv)
     var calls: Int            // /health requests, audit fallback for hook connectors
     var blocks: Int           // tool_blocks + subprocess_blocks, audit fallback
@@ -338,10 +338,13 @@ struct AuditEvent: Identifiable, Sendable, Hashable {
     var structuredJSON: String
     var severity: Severity
     var runID: String
+    var runtimeFacts: [InventoryField] = []
 
     var isBlockClass: Bool {
         let a = action.lowercased()
+        let decision = runtimeFacts.first { $0.label == "Decision" }?.value.lowercased() ?? ""
         return a.contains("block") || a.contains("reject") || a.contains("enforce") || a.contains("quarantine")
+            || ["blocked", "rejected", "quarantined", "denied"].contains { decision.hasPrefix($0) }
     }
 }
 
@@ -424,7 +427,10 @@ enum AlertRow: Identifiable, Hashable {
     }
     var kind: String {
         switch self {
-        case .audit: "audit"
+        case .audit(let event):
+            if event.eventType == "runtime-alert", event.action.lowercased().hasPrefix("scan") { "scan" }
+            else if event.eventType == "runtime-alert", event.action.lowercased().contains("egress") { "egress" }
+            else { "audit" }
         case .scan: "scan"
         case .finding: "scan finding"
         case .egress: "egress"
@@ -1924,7 +1930,7 @@ enum AIOverviewGrouping {
 
 enum InventoryCategory: String, CaseIterable, Identifiable {
     case agents = "Agents", mcps = "MCPs", plugins = "Plugins",
-         skills = "Skills", tools = "Tools", memories = "Memories", providers = "Models"
+         skills = "Skills", tools = "Tools", memories = "Memories", providers = "Models", idePlugins = "IDE Plugins"
     var id: String { rawValue }
 }
 
@@ -1970,8 +1976,6 @@ struct RegistrySource: Identifiable, Sendable, Hashable {
     var url: String
     var authEnv: String
     var enabled: Bool
-    var autoSync: Bool
-    var syncIntervalHours: Int
     var lastSync: String
     var lastStatus: String
     var fetchedAt: String = ""

@@ -37,7 +37,11 @@ def cli():
     elif args[:2] == ["aibom", "scan"]:
         print(json.dumps([{"connector": "codex", "skills": [{"name": "Fixture skill", "path": str(root / "skill"), "eligible": True}],
                            "mcp_servers": [{"name": "Fixture MCP", "transport": "stdio"}], "plugins": [], "tools": [],
-                           "agents": [], "models": [], "model_providers": [], "memory": []}]))
+                           "agents": [], "models": [], "model_providers": [], "memory": [], "ide_plugins": [{"plugin_id": "fixture.assistant", "ide_product": "Fixture IDE", "user": "fixture", "version": "1.0", "enabled": "enabled", "is_ai": True}]}]))
+    elif args[:1] == ["alerts"]:
+        print(json.dumps([{"id": "fixture-alert", "timestamp": "2026-10-12T12:00:00Z", "severity": "HIGH", "action": "block", "target": "fixture tool", "connector": "codex", "details": "Synthetic policy block", "agent_identity_id": "fixture-agent", "decision": "blocked"}]))
+    elif args[:2] == ["agent", "identities"]:
+        print(json.dumps({"identities": [{"agent_id": "fixture-agent", "connector": "codex", "user": "fixture", "sessions_seen": 3}], "total": 1}))
     elif args[:3] == ["setup", "redaction", "status"]:
         print("Synthetic fixture: default sensitive; no external destinations. No real policy was read.")
     else:
@@ -64,6 +68,8 @@ def serve():
                 "model": {"id": "fixture/model", "status": "loaded", "format": "gguf", "modality": "text", "relevance": "primary", "owner_application": "Fixture Models", "discovery_confidence": 0.96}}]
     sandbox = {"name": "fixture-codex", "harness": "codex", "phase": "ready", "pack": "open", "profile": "open", "workdir_mode": "copy", "project": str(root), "egress": {"blocked": 1, "destinations": 2}, "hooks": {"tool_calls": 3}}
     replies = {
+        "/status": {"policy": {"effective_digest": "fixture-policy-digest", "generation": 9}},
+        "/api/v1/guardrail/profiles/resolve": {"profile": "fixture-profile", "effective": {"mode": "observe", "rule_pack": "default", "block_at": "HIGH", "alert_at": "LOW"}},
         "/health": {"state": "running", "version": "1.0.0", "uptime_ms": 100000, "guardrail": {"state": "running"}, "watcher": {"state": "running"}, "connectors": [{"name": "codex", "state": "running", "requests": 5}]},
         "/api/v1/ai-usage": {"enabled": True, "signals": signals, "summary": {"active_signals": 2, "files_scanned": 10, "scanned_at": now}},
         "/api/v1/ai-usage/runtime": {"enabled": True, "planes": [{"name": "agent actions", "running": True, "available": True}], "findings": [], "last_poll": now},
@@ -87,7 +93,7 @@ def serve():
             self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(b'{"ok":true}')
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     port = server.server_address[1]
-    (root / "config.yaml").write_text(f"config_version: 8\ndata_dir: {root}\naudit_db: {root}/audit.db\npolicy_dir: {root}/policies\nclaw:\n  mode: codex\nguardrail:\n  enabled: true\n  mode: observe\n  connectors:\n    codex:\n      enabled: true\n      mode: observe\ngateway:\n  host: 127.0.0.1\n  port: {port}\n  api_port: {port}\nopenshell:\n  enabled: true\nai_discovery:\n  enabled: true\nobservability:\n  defaults:\n    redaction_profile: sensitive\n")
+    (root / "config.yaml").write_text(f"config_version: 9\ndata_dir: {root}\naudit_db: {root}/audit.db\npolicy_dir: {root}/policies\nclaw:\n  mode: codex\nguardrail:\n  enabled: true\n  mode: observe\n  connectors:\n    codex:\n      enabled: true\n      mode: observe\ngateway:\n  host: 127.0.0.1\n  port: {port}\n  api_port: {port}\nopenshell:\n  enabled: true\nai_discovery:\n  enabled: true\nobservability:\n  defaults:\n    redaction_profile: sensitive\n")
     print(json.dumps({"root": str(root), "port": port, "cli": str(root / "bin/defenseclaw")}), flush=True)
     server.serve_forever()
 

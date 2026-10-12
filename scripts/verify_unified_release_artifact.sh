@@ -80,4 +80,6 @@ if expected_sha != actual_sha:
     )
 PYEOF
 
+python3 "$SCRIPT_DIR/verify_runtime_payload.py" "$PAYLOAD"
+
 printf 'Verified unified release payload: %s\n' "$DMG"

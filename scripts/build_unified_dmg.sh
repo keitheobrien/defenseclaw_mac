@@ -11,7 +11,7 @@
 # build/unified/out/.
 #
 # Env overrides:
-#   RUNTIME_TAG=0.8.10   pin the runtime release (default: latest)
+#   RUNTIME_TAG=1.0.0    pin the runtime release (default: latest)
 #   SKIP_NOTARIZE=1      skip notarization/stapling/spctl (iteration builds)
 set -euo pipefail
 
@@ -121,10 +121,19 @@ import sys
 version = sys.argv[1]
 if re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version) is None:
     raise SystemExit("Unsupported runtime release version; a canonical major.minor.patch version is required.")
-if tuple(map(int, version.split("."))) >= (0, 8, 11):
+if (0, 8, 11) <= tuple(map(int, version.split("."))) < (1, 0, 0) or int(version.split(".")[0]) > 1:
     raise SystemExit("Unsupported ACP runtime payload: DefenseClaw 0.8.11 or newer requires ACP installer support before packaging.")
 ACP_PROTOCOL_CHECK
 step "Runtime release: $RUNTIME_TAG"
+
+FLAT_RUNTIME=0
+if [[ "$RUNTIME_VERSION" == 1.* ]]; then
+    FLAT_RUNTIME=1
+    step "Preparing signed flat runtime (gateway, ACP, wheel and published dependency lock)"
+    python3 "$REPO_ROOT/scripts/prepare_flat_runtime.py" "$RUNTIME_VERSION" "$RUNTIME_DIR"
+    GATEWAY="$RUNTIME_DIR/prepared-payload/defenseclaw-gateway"
+    GATEWAY_SIGNED_SHA="$(shasum -a 256 "$GATEWAY" | awk '{print $1}')"
+else
 
 # DefenseClaw 0.8.4+ deliberately publishes refusal bytes under the legacy
 # wheel/gateway names. Only the protocol-2 artifacts selected by the signed
@@ -414,6 +423,8 @@ python3 "$REPO_ROOT/scripts/validate_dependency_lock.py" "$PYPROJECT" "$DEPENDEN
     || die "dependency lock failed authenticated-reference validation"
 printf '    %s locked dependency lines\n' "$(grep -c '==' "$DEPENDENCY_LOCK")"
 
+fi # legacy protocol-2 runtime preparation
+
 # ── 4. Archive + export the app ──────────────────────────────────────────────
 APP_VERSION="$(sed -n 's/.*MARKETING_VERSION = \([0-9.]*\);.*/\1/p' "$REPO_ROOT/$APP_NAME.xcodeproj/project.pbxproj" | head -1)"
 [[ -n "$APP_VERSION" ]] || die "could not read MARKETING_VERSION"
@@ -499,6 +510,9 @@ ditto "$APP_PLAIN" "$APP"
 rm -rf "$APP/Contents/CodeResources" 2>/dev/null || true
 PAYLOAD="$APP/Contents/Resources/RuntimePayload"
 mkdir -p "$PAYLOAD"
+if [[ "$FLAT_RUNTIME" == "1" ]]; then
+    ditto "$RUNTIME_DIR/prepared-payload" "$PAYLOAD"
+else
 cp "$GATEWAY" "$PAYLOAD/defenseclaw-gateway"
 cp "$WHEEL" "$PAYLOAD/$(basename "$WHEEL")"
 verify_gateway_signature "$PAYLOAD/defenseclaw-gateway" "$TEAM_ID" \
@@ -552,6 +566,8 @@ payload = {
 }
 Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PYEOF
+
+fi # payload manifest format
 
 step "Re-signing app bundle over the injected payload"
 # Preserve entitlements if the export produced any (currently none).

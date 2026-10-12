@@ -924,11 +924,18 @@ enum RuntimeInstallFilesystem {
         binDir: String
     ) -> Bool {
         let venv = splitPath(venvDir)
-        let expected: [(destination: String, stageParent: String, stagePrefix: String)] = [
+        var expected: [(destination: String, stageParent: String, stagePrefix: String)] = [
             (venvDir, venv.parent, venv.leaf + ".staging-"),
             (binDir + "/defenseclaw-gateway", binDir, "defenseclaw-gateway.install-"),
             (binDir + "/defenseclaw", binDir, "defenseclaw.install-"),
         ]
+        if targets.count == 6 {
+            expected += [
+                (binDir + "/defenseclaw-acp", binDir, "defenseclaw-acp.install-"),
+                (dataHome + "/installer", dataHome, "installer.install-"),
+                (dataHome + "/VERSION", dataHome, "VERSION.install-"),
+            ]
+        }
         guard targets.count == expected.count,
               !venv.leaf.isEmpty,
               venvDir == URL(fileURLWithPath: venvDir).standardizedFileURL.path

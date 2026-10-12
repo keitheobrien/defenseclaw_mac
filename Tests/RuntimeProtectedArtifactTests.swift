@@ -5,6 +5,8 @@ import Foundation
 @main
 struct RuntimeProtectedArtifactTests {
     static func main() throws {
+        try validatesFlatPayload()
+        validatesBuiltinUpgrade()
         try decodesProtectedWheel()
         try rejectsInvalidEnvelope()
         try rejectsEmptyPayload()
@@ -15,6 +17,54 @@ struct RuntimeProtectedArtifactTests {
         validatesUpgradeResolverSanitizesAmbientVersion()
         try validatesAuditRecoveryCommandTargetsInstallation()
         print("RuntimeProtectedArtifactTests passed")
+    }
+
+    private static func validatesFlatPayload() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var manifest: [String: Any] = ["schema_version": 3, "runtime_version": "1.0.0", "runtime_tag": "1.0.0", "arch": "arm64"]
+        for (key, name) in [("gateway", "defenseclaw-gateway"), ("wheel", "defenseclaw-1.0.0-py3-none-any.whl"), ("dependency_lock", "runtime-requirements.lock"), ("acp_guard", "defenseclaw-acp"), ("installer", "install.sh"), ("version_file", "VERSION")] {
+            let file = root.appendingPathComponent(name)
+            try Data(name.utf8).write(to: file)
+            manifest[key] = ["file": name, "sha256": RuntimePayload.sha256(of: file)!]
+        }
+        func load(_ value: [String: Any]) throws -> RuntimePayload? {
+            try JSONSerialization.data(withJSONObject: value).write(to: root.appendingPathComponent("payload-manifest.json"))
+            return RuntimePayload.load(from: root)
+        }
+        guard let payload = try load(manifest) else { fail("complete flat payload must load") }
+        expect(!payload.usesProtectedWheel && payload.flatComponents.count == 3, "ACP and upgrade metadata activate together")
+        expect(payload.verifyIntegrity() == nil, "unmodified flat payload verifies")
+        for key in ["gateway", "wheel", "dependency_lock", "acp_guard", "installer", "version_file"] {
+            var missing = manifest
+            missing.removeValue(forKey: key)
+            expect(try load(missing) == nil, "missing \(key) cannot partially install")
+            var traversal = manifest
+            traversal[key] = ["file": "../outside", "sha256": String(repeating: "a", count: 64)]
+            expect(try load(traversal) == nil, "unexpected \(key) path is rejected")
+        }
+        for version in ["1.0.0\n", "1.00.0", "1.0", "2.0.0", "1.0.0-rc1"] {
+            var invalid = manifest
+            invalid["runtime_version"] = version
+            invalid["runtime_tag"] = version
+            expect(try load(invalid) == nil, "invalid flat version is rejected")
+        }
+        var wrongArch = manifest
+        wrongArch["arch"] = "x86_64"
+        expect(try load(wrongArch) == nil, "wrong architecture is rejected")
+        try Data("tampered".utf8).write(to: root.appendingPathComponent("defenseclaw-acp"))
+        expect(payload.verifyIntegrity() != nil, "ACP tampering cannot pass integrity checks")
+    }
+
+    private static func validatesBuiltinUpgrade() {
+        let command = RuntimeUpgradeResolverCommand.builtin(cliPath: "/tmp/quote'path/bin/defenseclaw", home: "/tmp/home", config: "/tmp/config.yaml", venv: "/tmp/venv", releaseTag: "1.0.0")
+        expect(command?.contains("DEFENSECLAW_APP_PATH=none") == true, "upgrading the runtime preserves the standalone Mac app")
+        expect(command?.contains("upgrade --yes --version '1.0.0'") == true, "upgrade is pinned to the reviewed release")
+        expect(command?.contains("'\"'\"'") == true, "selected executable is quoted")
+        for version in ["1.0.0;bad", "1.0.0\n", "2.0.0", "1.00.0"] {
+            expect(RuntimeUpgradeResolverCommand.builtin(cliPath: "/tmp/cli", home: "/tmp/home", config: "/tmp/config", venv: "/tmp/venv", releaseTag: version) == nil, "invalid upgrade version rejected")
+        }
     }
 
     private static func decodesProtectedWheel() throws {

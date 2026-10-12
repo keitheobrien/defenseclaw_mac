@@ -75,11 +75,11 @@ The selected local DefenseClaw installation supplies monitoring data. The app ro
 |---|---|
 | Go gateway REST API | `http://127.0.0.1:<gateway.api_port>` (default 18970) |
 | Audit DB (read-only) | `~/.defenseclaw/audit.db` |
-| Event stream (tail) | `~/.defenseclaw/gateway.jsonl` |
+| Canonical event history | Read-only `audit_events` projections; `gateway.jsonl` fallback for older installations |
 | Plain-text logs (tail) | `~/.defenseclaw/gateway.log`, `~/.defenseclaw/watchdog.log` |
 | Doctor cache | `~/.defenseclaw/doctor_cache.json` |
 | Config | `~/.defenseclaw/config.yaml` + `~/.defenseclaw/.env` |
-| CLI (writes / actions) | `defenseclaw`, `defenseclaw-gateway` (path override in Settings ▸ Connection) |
+| CLI (catalogs / actions) | `defenseclaw`, `defenseclaw-gateway` (path override in Settings ▸ Connection) |
 
 **Token resolution** matches the Python CLI's ladder (`config.py::resolved_token`): env var named by `gateway.token_env` → `DEFENSECLAW_GATEWAY_TOKEN` → `OPENCLAW_GATEWAY_TOKEN` → literal `gateway.token`, with `~/.defenseclaw/.env` consulted because GUI apps inherit no shell environment. `config.yaml` / `.env` are watched for changes so a rotated token is re-resolved live without a relaunch.
 
@@ -87,10 +87,10 @@ Everything the app reads is unauthenticated (`/health`) or read-only; all state 
 
 ## Panels
 
-The sidebar groups 14 panels:
+The sidebar groups 16 panels:
 
 - **Monitor** — Overview, Alerts, Logs, Audit, Activity
-- **Govern** — Skills, MCPs, Plugins, Tools
+- **Govern** — Skills, MCPs, Plugins, Tools, Policies, Sandboxes
 - **Discover** — Inventory, AI Discovery, Runtime, Registries
 - **Configure** — Setup
 
@@ -106,6 +106,14 @@ The dashboard is a faithful port of the TUI's boxes:
 
 Select a connector (the roster chip, a Connectors-table row, or ⌃M) and the Configuration, Enforcement, and Scanners boxes rescope to that connector — including per-connector AIBOM coverage.
 
+### Policies, sandboxes, and inventory
+
+**Policies** exposes posture, opt-in packs, chains, rule families, named policies, rule packs, and sandbox packs. Active-policy thresholds apply across tool calls, prompts, completions, and LLM traffic; edits to inactive policies remain saved until activation. Overview separates base configuration from the gateway’s applied policy identity and account profile.
+
+**Sandboxes** shows status, instances, approval requests, and activity, with reviewed actions for approval, unblock, stop, undo, and workspace review. Unavailable or stale state is visible and cannot authorize changes.
+
+**Inventory** combines per-connector assets with IDE extensions and stable agent identities. IDE inventory includes enablement, AI classification, user, scope, and remote location; observed agents include session counts and first/last-seen details. AI Discovery also separates discovered products from local models.
+
 ### Runtime
 
 The **AI Discovery Runtime** panel shows coverage for inference heartbeat, shadow egress, and agent actions, along with process/connection counts and reported findings. Availability depends on the selected gateway's capabilities and permissions; administrator approval alone does not add sensors to an older runtime. Unsupported gateways show guidance in the Runtime panel.
@@ -114,7 +122,7 @@ The **AI Discovery Runtime** panel shows coverage for inference heartbeat, shado
 
 ### Setup
 
-**Native setup wizards** covering the runtime's setup surface — connector (single / batch / remove), credentials, LLM, guardrail, guardrail actions, skill & MCP scanners, gateway, Cisco AI Defense, Splunk, Splunk dashboards, Galileo, local observability, observability destinations, webhooks, notification routing, custom providers, registries, trusted paths, token rotation, AI discovery, and sandbox. Each wizard is a native form that ends in a review step showing the exact `defenseclaw …` command before it runs, prefills from your live config where relevant so an untouched apply never resets current settings, and validates required fields before Run.
+**Native setup wizards** covering the runtime's setup surface — connector (single / batch / remove), credentials, LLM, guardrail, guardrail actions, skill & MCP scanners, gateway, Cisco AI Defense, Splunk, Splunk dashboards, Galileo, local observability, observability destinations, webhooks, notification routing, custom providers, registries, trusted paths, token rotation, AI discovery, ACP editor agents, redaction, and sandbox. Each wizard is a native form that ends in a review step showing the exact `defenseclaw …` command before it runs, prefills from your live config where relevant so an untouched apply never resets current settings, and validates required fields before Run.
 
 **Config editor** — a typed, sectioned editor whose catalog comes from the installed runtime. A built-in catalog is the offline fallback. Uncatalogued keys remain read-only until the runtime exposes a supported writer. Edits are diff-reviewed with secrets masked, saved through the runtime CLI, and queue a gateway restart.
 
@@ -122,11 +130,11 @@ The menu bar shield reflects live state (healthy / alert count / degraded / offl
 
 ## Verified TUI parity
 
-The app targets DefenseClaw's schema-8 contracts and probes the selected runtime's capabilities. Matching version labels alone do not establish feature parity. Automated tests and source alignment do not certify untested external integrations; see the dated reports in `docs/` for actual coverage.
+The app targets DefenseClaw's schema-9 contracts and probes the selected runtime's capabilities. Matching version labels alone do not establish feature parity. Automated tests and source alignment do not certify untested external integrations; see the dated reports in `docs/` for actual coverage.
 
 - **Enforcement counts** — Hook Calls and Blocks use audit history. Findings use the audit alert queue; legacy installations also group file-backed scan blocks. Canonical findings are not counted again as legacy scan blocks. Per-connector totals can fall back to all-time aggregates.
-- **Alerts** — an audit-backed queue with legacy scan/egress compatibility. Acknowledgement runs through the selected runtime's CLI; the runtime owns persistence. Stream-only entries can be hidden locally.
-- **Logs** — Gateway and Watchdog read plain log files; Verdicts and Otel use bounded canonical audit-database projections on v8, with legacy fallback for older schemas. Unavailable history is explicitly marked stale. Sensitive fields remain redacted; there is no RAW/redaction-off switch.
+- **Alerts** — the runtime’s canonical alert queue, including compatibility events, hook decisions, and user/agent/session attribution, with legacy scan/egress compatibility. Acknowledgement runs through the selected runtime's CLI; the runtime owns persistence. Stream-only entries can be hidden locally.
+- **Logs** — Gateway and Watchdog read plain log files; Verdicts and Otel use bounded canonical audit-database projections, with legacy fallback for older schemas. Unavailable history is explicitly marked stale. Sensitive fields remain redacted; there is no RAW/redaction-off switch.
 - **Runtime** — coverage planes, findings, provider attribution and inventory correlation from the Runtime API. Missing coverage is not a clean-host result. Unsupported gateways show upgrade guidance; CLI commands are exposed only when the selected runtime reports support.
 - **Session-scoped** scans and alerts, silent-bypass counting, doctor cache staleness, connector-filter propagation, and the shared latest-500 / oldest-200 windowing all mirror the runtime.
 

@@ -459,7 +459,15 @@ def check_release_protocol(audit: Audit, mac_root: Path) -> None:
             details.append("retired " + ", ".join(stale))
         audit.fail("combined installer is not on the schema-2 release protocol: " + "; ".join(details))
     else:
-        audit.pass_("combined installer uses signed schema-2 protected runtime artifacts")
+        audit.pass_("legacy protected runtime protocol remains supported")
+    flat_path = mac_root / "scripts/prepare_flat_runtime.py"
+    flat = flat_path.read_text(encoding="utf-8") if flat_path.is_file() else ""
+    required_flat = ("cosign", "verify-blob", "--certificate-identity", "--certificate-oidc-issuer",
+                     "defenseclaw-acp", "schema_version=3", "validate_requirements", "source_commit")
+    if "prepare_flat_runtime.py" not in source or any(token not in flat for token in required_flat) or "loadFlat" not in runtime_installer:
+        audit.fail("1.x flat release protocol is missing authenticated complete-payload installation")
+    else:
+        audit.pass_("1.x flat release includes authenticated gateway, ACP, wheel, lock, and installer metadata")
 
 
 def check_source_baseline(

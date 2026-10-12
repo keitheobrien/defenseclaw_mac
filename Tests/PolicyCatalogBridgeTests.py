@@ -56,11 +56,24 @@ class PolicyCatalogBridgeTests(unittest.TestCase):
         approval = next(a for a in codex["actions"] if a["arguments"][:3] == ["guardrail", "hilt", "off"])
         self.assertEqual(approval["arguments"][-3:], ["--connector", "codex", "--yes"])
         policy = next(v for v in views if v["id"] == "policies")
-        edits = [a for r in policy["rows"] for a in r["actions"] if a["group"].startswith("LLM")]
+        edits = [a for r in policy["rows"] for a in r["actions"] if a["group"].startswith("Policy")]
         self.assertTrue(edits)
         for action in edits:
             self.assertEqual(action["arguments"][:3], ["policy", "edit", "guardrail"])
-            self.assertIn("LLM traffic", action["consequence"])
+            self.assertIn("inactive policy", action["consequence"])
+
+    def test_active_policy_changes_live_unified_thresholds(self):
+        from dataclasses import replace
+        catalog = read_policy_catalog(self.cfg)
+        catalog.policies = [replace(row, active=True) for row in catalog.policies]
+        with patch("defenseclaw.tui.policy_panel.read_policy_catalog", return_value=catalog):
+            data = self.catalog()
+        edits = [a for v in data["views"] if v["id"] == "policies" for r in v["rows"] for a in r["actions"] if a["group"].startswith("Policy")]
+        self.assertTrue(edits)
+        for action in edits:
+            self.assertNotIn("-p", action["arguments"])
+            self.assertIn("tool calls", action["consequence"])
+            self.assertIn("prompts", action["consequence"])
 
     def test_partial_errors_are_visible_and_sandbox_failure_is_not_empty_success(self):
         read = read_policy_catalog(self.cfg)

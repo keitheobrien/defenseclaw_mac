@@ -37,7 +37,7 @@ def snapshot(config, sandbox_json="", sandbox_error=""):
             detail = f"Use {pack.name} ({pack.path}) for {connector or 'all connectors'}."
             if overrides:
                 detail += " Clears connector pack overrides: " + ", ".join(overrides) + "."
-            detail += " Explicit tool thresholds remain in effect. Validate the pack before changing it."
+            detail += " Explicit guardrail thresholds remain in effect. Validate the pack before changing it."
             result.append(action(p.use_pack_intent(value, connector), "Rule pack", detail,
                                  p.pack_weakens(model.packs_for_scope(connector), pack.name)))
             result[-1]["validationArguments"] = ["guardrail", "validate-pack", pack.path, "--json"]
@@ -65,7 +65,8 @@ def snapshot(config, sandbox_json="", sandbox_error=""):
                     detail = "\n".join(f"{e.scope}: block {e.before.block_at} → {e.after.block_at}; alert {e.before.alert_at} → {e.after.alert_at}" for e in change.effects)
                     if change.keep_own:
                         detail += "\nKeep own values: " + ", ".join(change.keep_own)
-                    out.append(action(p.level_intent(kind, level, connector), "Tool " + kind + " level", detail, bool(change.weakened())))
+                    detail += "\nThese levels govern tool calls, prompts, completions and LLM traffic in this scope."
+                    out.append(action(p.level_intent(kind, level, connector), "Guardrail " + kind + " level", detail, bool(change.weakened())))
             for level in p.HILT_LEVELS:
                 out.append(action(p.hilt_intent(level, connector), "Human approval",
                                   f"Set {scope} human approval from {row.hilt} to {level}. This changes when tool calls wait for a human.",
@@ -91,8 +92,11 @@ def snapshot(config, sandbox_json="", sandbox_error=""):
             for kind, levels in (("block", p.BLOCK_LEVELS), ("alert", p.ALERT_LEVELS)):
                 before = getattr(row, kind + "_at")
                 for level in levels:
-                    out.append(action(p.threshold_intent(kind, level, row.name), "LLM " + kind + " level",
-                                      f"{row.name}: {kind} {before} → {level} for LLM traffic through the guardrail proxy. Tool-call thresholds are separate.",
+                    selected_policy = "" if row.active else row.name
+                    effect = ("Changes the live global level for tool calls, prompts, completions and LLM traffic."
+                              if row.active else "Saves this inactive policy; takes effect when activated.")
+                    out.append(action(p.threshold_intent(kind, level, selected_policy), "Policy " + kind + " level",
+                                      f"{row.name}: {kind} {before} → {level}. {effect}",
                                       p.threshold_weakens(before, level)))
             return out
         if model.view == "packs":

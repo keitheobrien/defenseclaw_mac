@@ -23,7 +23,7 @@ with (root / "build.log").open("w") as log:
     subprocess.run(["xcodebuild", "-project", str(root / "DefenseClawMac.xcodeproj"),
                     "-scheme", "DefenseClawMac", "-configuration", "Debug", "-destination", "generic/platform=macOS",
                     "-derivedDataPath", str(root / "build"), "CODE_SIGN_STYLE=Manual", "CODE_SIGN_IDENTITY=-",
-                    "DEVELOPMENT_TEAM=", "PRODUCT_BUNDLE_IDENTIFIER=com.keitheobrien.DefenseClawMac.ParityTest",
+                    "DEVELOPMENT_TEAM=", "ARCHS=arm64", "ONLY_ACTIVE_ARCH=YES", "PRODUCT_BUNDLE_IDENTIFIER=com.keitheobrien.DefenseClawMac.ParityTest",
                     "build"], stdout=log, stderr=subprocess.STDOUT, check=True)
 server = subprocess.Popen([sys.executable, "-u", str(repo / "Tests/Support/parity_fixture.py"), "--serve"],
                           stdout=subprocess.PIPE, text=True)
@@ -33,7 +33,7 @@ try:
     fixture_root = Path(fixture["root"])
     env = {key: os.environ[key] for key in ("PATH", "HOME", "USER", "TMPDIR", "LANG", "LOGNAME") if key in os.environ}
     env.update(DEFENSECLAW_HOME=str(fixture_root), DEFENSECLAW_CONFIG=str(fixture_root / "config.yaml"),
-               DEFENSECLAW_VENV=str(repo.parent / "defenseclaw/.venv"), PYTHONDONTWRITEBYTECODE="1",
+               DEFENSECLAW_VENV=os.environ.get("DEFENSECLAW_TEST_VENV", str(repo.parent / "defenseclaw/.venv")), PYTHONDONTWRITEBYTECODE="1",
                PARITY_SCREENSHOTS=str(root / "screenshots"))
     binary = root / "build/Build/Products/Debug/DefenseClawMac.app/Contents/MacOS/DefenseClawMac"
     args = [str(binary), "-defenseclawBinaryPath", str(fixture_root / "bin/defenseclaw"),

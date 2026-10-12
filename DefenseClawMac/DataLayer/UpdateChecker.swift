@@ -139,10 +139,10 @@ actor UpdateChecker {
         return Self.runtimeInstallerInfo(from: dict, tag: tag)
     }
 
-    /// Read only an explicit CLI/gateway version line. Runtime startup can
+    /// Read only an explicit CLI/gateway/ACP version line. Runtime startup can
     /// emit Go/Sonic warnings containing unrelated version numbers first.
     static func parseVersion(_ output: String) -> String? {
-        let pattern = #"(?im)^\s*defenseclaw(?:-gateway)?(?:,)?\s+(?:version\s+)?v?([0-9]+(?:\.[0-9]+)+(?:[-+][A-Za-z0-9][A-Za-z0-9.+-]*)?)(?=\s|$)"#
+        let pattern = #"(?im)^\s*defenseclaw(?:-gateway|-acp)?(?:,)?\s+(?:version\s+)?v?([0-9]+(?:\.[0-9]+)+(?:[-+][A-Za-z0-9][A-Za-z0-9.+-]*)?)(?=\s|$)"#
         guard let expression = try? NSRegularExpression(pattern: pattern),
               let match = expression.firstMatch(in: output, range: NSRange(output.startIndex..., in: output)),
               let range = Range(match.range(at: 1), in: output) else { return nil }
