@@ -1,9 +1,9 @@
 {
-  "config_version": 8,
+  "config_version": 9,
   "intentional_source_differences": {
     "App/AppState.swift": {
-      "local_sha256": "400bb8bc4ec8d80a787f48e717c9585dfcdcbf39d26ec01dca4cab316d7f5cdc",
-      "reason": "Preserve standalone lifecycle and runtime upgrade controls; add sandbox polling, CLI Activity decisions, snapshot and privilege guards.",
+      "local_sha256": "8365f228775e41ccbe0f7c51be82d12a8150c8fdf5f0595871eaaeecedc8be2e",
+      "reason": "Preserve standalone lifecycle and upgrade ownership; use the 1.x canonical alert JSON and selected runtime upgrader while preserving the standalone app.",
       "upstream_sha256": "20c893580794feee6b6c2d74a912b99304eee22f3c59d00c7233652a77444f09"
     },
     "App/DefenseClawApp.swift": {
@@ -37,9 +37,9 @@
       "upstream_sha256": "7f68499d5e6c723b59da8a016cd1a7bad694dd4cd2ea3f66940ed1308ab0c837"
     },
     "DataLayer/CommandRegistry.swift": {
-      "local_sha256": "e1769931735a8eeb2e4744cbb1e367eb2b20e0f68d6de09f6b2fdf19530d76d5",
-      "reason": "Generated 253-command TUI registry with standalone command identity, capability, quoting and secret protections.",
-      "upstream_sha256": "2457cfa873d329af613e704bf967c32bfb2dbb5dba5491ecb81cb546407abe67"
+      "local_sha256": "f705d06abb87ee4bb530cdce953cfbdcdb82093b60afd3456e108e25f626f2fb",
+      "reason": "Generated exact 251-entry release-1.0.0 TUI registry while retaining standalone input and capability guards.",
+      "upstream_sha256": "95e3920bf24639f7e6a6c284888cbb493feb89fc4d6d8d7959f662035e1a1324"
     },
     "DataLayer/GatewayAdminProtocol.swift": {
       "local_sha256": "13e94d5c984441028ca4cbf0d3d5bc3fafcbd544ed9accddcb5a90ed421c8cc6",
@@ -57,19 +57,24 @@
       "upstream_sha256": "a313917dfd5167559eb127434d754fff279d5dd2b1fc62004311aba3fe98baf2"
     },
     "DataLayer/GatewayClient.swift": {
-      "local_sha256": "db629e8140194d0bf7d5f98e3bc70f3ea79c9dd8483fc7348de9e0608e77d712",
-      "reason": "Read-only sandbox endpoints with strict coverage shape and policy-403 handling; mutations go through CLI Activity.",
-      "upstream_sha256": "b7c498908cce0e5f2adcf2ab30e5cda5f3dae01b65df571cf933613ea0c8ec61"
+      "local_sha256": "2b49ca986d7717c19cacbda70a42e077e331081503175f67fdffd433e5d80d72",
+      "reason": "Retain authenticated bounded loopback transport; remove retired catalog endpoints and project applied policy identity/profile.",
+      "upstream_sha256": "e7f81d412dee64b753685b334b8ef9323278d8d5590d87ca1f4acb1689b4ef19"
     },
     "DataLayer/InstallationContext.swift": {
       "local_sha256": "9ebd112121160ccd006f472b53ab2fed430d06aceb4ebf8485b2167e7c3635aa",
       "reason": "Follow a verified default unmanaged source-launcher venv; preserve explicit and managed selection, config paths and data paths.",
       "upstream_sha256": "888b80795ad128234f97dd093949ebaec7adb415c4c2bf9305893a955cb5e3d7"
     },
+    "DataLayer/InventoryOutputParser.swift": {
+      "local_sha256": "866e2001f91915d0c92f7a8d08e154258e64f0d909b9abbb4c68ff1a8428ecd6",
+      "reason": "Retain bounded mixed-output inventory parsing and expose a bounded JSON object projection for agent identities.",
+      "upstream_sha256": "eecd4c9343acf48c912f4ecb46169058e850c044ccb7ebe240cdeb89fc13e28d"
+    },
     "DataLayer/Models.swift": {
-      "local_sha256": "6f024ca58bf963f7e533c4ef55e558ea670dd139aa406bac836bf25dd7a93e28",
-      "reason": "Current model provenance/filter/grouping types plus distinct productRows; legacy grouping retained for compatibility.",
-      "upstream_sha256": "29310cb78413c8b63cfb0e3ae8e3869b39aca9a1ff1fb9215d286b8b05be0a66"
+      "local_sha256": "89844477e9175b22042be4ebb33fbffa7179a8a3b9bd77724ec4198de85d601c",
+      "reason": "Retain standalone models and add IDE inventory category and canonical alert facts.",
+      "upstream_sha256": "133ed7fde49cacc7c84480144a8304611b799d5fe0869675fe5f053abda7185c"
     },
     "DataLayer/PolicyCatalog.swift": {
       "local_sha256": "4afcf77910c073031a612dac734aaf501b7af2de8b9ab3291e660f963a094591",
@@ -82,13 +87,23 @@
       "upstream_sha256": "missing"
     },
     "DataLayer/RuntimeInstallFilesystem.swift": {
-      "local_sha256": "c5daeef09ac11bf791a053fcfdfe054edf538a7eee22041b4f3d3b8ecb222569",
-      "reason": "Standalone safe install ownership/partial/source/custom runtime handling retained.",
+      "local_sha256": "edba2f17f38116c5a3b00bb27aa89152ea5e4d85ebf7c3f17811e1d03d642551",
+      "reason": "Preserve no-replace inode-bound installation; extend exact journal allowlist to the six-component ACP transaction.",
       "upstream_sha256": "missing"
     },
     "DataLayer/RuntimeInstaller.swift": {
-      "local_sha256": "e82ccab0fcd245e75fbfcabd68c4ef2d154b74ed23715af168caa3e5ec82502f",
-      "reason": "Standalone signed protected-runtime installation and upgrade behavior retained.",
+      "local_sha256": "837064f10280af4b278d46053292278f18caf9014e5c92cf451ef39c65a486d7",
+      "reason": "Support authenticated schema-3 flat 1.x gateway/ACP/wheel/lock/installer/VERSION; preserve source/newer/existing runtimes and rollback all staged components.",
+      "upstream_sha256": "missing"
+    },
+    "DataLayer/RuntimeV1Alerts.swift": {
+      "local_sha256": "b99ea9a014ebcb20ec6f36f94897561cd06010f6a2a5a8c54b3d5b2081daaf01",
+      "reason": "Project canonical release-1.0 alerts, agent attribution, hook decisions and actionable ERROR severity without duplicating old event selection.",
+      "upstream_sha256": "missing"
+    },
+    "DataLayer/RuntimeV1Inventory.swift": {
+      "local_sha256": "c45516747f10db54fa11580b9b56d13863fea2b85c5944b0c0a0575453d248e0",
+      "reason": "Project release-1.0 IDE extensions and stable agent identities with bounded counts and allowlisted details.",
       "upstream_sha256": "missing"
     },
     "DataLayer/SkillScanner.swift": {
@@ -102,8 +117,8 @@
       "upstream_sha256": "5ffc9f7f08e3613d7976201a71d1acaf1d0c05f57b81035dc7fa68d86543d480"
     },
     "DataLayer/UpdateChecker.swift": {
-      "local_sha256": "22084d54a4412f631422e4fbabd8fc7db68fa0e9bcf7a18da409cfdde2f260e0",
-      "reason": "Standalone GitHub release repository, app asset naming, digest/signature validation and rollback retained.",
+      "local_sha256": "5999b054697d0678db75d1fd1b948ac491535f1204aa9842f0980c78f1b459b8",
+      "reason": "Preserve standalone release identity and newer/source-runtime protections; accept only explicit CLI, gateway or ACP version lines.",
       "upstream_sha256": "d512b5f206e3f3defc70abcf4f4c5da578d4947051039d204a2042fe6abcb24a"
     },
     "DesignSystem/InspectorLayoutPolicy.swift": {
@@ -116,6 +131,11 @@
       "reason": "Standalone tooltip timing and toolbar help retained; covered by toolbar-help tests.",
       "upstream_sha256": "83df45f06cd85590d5d400d0eb2c493c384fc0bc503840cdc7a35f255a60e1e7"
     },
+    "Features/AlertsView.swift": {
+      "local_sha256": "f87f620b1200a87976cfab32fca6bc89352fd4c4cc8be0e2338a20794a7fbecb",
+      "reason": "Show canonical runtime facts and visible load failures while preserving selected alert detail and acknowledgement safeguards.",
+      "upstream_sha256": "e05687e14ee038eac03801c0fa07a9086c6c6edac150257e0086ea67e977457b"
+    },
     "Features/AppSettingsView.swift": {
       "local_sha256": "fd0b01dc09c0801169a3efd5e593682751523b2d560208dbc73313da1330b9f1",
       "reason": "Standalone runtime/app updater preferences retained; sandbox notification toggle added.",
@@ -127,13 +147,13 @@
       "upstream_sha256": "f7bd80582cb9d0ddcf5025c733fa6faaa6ebd0fecb6ecbb6de208932c445321a"
     },
     "Features/ConfigEditorDefinitions.swift": {
-      "local_sha256": "34e28acc3bc60ab870806c006716f08f5ce5a41ebb09ab66742a896ac699950d",
-      "reason": "Current OpenShell fields/admin locks and derived-port validation; older-runtime offline fallback retained.",
-      "upstream_sha256": "c6e3e2abb506bdc2a4615d4948f85fa7d8f5fa48c1e82889cb4b7eea504e44d7"
+      "local_sha256": "29dc37210ccffc8dedb82453b2dbb5bf7b6767416c6b41a8e67121fed9136174",
+      "reason": "Adopt config-v9 admission, rule-pack and scanner names while retaining standalone safe editor transport.",
+      "upstream_sha256": "f13febb79e83f01f8d9d3e2fd7c16c218a32a7221c2dc91a98b9027181c8eb5f"
     },
     "Features/DiscoverViews.swift": {
-      "local_sha256": "68def93b07031155694bafda64d2a84c61124c868716b4b7419cd3d6b91c93f9",
-      "reason": "Products/models split and stable inspector container; standalone existing inventory behaviors retained.",
+      "local_sha256": "34d927a572731969ad9e0dd2bd6365aabd9f91c2ccd35d567b972f61f84ed430",
+      "reason": "Add connector-independent IDE inventory, observed agent identities, empty-connector scans and generation guards.",
       "upstream_sha256": "c625a1aeb85a2d78df247625d95103180de6fa159371112a68960d09ff4419b1"
     },
     "Features/FirstRunView.swift": {
@@ -157,13 +177,13 @@
       "upstream_sha256": "6f5731199f8bffbf435b110e318c443450799ca9792e8ea096eb06cb72ed82ee"
     },
     "Features/OverviewView.swift": {
-      "local_sha256": "b3406eb35118a9a122d7e05b341182ef751ced3fb4d98a8400638938562207cf",
-      "reason": "Existing standalone gateway start/doctor guidance retained; sandbox status card added.",
+      "local_sha256": "734b1928dfbf15af7191ec565e2b9f409c3d8ec362491bea52b0e75b225a14ad",
+      "reason": "Display applied policy generation/digest, account profile and admission overrides separately from base configuration; preserve standalone privilege controls.",
       "upstream_sha256": "56bf72998cb694f88941d78ca73b97a33ef1d58366dd65cca537cec0f0d179a4"
     },
     "Features/PoliciesView.swift": {
-      "local_sha256": "d365347e677dd84063478a9de874f72c4ae2f372536b1374e815b2a455fd92cc",
-      "reason": "New native seven-view policy panel with stale/managed guards and consequence/weakening confirmation.",
+      "local_sha256": "b52496dc27a9cb184ec8dc4106e5c338648aa3665f725a880adc185d6a8d9834",
+      "reason": "Retain native seven-view policy catalog and safeguards; describe unified active thresholds across four protection surfaces.",
       "upstream_sha256": "missing"
     },
     "Features/RedactionPolicyView.swift": {
@@ -177,22 +197,22 @@
       "upstream_sha256": "c7552b68099f9a4e6ba9d8ea1f55e2517fd192cfb12b56c10b99d5b1d10c2102"
     },
     "Features/SetupDefinitions.swift": {
-      "local_sha256": "b5074431198fff7dd2f9323f9117840d2a411847d5039e749022803f27b461af",
-      "reason": "Current sandbox and ACP builders while retaining standalone provider/scanner safety.",
-      "upstream_sha256": "c136c6d5c73772d4b00756e12b32422a522001c1d7c4c1ebdf7e5c763437b639"
+      "local_sha256": "a04cfcd8396723daead7ecc03a8bb06aba12bb04f1c36fb6dee84799effbb5a2",
+      "reason": "Align removed/renamed flags to release 1.0 while preserving secret transport, runtime-discovered catalogs and standalone wizard validation.",
+      "upstream_sha256": "ca759f22b9fbd47aa06006308fdf67b2434a365fb0739e6c8221704e02e80a3c"
     },
     "Features/SetupView.swift": {
-      "local_sha256": "313cd6997ad7bc1c749962e6cd9fe5fc25b387a870a3f3ad9d948df1e733691d",
-      "reason": "Pass selected configuration to sandbox lock-aware fallback; capability-gated redaction entry.",
-      "upstream_sha256": "0570f0f558cbbb63f4a0c439141e8031e9fe4b26ca6ce9e28e7a545b2e954689"
+      "local_sha256": "f489402b7d4a22b297d70c4b008d1db865d43539af40ba88327303f59a05044c",
+      "reason": "Preserve standalone recorded and validated setup flow using release-1.0 arguments.",
+      "upstream_sha256": "a935c5955c6458bc950abdf06e0245c92b3cfcf6893bbb9970817736d1437841"
     },
     "Resources/policy_catalog_bridge.py": {
-      "local_sha256": "5f94c5ca4261f4bbcc4baa207b9effa84bf517754df5c351979968230c1cf7b8",
-      "reason": "Read-only projection of selected runtime TUI policy model; friendly unsupported-module error on older releases; no config dump or mutations.",
+      "local_sha256": "6dd70aa3d4a79b60aa69d0d85e7e5d20070967facea3f45dcd7345de44ee8ec8",
+      "reason": "Use released TUI policy catalog read-only; active policy thresholds omit -p and apply live while inactive edits remain policy-specific.",
       "upstream_sha256": "missing"
     }
   },
-  "mac_app_version": "1.1.26",
+  "mac_app_version": "1.1.27",
   "runtime_version": "1.0.0",
-  "upstream_commit": "95159fdb849d265f31e31a0ef92eff5e40ebbee0"
+  "upstream_commit": "57698deb67c902e563ed10114a20dbab010f8922"
 }

@@ -33,7 +33,6 @@ actor GatewayClient {
     private let responseByteLimit: Int
 
     static let defaultTimeout: TimeInterval = 5
-    static let pluginTimeout: TimeInterval = 90
     static let scanTimeout: TimeInterval = 120
     static let maximumResponseBytes = 4 * 1024 * 1024
     private static let pathSegmentCharacters = CharacterSet.alphanumerics
@@ -445,79 +444,32 @@ actor GatewayClient {
         (try await getJSON("/status") as? [String: Any]) ?? [:]
     }
 
-    // MARK: - Catalogs
-
-    func skills() async throws -> [SkillItem] {
-        let json = try await getJSON("/skills")
-        let rows = (json as? [[String: Any]]) ?? ((json as? [String: Any])?["skills"] as? [[String: Any]]) ?? []
-        return rows.map { r in
-            SkillItem(
-                key: (r["key"] as? String) ?? (r["skillKey"] as? String) ?? (r["name"] as? String) ?? "?",
-                name: (r["name"] as? String) ?? (r["key"] as? String) ?? "?",
-                version: (r["version"] as? String) ?? "—",
-                source: (r["source"] as? String) ?? ((r["bundled"] as? Bool) == true ? "bundled" : "custom"),
-                enabled: (r["enabled"] as? Bool) ?? true,
-                bundled: (r["bundled"] as? Bool) ?? false
-            )
+    /// Project only the policy identity fields shown by the 1.0 TUI. Directory
+    /// verification and profile matching remain the gateway's responsibility.
+    func appliedPolicy(user: String, connector: String, resolveProfile: Bool) async throws -> [String: String] {
+        let status = try await status()
+        let policy = status["policy"] as? [String: Any] ?? [:]
+        var fields: [String: String] = [:]
+        if let digest = policy["effective_digest"] as? String ?? policy["effective_policy_digest"] as? String, !digest.isEmpty {
+            fields["Policy digest"] = digest
+            fields["Generation"] = String(describing: policy["generation"] ?? "unknown")
         }
-    }
-
-    func mcps() async throws -> [MCPItem] {
-        let json = try await getJSON("/mcps")
-        let rows = (json as? [[String: Any]]) ?? ((json as? [String: Any])?["mcps"] as? [[String: Any]]) ?? []
-        return rows.map { r in
-            MCPItem(
-                name: (r["name"] as? String) ?? "?",
-                transport: (r["transport"] as? String) ?? (r["type"] as? String) ?? "stdio",
-                endpoint: (r["endpoint"] as? String) ?? (r["url"] as? String) ?? (r["command"] as? String) ?? "—",
-                version: (r["version"] as? String) ?? "—",
-                enabled: (r["enabled"] as? Bool) ?? true,
-                bundled: (r["bundled"] as? Bool) ?? false
-            )
+        guard resolveProfile else { return fields }
+        let data = try await request("GET", "/api/v1/guardrail/profiles/resolve",
+            queryItems: [URLQueryItem(name: "user", value: user), URLQueryItem(name: "connector", value: connector)])
+        guard let profile = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let effective = profile["effective"] as? [String: Any] else {
+            throw GatewayError.badResponse("The gateway returned no effective profile settings.")
         }
-    }
-
-    func plugins() async throws -> [PluginItem] {
-        let dict = try await status()
-        let rows = (dict["plugins"] as? [[String: Any]]) ?? []
-        return rows.map { r in
-            PluginItem(
-                name: (r["name"] as? String) ?? "?",
-                version: (r["version"] as? String) ?? "—",
-                category: (r["category"] as? String) ?? (r["kind"] as? String) ?? "plugin",
-                enabled: (r["enabled"] as? Bool) ?? true
-            )
+        fields["Account"] = user
+        fields["Profile"] = (profile["profile"] as? String)?.nonEmpty ?? "Global configuration"
+        for (key, label) in [("mode", "Mode"), ("rule_pack", "Rule pack"), ("rule_pack_dir", "Rule pack path"), ("block_at", "Block at"), ("alert_at", "Alert at")] {
+            if let value = effective[key] as? String, !value.isEmpty { fields[label] = value }
         }
-    }
-
-    func toolsCatalog() async throws -> [ToolItem] {
-        let json = try await getJSON("/tools/catalog")
-        let rows = (json as? [[String: Any]]) ?? ((json as? [String: Any])?["tools"] as? [[String: Any]]) ?? []
-        return rows.map { r in
-            ToolItem(
-                name: (r["name"] as? String) ?? "?",
-                summary: (r["description"] as? String) ?? "",
-                signature: (r["signature"] as? String) ?? (r["schema"] as? String) ?? "",
-                state: .allow,
-                usageCount: (r["usage_count"] as? Int) ?? (r["usageCount"] as? Int) ?? 0
-            )
-        }
+        return fields
     }
 
     // MARK: - Mutations (parity with TUI write actions)
-
-    func setSkill(key: String, enabled: Bool) async throws {
-        try await post(enabled ? "/skill/enable" : "/skill/disable", ["skillKey": key])
-    }
-
-    func setMCP(name: String, enabled: Bool) async throws {
-        try await post(enabled ? "/mcp/enable" : "/mcp/disable", ["name": name])
-    }
-
-    func setPlugin(name: String, enabled: Bool) async throws {
-        try await post(enabled ? "/plugin/enable" : "/plugin/disable",
-                       ["pluginName": name], timeout: Self.pluginTimeout)
-    }
 
     func enforceBlock(targetType: String, targetName: String, reason: String) async throws {
         try await post("/enforce/block",

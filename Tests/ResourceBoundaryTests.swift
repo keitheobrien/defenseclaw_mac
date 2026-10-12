@@ -47,6 +47,7 @@ struct ResourceBoundaryTests {
         try registryEnforcesAggregateMaterializationLimit()
         try await eventReaderRejectsOversizedRecords()
         try await eventReaderEnforcesAggregateRetainedByteLimit()
+        try await gatewayProjectsAppliedPolicy()
         try await gatewayAcceptsLegitimateResponse()
         try await gatewayDecodesOptionalAIDiscoveryMetadata()
         try await gatewayRuntimeCapabilities()
@@ -260,6 +261,22 @@ struct ResourceBoundaryTests {
         expect(retainedBytes <= 420, "aggregate retained bytes stay within the configured budget")
         expect(gatewayRows.count + watchdogRows.count < 12, "oldest records are evicted across stream buffers")
         expect(watchdogRows.last?.message.contains("watchdog-05") == true, "newest normal record remains visible")
+    }
+
+    private static func gatewayProjectsAppliedPolicy() async throws {
+        StubGatewayURLProtocol.statusCode = 200
+        StubGatewayURLProtocol.headers = [:]
+        // Both routes deliberately receive the same fixture; only the typed
+        // allowlisted projections may leave GatewayClient.
+        StubGatewayURLProtocol.body = Data(#"{"policy":{"effective_digest":"digest-v9","generation":9},"profile":"engineers","effective":{"mode":"action","block_at":"HIGH","alert_at":"LOW","rule_pack":"default","secret":"never project"},"token":"never project"}"#.utf8)
+        let client = gatewayClient(maximumResponseBytes: 4096)
+        let fields = try await client.appliedPolicy(user: "fixture", connector: "codex", resolveProfile: true)
+        expect(fields["Policy digest"] == "digest-v9" && fields["Generation"] == "9", "effective policy identity is projected")
+        expect(fields["Profile"] == "engineers" && fields["Block at"] == "HIGH", "effective account profile is projected")
+        expect(!fields.values.contains("never project"), "non-display response fields never reach the overview")
+        StubGatewayURLProtocol.body = Data("{}".utf8)
+        do { _ = try await client.appliedPolicy(user: "fixture", connector: "codex", resolveProfile: true); fail("missing profile must not look healthy") }
+        catch GatewayError.badResponse { }
     }
 
     private static func gatewayAcceptsLegitimateResponse() async throws {
@@ -477,8 +494,6 @@ struct ResourceBoundaryTests {
             url: "",
             authEnv: "",
             enabled: true,
-            autoSync: false,
-            syncIntervalHours: 24,
             lastSync: "",
             lastStatus: ""
         )

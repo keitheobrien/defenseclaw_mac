@@ -57,6 +57,8 @@ struct UpdateCheckerSafetyTests {
     private static func parsesOnlyRuntimeVersionLines() {
         let warning = "WARNING: sonic/ast only supports (go1.17~1.26 and amd64 CPU) or (go1.20~1.26 and arm64 CPU)"
         expect(UpdateChecker.parseVersion(warning + "\ndefenseclaw, version 0.8.10\n") == "0.8.10", "compiler warnings cannot hide an older runtime update")
+        expect(UpdateChecker.parseVersion("defenseclaw-acp version 1.0.0 (commit=57698deb, built=today)") == "1.0.0", "ACP uses the same pinned release version verification")
+        expect(UpdateChecker.parseVersion("defenseclaw-other version 1.0.0") == nil, "unknown executables cannot attest a runtime version")
         expect(UpdateChecker.parseVersion(warning) == nil, "a warning alone is not a runtime version")
         expect(UpdateChecker.parseVersion("defenseclaw-gateway version 0.8.10 (commit abc, built today)") == "0.8.10", "gateway release version parses")
         expect(UpdateChecker.parseVersion("defenseclaw-gateway 0.8.10-dev.runtime-repair") == "0.8.10-dev.runtime-repair", "source identity suffix is retained")

@@ -93,6 +93,8 @@ struct PanelNativeSmokeTests {
                                                  mutation: false, category: "diagnostics", origin: "Parity fixture")
             precondition(version.succeeded && version.output.contains("1.0.0"))
             precondition(!state.activity.entries.isEmpty, "CLI command must be recorded in Activity")
+            state.installedRuntimeVersion = "1.0.0"
+            await state.refreshAlerts()
             let panels: [(PanelID, AnyView)] = [
                 (.overview, AnyView(OverviewView())), (.alerts, AnyView(AlertsView())),
                 (.logs, AnyView(LogsView())), (.audit, AnyView(AuditView())),
@@ -109,6 +111,8 @@ struct PanelNativeSmokeTests {
             }
             let discovery = try! await state.gateway.aiUsage()
             precondition(discovery.modelRows.count == 1, "fixture model must be separate from product rows")
+            await show("inventory-ide", AnyView(InventoryView(initialCategory: .idePlugins)))
+            await show("inventory-identities", AnyView(InventoryView(initialCategory: .agents)))
             await show("models", AnyView(LocalModelsView(models: discovery.modelRows, search: "")))
             state.selectedPanel = .sandboxes
             await state.refreshSandboxes()

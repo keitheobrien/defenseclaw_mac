@@ -46,8 +46,8 @@ struct PoliciesView: View {
                 Button("Refresh") { Task { await load() } }.disabled(loading || running)
             }
             Text(viewID == "policies"
-                 ? "Named policy thresholds apply to LLM traffic through the guardrail proxy."
-                 : "Posture shows effective tool-call protection, including inherited values.")
+                 ? "The active policy uses global guardrail levels; inactive policy changes take effect on activation."
+                 : "Levels apply to tool calls, prompts, completions and LLM traffic, including inherited values.")
                 .font(.caption).foregroundStyle(.secondary)
             if let message = error ?? catalog?.error, !message.isEmpty {
                 Label(message, systemImage: "exclamationmark.triangle")

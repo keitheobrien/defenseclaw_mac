@@ -200,6 +200,7 @@ final class AppState {
         }
     }
 
+    var alertLoadError: String?
     @ObservationIgnored private var alertRefreshInProgress = false
 
     var updateOperationInProgress: Bool {
@@ -485,6 +486,7 @@ final class AppState {
     /// intentionally remain process-wide.
     private func resetInstallationScopedState() {
         installedRuntimeVersion = nil
+        alertLoadError = nil
         runtimeSetupCommands = nil
         runtimeDiscoveryCommands = nil
         runtimeVersionError = nil
@@ -856,12 +858,24 @@ final class AppState {
                 && ((branch == "passthrough" && $0.looksLikeLLM) || branch == "shape")
         }.count
 
+        var canonicalRows: [AuditEvent]?
+        if installedRuntimeVersion?.hasPrefix("1.") == true {
+            let result = await cli.run(arguments: ["alerts", "--json", "--limit", "500"], mutation: false)
+            guard installationSnapshotIsCurrent(generation) else { return }
+            guard result.succeeded, let parsed = RuntimeV1Alerts.parse(result.output) else {
+                alertLoadError = "The runtime alert list could not be refreshed. Previously loaded alerts may be stale; retry Refresh or review runtime diagnostics."
+                return
+            }
+            canonicalRows = parsed
+        }
+        alertLoadError = nil
         var rows: [AlertRow] = queue.map { .audit($0) }
         rows += blocks.map { .scan($0) }
         rows += egress.suffix(100).filter {
             let decision = $0.decision.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             return (decision != "allow" && decision != "allowed") || $0.looksLikeLLM
         }.map { .egress($0) }
+        if let canonicalRows { rows = canonicalRows.map { .audit($0) } }
         rows.sort { $0.timestamp > $1.timestamp }
 
         let fresh = rows.filter { !dismissedIDs.contains($0.id) }
@@ -897,7 +911,7 @@ final class AppState {
         // Publish only on real row changes so Table does not re-diff mid-gesture.
         // These adjacent assignments contain no suspension point, preventing a
         // frame where the badge and the detailed alert list disagree.
-        if fresh.map(\.id) != unackedAlerts.map(\.id) {
+        if fresh != unackedAlerts {
             unackedAlerts = fresh
         }
         overviewEnforcementMetrics = nextMetrics
@@ -1506,9 +1520,15 @@ final class AppState {
         guard let runtimeUpdate = availableRuntimeUpdate,
               let installed = installedRuntimeVersion,
               UpdateChecker.isNewer(runtimeUpdate.version, than: installed) else { return true }
-        guard let resolverCommand = RuntimeUpgradeResolverCommand.authenticated(
-            releaseTag: runtimeUpdate.tag
-        ) else {
+        let upgradeCommand: String?
+        if runtimeUpdate.version.hasPrefix("1."), let selectedCLI = await cli.locateBinary() {
+            upgradeCommand = RuntimeUpgradeResolverCommand.builtin(cliPath: selectedCLI,
+                home: installationContext.homeRoot.path, config: installationContext.configURL.path,
+                venv: installationContext.venvURL.path, releaseTag: runtimeUpdate.tag)
+        } else {
+            upgradeCommand = RuntimeUpgradeResolverCommand.authenticated(releaseTag: runtimeUpdate.tag)
+        }
+        guard let resolverCommand = upgradeCommand else {
             let failure = """
             The available release identifier is not canonical, so no copy/paste command was produced. No installed files or services were changed. Follow the authenticated release-asset instructions at https://cisco-ai-defense.github.io/defenseclaw/docs/get-started/upgrade/.
             """
@@ -1518,7 +1538,7 @@ final class AppState {
             return false
         }
         let guidance = """
-        Runtime upgrade was not started; no installed files or services were changed. Quit DefenseClaw, then copy the authenticated resolver command and run it in Terminal. It runs in latest mode without --version so tested-source policy, the 0.8.4 bridge, rollback, migrations, and health checks remain mandatory.
+        Runtime upgrade was not started; no installed files or services were changed. Quit DefenseClawMac, then copy the command and run it in Terminal. The selected runtime's release-owned upgrader handles rollback, migrations and health checks. The 1.0 upgrade migrates configuration to schema 9, preserves the old audit database in the rollback snapshot, starts a new audit history and defaults retention to seven days. The standalone Mac app is preserved.
         """
         runtimeUpgradeLogTail = ""
         runtimeUpgradeLog = guidance

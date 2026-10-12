@@ -3,10 +3,32 @@ import Foundation
 @main
 struct ConnectorInventoryCompatibilityTests {
     static func main() {
+        runtimeV1Inventory()
         skillDirectoriesMatchCurrentConnectors()
         mcpSourcesMatchCurrentConnectors()
         retiredConnectorsHaveNoInventorySources()
         print("ConnectorInventoryCompatibilityTests passed")
+    }
+
+    private static func runtimeV1Inventory() {
+        let alerts = RuntimeV1Alerts.parse(#"[{"id":"compat","timestamp":"2026-10-12T12:00:00Z","action":"tool-result-pii-alert","severity":"ERROR","target":"tool","agent_identity_id":"agent-1","decision":"result withheld","secret":"never project"}]"#)
+        expect(alerts?.first?.severity == .high && alerts?.first?.target == "tool", "canonical compatibility alerts retain actionable severity and target")
+        expect(alerts?.first?.runtimeFacts.contains { $0.value == "agent-1" } == true, "canonical alert agent attribution is retained")
+        expect(alerts?.first?.runtimeFacts.contains { $0.value == "never project" } == false, "alert projection omits unlisted metadata")
+        let blocked = RuntimeV1Alerts.parse(#"[{"id":"finding","timestamp":"2026-10-12T12:00:00Z","action":"scan-finding","severity":"HIGH","decision":"blocked (action mode)"}]"#)!.first!
+        expect(blocked.isBlockClass && AlertRow.audit(blocked).kind == "scan", "canonical findings retain scan and block filters")
+        expect(RuntimeV1Alerts.parse("[]")?.isEmpty == true, "valid empty alert queue")
+        expect(RuntimeV1Alerts.parse(#"[{"id":"broken"}]"#) == nil, "malformed alerts are not clean success")
+        let rows = RuntimeV1Inventory.ideRows(["ide_plugins": [["plugin_id": "fixture.ai", "ide_product": "Code", "user_name": "fixture", "enabled": "disabled", "is_ai": true, "version": "2.0", "secret": "never project"]]])
+        expect(rows.count == 1 && rows[0].category == .idePlugins, "IDE-only scan is represented")
+        expect(rows[0].status == "disabled" && rows[0].detail.contains("AI extension"), "IDE filter fields retain enablement and AI classification")
+        expect(rows[0].fields.contains { $0.value == "fixture" }, "IDE user identity is retained")
+        expect(!rows[0].fields.contains { $0.value == "never project" }, "only allowlisted IDE fields are displayed")
+        let result = RuntimeV1Inventory.agentRows(#"{"identities":[{"agent_id":"agent-1","connector":"codex","user_id":"fixture","sessions_seen":3}],"total":20,"next_cursor":"next"}"#)
+        expect(result?.items.first?.name == "agent-1" && result?.items.first?.connector == "codex", "stable agent ids retain connector scope")
+        expect(result?.note.contains("1 of 20") == true, "bounded identity lists disclose omitted rows")
+        expect(RuntimeV1Inventory.agentRows("not JSON") == nil, "malformed identities are not empty success")
+        expect(RuntimeV1Inventory.agentRows(#"{"identities":[]}"#)?.items.isEmpty == true, "empty valid identity inventory is accepted")
     }
 
     private static func skillDirectoriesMatchCurrentConnectors() {

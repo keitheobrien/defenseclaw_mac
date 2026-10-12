@@ -34,7 +34,7 @@ code = source[start + len(marker):].split("\nACP_PROTOCOL_CHECK\n", 1)[0]
 assert start < source.index('gh release download'), "unsupported payloads must fail before download"
 for version, allowed in [
     ("0.8.10", True), ("0.8.9", True), ("0.8.11", False), ("0.9.0", False),
-    ("1.0.0", False), ("0.8.11-rc1", False), ("0.8.10+source", False),
+    ("1.0.0", True), ("2.0.0", False), ("0.8.11-rc1", False), ("0.8.10+source", False),
     ("0.08.10", False), ("0.8", False), ("0.8.10\n", False),
 ]:
     result = subprocess.run([sys.executable, "-", version], input=code, text=True, capture_output=True)

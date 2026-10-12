@@ -76,10 +76,13 @@ struct AlertsView: View {
         VStack(spacing: 0) {
             header
             Divider()
+            if let error = appState.alertLoadError {
+                Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(Cisco.orange).padding(8)
+            }
             if rows.isEmpty {
                 DCEmptyState(
-                    title: "No alerts",
-                    message: appState.unackedAlerts.isEmpty
+                    title: appState.alertLoadError == nil ? "No alerts" : "Alerts unavailable",
+                    message: appState.alertLoadError != nil ? "The runtime could not provide a current alert snapshot." : appState.unackedAlerts.isEmpty
                         ? "No unacknowledged security findings. New blocks, scan findings, and egress bypasses appear here live."
                         : "No alerts match the current filters.",
                     systemImage: "checkmark.shield"
@@ -215,6 +218,9 @@ struct AlertsView: View {
                     ("Run ID", row.runID),
                 ].filter { !$0.1.isEmpty })
 
+                if case .audit(let event) = row, !event.runtimeFacts.isEmpty {
+                    KeyValueGrid(pairs: event.runtimeFacts.map { ($0.label, $0.value) })
+                }
                 let structured = StructuredDetailParser.pairs(row.details)
                 let safeMetadata = structured.isEmpty
                     ? StructuredDetailParser.safeMetadataPairs(row.details)
@@ -306,7 +312,7 @@ struct AlertsView: View {
             var selectedAuditID: String?
             if case .audit(let event) = row {
                 selectedAuditID = event.id
-                if let fullEvent = await appState.audit.event(id: event.id) {
+                if event.eventType != "runtime-alert", let fullEvent = await appState.audit.event(id: event.id) {
                     detailRow = .audit(fullEvent)
                 }
                 guard installationGeneration == appState.installationGeneration else { return }

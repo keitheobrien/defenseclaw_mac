@@ -635,7 +635,8 @@ struct RuntimeInstallFilesystemTests {
     }
 
     private static func interruptedActivationJournalRecoversEveryCutPoint() {
-        for activatedCount in 0...3 {
+        for componentCount in [3, 6] {
+        for activatedCount in 0...componentCount {
             withTemporaryHome { home in
                 let dataHome = home.appendingPathComponent(".defenseclaw")
                 let binDir = home.appendingPathComponent(".local/bin")
@@ -670,12 +671,23 @@ struct RuntimeInstallFilesystemTests {
                         ".venv/bin/defenseclaw"
                     ).path
                 )
-                let destinations = [
+                var destinations = [
                     dataHome.appendingPathComponent(".venv"),
                     binDir.appendingPathComponent("defenseclaw-gateway"),
                     binDir.appendingPathComponent("defenseclaw"),
                 ]
-                let stages = [venvStage, gatewayStage, cliStage]
+                var stages = [venvStage, gatewayStage, cliStage]
+                if componentCount == 6 {
+                    for (parent, name) in [(binDir, "defenseclaw-acp"), (dataHome, "installer"), (dataHome, "VERSION")] {
+                        let stage = parent.appendingPathComponent("\(name).install-\(UUID().uuidString)")
+                        if name == "installer" {
+                            try FileManager.default.createDirectory(at: stage, withIntermediateDirectories: false)
+                            try Data("installer".utf8).write(to: stage.appendingPathComponent("install.sh"))
+                        } else { try Data(name.utf8).write(to: stage) }
+                        stages.append(stage)
+                        destinations.append(parent.appendingPathComponent(name))
+                    }
+                }
                 let targets = try RuntimeInstallFilesystem.prepareActivationTargets(
                     Array(zip(stages, destinations)).map {
                         (staged: $0.0.path, destination: $0.1.path)
@@ -707,6 +719,7 @@ struct RuntimeInstallFilesystemTests {
                     expect(!lexicalPathExists(path), "crash recovery removes only its staged inode")
                 }
             }
+        }
         }
     }
 

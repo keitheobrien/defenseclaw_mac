@@ -44,6 +44,10 @@ struct InventoryView: View {
     @State private var warning: String?
     @State private var lastScan: Date?
 
+    init(initialCategory: InventoryCategory? = nil) {
+        _tab = State(initialValue: initialCategory?.rawValue ?? "Summary")
+    }
+
     private var category: InventoryCategory? {
         InventoryCategory.allCases.first { $0.rawValue == tab }
     }
@@ -52,7 +56,7 @@ struct InventoryView: View {
         guard let category else { return [] }
         return items.filter { item in
             guard item.category == category else { return false }
-            guard appState.connectorFilterAllows(item.connector) else { return false }
+            guard item.category == .idePlugins || appState.connectorFilterAllows(item.connector) else { return false }
             let state = "\(item.status) \(item.verdict) \(item.detail)".lowercased()
             if statusFilter != "all", !state.contains(statusFilter) { return false }
             guard !search.isEmpty else { return true }
@@ -71,7 +75,7 @@ struct InventoryView: View {
     /// Items visible under the shared filter (for the Summary stat cards and
     /// segmented tab counts).
     private var scopedItems: [InventoryItem] {
-        items.filter { appState.connectorFilterAllows($0.connector) }
+        items.filter { $0.category == .idePlugins || appState.connectorFilterAllows($0.connector) }
     }
 
     private var selectedItem: InventoryItem? {
@@ -83,6 +87,7 @@ struct InventoryView: View {
         switch category {
         case .skills: [("All", "all"), ("Eligible", "eligible"), ("Warning", "warning"), ("Blocked", "blocked")]
         case .plugins: [("All", "all"), ("Loaded", "loaded"), ("Disabled", "disabled"), ("Blocked", "blocked")]
+        case .idePlugins: [("All", "all"), ("Enabled", "enabled"), ("Disabled", "disabled"), ("Unknown", "unknown"), ("AI", "ai extension")]
         default: [("All", "all")]
         }
     }
@@ -212,6 +217,8 @@ struct InventoryView: View {
                 StatCard(title: "Errors", value: "\(scopedSummaries.reduce(0) { $0 + $1.errors })",
                          tint: scopedSummaries.contains { $0.errors > 0 } ? Cisco.red : .secondary)
             }
+            Text("Connector snapshots below; IDE extensions and observed agent identities are included in the total and their inventory tabs.")
+                .font(.caption).foregroundStyle(.secondary)
             if scopedSummaries.isEmpty {
                 DCEmptyState(
                     title: scanning ? "Scanning inventory..." : "No inventory snapshot",
@@ -280,10 +287,13 @@ struct InventoryView: View {
         appState.scanInFlight = true
         error = nil
         warning = nil
+        let generation = appState.installationGeneration
         Task {
             let result = await appState.runCommand(
                 title: "Scan inventory",
-                arguments: ["aibom", "scan", "--json"],
+                arguments: appState.activeConnectorNames.isEmpty
+                    ? ["aibom", "scan", "--json", "--only", "ide_plugins"]
+                    : ["aibom", "scan", "--json"],
                 category: "scan",
                 origin: "Inventory",
                 successEffects: ["Inventory snapshot refreshed"]
@@ -292,7 +302,8 @@ struct InventoryView: View {
                 scanning = false
                 appState.scanInFlight = false
             }
-            guard result.succeeded else {
+            guard generation == appState.installationGeneration else { return }
+            guard result.succeeded, !result.outputTruncated else {
                 error = "aibom scan failed (exit \(result.exitCode)). \(String(result.output.suffix(200)))"
                 return
             }
@@ -301,8 +312,23 @@ struct InventoryView: View {
                 return
             }
             items = parsed.documents.flatMap(Self.rows(from:))
+            var seen = Set<String>()
+            let ideRows = parsed.documents.flatMap(RuntimeV1Inventory.ideRows).filter { seen.insert($0.id).inserted }
+            items += ideRows
             summaries = parsed.documents.map(Self.summary(from:))
             warning = InventoryOutputParser.userFacingDiagnostics(from: parsed).nonEmpty
+            let identityResult = await appState.runCommand(title: "Load agent identities",
+                arguments: ["agent", "identities", "--json", "--limit", "1000"], mutation: false,
+                category: "info", origin: "Inventory")
+            guard generation == appState.installationGeneration else { return }
+            if identityResult.succeeded, !identityResult.outputTruncated, let identity = RuntimeV1Inventory.agentRows(identityResult.output) {
+                items += identity.items
+                if !identity.note.isEmpty { warning = [warning, identity.note].compactMap { $0 }.joined(separator: "\n") }
+            } else {
+                warning = [warning, "Agent identity inventory is unavailable from the selected runtime."].compactMap { $0 }.joined(separator: "\n")
+            }
+            let ideNotes = parsed.documents.compactMap { $0["ide_plugins_note"] as? String }.filter { !$0.isEmpty }
+            if !ideNotes.isEmpty { warning = [warning, Array(Set(ideNotes)).sorted().joined(separator: "\n")].compactMap { $0 }.joined(separator: "\n") }
             lastScan = Date()
         }
     }
