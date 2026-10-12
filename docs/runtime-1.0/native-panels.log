@@ -55,4 +55,3 @@ PASS render redaction; tables=0; rows=[]
 NOT TESTED palette Run button: native accessibility button was unavailable
 PASS render palette; tables=1; rows=[249]
 PASS all native panel/form renders completed
-
