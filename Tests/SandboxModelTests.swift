@@ -175,6 +175,17 @@ struct SandboxModelTests {
         var other = last
         other["time"] = "2026-09-27T13:00:00Z"
         expect(lost([other]), "another event under that number")
+        var epochEvent = last
+        epochEvent["epoch"] = "first-daemon"
+        snapshot.restartFeed()
+        _ = snapshot.merge(events: SandboxDecoding.activity(from: ["events": [epochEvent]]), notify: false)
+        var laterEpoch = newer
+        laterEpoch["epoch"] = "first-daemon"
+        expect(!lost([laterEpoch]), "same epoch keeps the cursor even when the resume event aged out")
+        laterEpoch["epoch"] = "next-daemon"
+        expect(lost([laterEpoch]), "new epoch resets even when sequence exceeds old cursor")
+        let decoded = SandboxDecoding.activity(from: ["events": [epochEvent, laterEpoch]])
+        expect(decoded[0].epoch == "first-daemon" && decoded[0].id != decoded[1].id, "epoch decoded and included in identity")
         snapshot.restartFeed()
         expect(snapshot.lastSeq == 0 && snapshot.activity.isEmpty && !lost([]), "read from the start again")
     }

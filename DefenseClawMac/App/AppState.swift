@@ -165,6 +165,18 @@ final class AppState {
     var publishedRuntimeVersion: String?
     var availableRuntimeUpdate: ReleaseInfo?
     var runtimeUpgradeState: UpgradeState = .idle
+    private(set) var runtimeUpgradeRunID: UUID?
+
+    var runtimeUpgradeOutput: String {
+        if let id = runtimeUpgradeRunID, let entry = activity.entries.first(where: { $0.id == id }) {
+            return entry.output
+        }
+        return runtimeUpgradeLog
+    }
+
+    var runtimeUpgradeProgressText: String {
+        runtimeUpgradeOutput.split(separator: "\n").last.map(String.init) ?? "Preparing runtime upgrade…"
+    }
     /// Bundled-payload fresh-install progress (RuntimeInstaller.swift).
     var runtimeInstallState: RuntimeInstallState = .idle
     /// Current installer step's activity runID — the Cancel target.
@@ -391,6 +403,7 @@ final class AppState {
     }
 
     private func bindSelectedInstallation(resolved requested: InstallationContext? = nil) async {
+        guard runtimeUpgradeRunID == nil else { return }
         let initialTarget = requested ?? selectedInstallationContext()
         if installationBindInProgress {
             // Last request wins, but every caller waits until the serialized
@@ -686,7 +699,7 @@ final class AppState {
     }
 
     func pulse() async {
-        guard !installationBindInProgress else { return }
+        guard !installationBindInProgress, runtimeUpgradeRunID == nil else { return }
         let selected = selectedInstallationContext()
         if selected != installationContext {
             guard selected.hasSamePaths(as: installationContext)
@@ -934,6 +947,9 @@ final class AppState {
         suggestedNextAction: String = "",
         refreshOnSuccess: Bool = false
     ) async -> CLIResult {
+        if let upgradeID = runtimeUpgradeRunID, upgradeID != runID, mutation {
+            return CLIResult(exitCode: 75, output: "A runtime upgrade is in progress. Wait for it to finish before making other changes.")
+        }
         guard !(mutation && installationBindInProgress) else {
             return CLIResult(
                 exitCode: 75,
@@ -1362,8 +1378,9 @@ final class AppState {
         return nil
     }
 
-    func refreshInstalledRuntimeVersion() async {
-        guard !runtimeVersionCheckInProgress, !installationBindInProgress else { return }
+    func refreshInstalledRuntimeVersion(upgradeRunID: UUID? = nil) async {
+        guard !runtimeVersionCheckInProgress, !installationBindInProgress,
+              runtimeUpgradeRunID == nil || runtimeUpgradeRunID == upgradeRunID else { return }
         let generation = installationGeneration
         runtimeVersionCheckInProgress = true
         defer { runtimeVersionCheckInProgress = false }
@@ -1444,15 +1461,8 @@ final class AppState {
         return runtimeRelease
     }
 
-    /// Turn historical runtime-upgrade output into a human message. Runtime
-    /// mutation is no longer launched by the app because only the release-owned
-    /// latest-mode resolver can select a required bridge and hand off to a
-    /// fresh controller.
-    /// The common
-    /// case today is an UPSTREAM packaging conflict (the 0.7.2 wheel pins
-    /// click==8.3.1 while its own cisco-ai-mcp-scanner→litellm dep pins
-    /// click==8.1.8) — unsatisfiable in any environment, so it is not an app
-    /// problem and no app-side flag fixes it. Name that explicitly.
+    /// Summarize the runtime updater's failure while retaining full redacted
+    /// output in Activity and Settings.
     nonisolated static func summarizeUpgradeFailure(_ output: String, exitCode: Int32) -> String {
         if output.contains("No solution found when resolving dependencies") {
             // Pull the conflicting package names if present, for specificity.
@@ -1486,8 +1496,8 @@ final class AppState {
     func performBothUpgrades() {
         Task {
             await checkForUpdates(force: true)
-            _ = await runRuntimeUpgradeIfAvailable()
-            if availableUpdate != nil { performUpgrade() }
+            let runtimeReady = await runRuntimeUpgradeIfAvailable()
+            if runtimeReady, availableUpdate != nil { performUpgrade() }
         }
     }
 
@@ -1498,51 +1508,92 @@ final class AppState {
     }
 
     private func runRuntimeUpgradeIfAvailable() async -> Bool {
-        switch runtimeUpgradeState {
-        case .checking, .downloading, .installing:
+        guard runtimeUpgradeRunID == nil, !updateOperationInProgress,
+              !installationBindInProgress, !runtimeVersionCheckInProgress else { return false }
+        guard installationMutationsAllowed else {
+            runtimeUpgradeState = .failed(installationReadOnlyReason ?? "This installation is read only.")
             return false
-        default:
-            break
         }
+        guard !activity.entries.contains(where: { $0.status.isActive }),
+              !firstRunSetupInProgress, !gatewayStartupInProgress else {
+            runtimeUpgradeState = .failed("Wait for the current command or setup to finish, then retry the runtime upgrade.")
+            return false
+        }
+        let runID = UUID()
+        let generation = installationGeneration
+        let context = installationContext
+        runtimeUpgradeRunID = runID
+        runtimeUpgradeState = .checking
+        runtimeUpgradeLog = ""
+        runtimeUpgradeLogTail = ""
+        defer {
+            runtimeUpgradeRunID = nil
+            if runtimeUpgradeState == .checking { runtimeUpgradeState = .idle }
+        }
+        // Refresh both provenance and version immediately before mutation.
+        await refreshInstalledRuntimeVersion(upgradeRunID: runID)
+        guard installationSnapshotIsCurrent(generation), selectedInstallationContext() == context else { return false }
         if sourceDevelopmentRuntimeDetected {
-            runtimeUpgradeLogTail = ""
             runtimeUpgradeLog = runtimeInstallationPolicyNotice ?? "Source/development runtime left unchanged."
-            runtimeUpgradeState = .idle
             return true
         }
-        // The bundled-payload installer mutates the same venv and gateway
-        // binary — never present overlapping runtime actions.
-        guard !runtimeInstallState.isRunning else { return false }
-        // Recheck local identity immediately before offering an upgrade. An
-        // external update may have made the cached release older or equal.
-        await refreshInstalledRuntimeVersion()
-        guard !sourceDevelopmentRuntimeDetected else { return true }
-        guard let runtimeUpdate = availableRuntimeUpdate,
-              let installed = installedRuntimeVersion,
-              UpdateChecker.isNewer(runtimeUpdate.version, than: installed) else { return true }
-        let upgradeCommand: String?
-        if runtimeUpdate.version.hasPrefix("1."), let selectedCLI = await cli.locateBinary() {
-            upgradeCommand = RuntimeUpgradeResolverCommand.builtin(cliPath: selectedCLI,
-                home: installationContext.homeRoot.path, config: installationContext.configURL.path,
-                venv: installationContext.venvURL.path, releaseTag: runtimeUpdate.tag)
-        } else {
-            upgradeCommand = RuntimeUpgradeResolverCommand.authenticated(releaseTag: runtimeUpdate.tag)
-        }
-        guard let resolverCommand = upgradeCommand else {
-            let failure = """
-            The available release identifier is not canonical, so no copy/paste command was produced. No installed files or services were changed. Follow the authenticated release-asset instructions at https://cisco-ai-defense.github.io/defenseclaw/docs/get-started/upgrade/.
-            """
-            runtimeUpgradeLogTail = ""
-            runtimeUpgradeLog = failure
-            runtimeUpgradeState = .failed(failure)
+        guard let installed = installedRuntimeVersion else {
+            runtimeUpgradeState = .failed(runtimeVersionError ?? "Could not verify the installed runtime version.")
             return false
         }
-        let guidance = """
-        Runtime upgrade was not started; no installed files or services were changed. Quit DefenseClawMac, then copy the command and run it in Terminal. The selected runtime's release-owned upgrader handles rollback, migrations and health checks. The 1.0 upgrade migrates configuration to schema 9, preserves the old audit database in the rollback snapshot, starts a new audit history and defaults retention to seven days. The standalone Mac app is preserved.
-        """
-        runtimeUpgradeLogTail = ""
-        runtimeUpgradeLog = guidance
-        runtimeUpgradeState = .actionRequired(guidance: guidance, command: resolverCommand)
+        guard let release = availableRuntimeUpdate,
+              UpdateChecker.isNewer(release.version, than: installed) else { return true }
+        guard let selectedCLI = await cli.locateBinary(), installationSnapshotIsCurrent(generation) else { return false }
+        // Legacy release protocols retain their authenticated resolver workflow.
+        guard release.version.hasPrefix("1.") else {
+            guard let command = RuntimeUpgradeResolverCommand.authenticated(releaseTag: release.tag) else {
+                runtimeUpgradeState = .failed("The available release identifier is not canonical.")
+                return false
+            }
+            let guidance = "This legacy release requires the authenticated upgrade resolver in Terminal."
+            runtimeUpgradeLog = guidance
+            runtimeUpgradeState = .actionRequired(guidance: guidance, command: command)
+            return false
+        }
+        guard let invocation = RuntimeUpgradeResolverCommand.invocation(cliPath: selectedCLI,
+                home: context.homeRoot.path, config: context.configURL.path,
+                venv: context.venvURL.path, releaseTag: release.tag),
+              invocation.arguments.last == release.version else {
+            runtimeUpgradeState = .failed("The available release version or selected installation paths are invalid. Nothing was changed.")
+            return false
+        }
+        guard await cli.beginExclusiveOperation(id: runID) else {
+            runtimeUpgradeState = .failed("A runtime command is still running. Wait for it to finish, then retry the upgrade.")
+            return false
+        }
+        runtimeUpgradeState = .installing
+        await audit.setSuspendedForUpgrade(true)
+        let result = await runCommand(runID: runID, title: "Upgrade DefenseClaw runtime to \(release.version)",
+            binary: invocation.binary, arguments: invocation.arguments, environment: invocation.environment,
+            category: "upgrade", origin: "Runtime Update")
+        runtimeUpgradeLog = activity.entries.first(where: { $0.id == runID })?.output ?? result.output
+        var verified = false
+        if result.succeeded {
+            let check = await cli.run(binary: invocation.binary, arguments: ["--version"], mutation: false, runID: runID)
+            if check.succeeded, let version = UpdateChecker.parseVersion(check.output) {
+                verified = version == release.version || UpdateChecker.isNewer(version, than: release.version)
+            }
+        }
+        await audit.setSuspendedForUpgrade(false)
+        await cli.endExclusiveOperation(id: runID)
+        await refreshInstalledRuntimeVersion(upgradeRunID: runID)
+        runtimeUpgradeLogTail = runtimeUpgradeLog.split(separator: "\n").last.map(String.init) ?? ""
+        if verified {
+            runtimeUpgradeState = .idle
+            reloadConfig()
+            NotificationCenter.default.post(name: .dcRefreshPanel, object: nil)
+            return true
+        }
+        let failure = result.succeeded
+            ? "The updater finished, but the installed runtime could not be verified as \(release.version) or newer. See Activity for output."
+            : (result.cancelled ? "Runtime upgrade cancelled. Check Activity and the installed runtime before retrying."
+               : Self.summarizeUpgradeFailure(runtimeUpgradeLog, exitCode: result.exitCode))
+        runtimeUpgradeState = .failed(failure)
         return false
     }
 
@@ -1579,7 +1630,8 @@ final class AppState {
 
     /// Download, install over the current bundle, and restart the app.
     func performUpgrade() {
-        guard let release = availableUpdate, upgradeState == .idle || upgradeState == .checking else { return }
+        guard runtimeUpgradeRunID == nil, !runtimeInstallState.isRunning,
+              let release = availableUpdate, upgradeState == .idle || upgradeState == .checking else { return }
         upgradeState = .downloading
         Task {
             let failure = await updater.downloadAndInstall(release) { state in

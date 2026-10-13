@@ -752,25 +752,17 @@ enum TUIWizards {
         ]
     )
 
-    /// OpenShell sandbox setup (TUI Setup slot 13). The argv mirrors the TUI's
-    /// `_build_sandbox_args` on macOS byte for byte. The OpenShell install
-    /// runs in a terminal (on a Mac it installs NVIDIA's Homebrew formula,
-    /// and e2fsprogs under the same consent); the app never passes
-    /// --install-openshell. Like the TUI on macOS it has no telemetry
-    /// question (the Homebrew gateway does not read gateway.env, so setup
-    /// cannot turn OpenShell's telemetry off) and no mounts question: setup
-    /// runs macOS sandboxes in OpenShell MicroVMs, which mount no host folders.
+    /// Use the runtime's verified installer and setup safeguards, then build
+    /// only the selected harness images and check readiness. Installation
+    /// consent is visible in the form and exact command review; no blanket
+    /// --yes or --restart-gateway bypasses the runtime's additional safeguards.
     private static let sandbox = WizardDefinition(
         id: "sandbox", title: "Sandbox", icon: "cube.transparent",
-        blurb: "Run Claude Code and Codex in NVIDIA OpenShell sandboxes that see only your project folder. "
-            + "On a Mac they run in OpenShell MicroVMs (its vm driver: Apple silicon only, experimental "
-            + "upstream), because Docker Desktop's Linux kernel has no Landlock: setup sets "
-            + "compute_driver = \"vm\" in the gateway's gateway.toml and restarts the gateway once. "
-            + "A MicroVM mounts no host folders, so every run works on a copy and "
-            + "`defenseclaw sandbox pull` brings the changes back. The first run of each image prepares "
-            + "its MicroVM disk (about a minute and 5 GB). "
-            + "If OpenShell or e2fsprogs is missing, run `defenseclaw sandbox setup --install-openshell` "
-            + "in a terminal (it installs NVIDIA's nvidia/openshell Homebrew formula and e2fsprogs).",
+        blurb: "Set up OpenShell, build your selected agent images, and check sandbox readiness. "
+            + "Requires running Docker and Homebrew. On Apple silicon, OpenShell uses experimental "
+            + "MicroVMs with their own kernel. Sessions work on a project copy; use "
+            + "`defenseclaw sandbox pull` to bring changes back. Downloads require several GB "
+            + "and may take many minutes. The first session also prepares its MicroVM disk.",
         baseArgs: ["sandbox", "setup"],
         commandBuilder: sandboxCommands,
         validation: sandboxValidation,
@@ -779,12 +771,21 @@ enum TUIWizards {
             WizardField(key: "action", label: "Action", kind: .choice(options: ["setup", "doctor"]),
                         defaultValue: "setup",
                         help: "setup: the one-time sandbox setup. doctor: only check this machine."),
+            WizardField(key: "install-openshell", label: "Install OpenShell prerequisites", kind: .bool,
+                        defaultValue: "yes", visibleWhen: (key: "action", equals: ["setup"]),
+                        help: "Allow the runtime's verified installer to install or update supported OpenShell "
+                            + "components with Homebrew, install e2fsprogs, and repair the MicroVM signature if needed. "
+                            + "Setup configures the local OpenShell service and may restart it. Runs as your user."),
             WizardField(key: "harness-claudecode", label: "Claude Code", kind: .bool, defaultValue: "yes",
                         visibleWhen: (key: "action", equals: ["setup"]),
                         help: "Run `claude` in a sandbox (--harness claudecode)."),
             WizardField(key: "harness-codex", label: "Codex", kind: .bool, defaultValue: "yes",
                         visibleWhen: (key: "action", equals: ["setup"]),
                         help: "Run `codex` in a sandbox (--harness codex)."),
+            WizardField(key: "telemetry-off", label: "OpenShell telemetry off", kind: .bool, defaultValue: "yes",
+                        visibleWhen: (key: "action", equals: ["setup"]),
+                        help: "Turn off OpenShell usage telemetry. Runtime 1.0.1 applies this to its Homebrew service; "
+                            + "changing it may restart OpenShell. Turn this off to keep upstream telemetry enabled."),
             WizardField(key: "wrappers", label: "Shell wrappers", kind: .bool, defaultValue: "no",
                         visibleWhen: (key: "action", equals: ["setup"]),
                         help: "Make `claude` and `codex` run sandboxed when you type them "
@@ -799,12 +800,20 @@ enum TUIWizards {
         func on(_ key: String, _ fallback: String) -> Bool { value(v, key, fallback) == "yes" }
         if value(v, "action", "setup") == "doctor" { return [["sandbox", "doctor"]] }
         var args = ["sandbox", "setup", "--non-interactive"]
-        for harness in ["claudecode", "codex"] where on("harness-\(harness)", "yes") {
-            args += ["--harness", harness]
-        }
+        if on("install-openshell", "yes") { args.append("--install-openshell") }
+        let harnesses = ["claudecode", "codex"].filter { on("harness-\($0)", "yes") }
+        for harness in harnesses { args += ["--harness", harness] }
+        if !on("telemetry-off", "yes") { args.append("--upstream-telemetry") }
         args.append(on("wrappers", "no") ? "--wrappers" : "--no-wrappers")
-        if !on("build-images", "yes") { args.append("--skip-images") }
-        return [args]
+        // Separate the potentially long build so Activity and progress show
+        // which stage failed. WizardSheet stops the sequence on any failure.
+        args.append("--skip-images")
+        var commands = [args]
+        if on("build-images", "yes"), !harnesses.isEmpty {
+            commands.append(["sandbox", "image", "build"] + harnesses)
+        }
+        commands.append(["sandbox", "doctor"])
+        return commands
     }
 
     static func sandboxValidation(_ values: [String: String]) -> String? {

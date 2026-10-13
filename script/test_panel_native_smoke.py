@@ -8,8 +8,8 @@ import subprocess
 import sys
 import tempfile
 
-if sys.argv[1:] != ["--run-gui"]:
-    print("SKIP PanelNativeSmokeTests: use --run-gui in a macOS desktop session.")
+if sys.argv[1:] not in (["--run-gui"], ["--run-sandbox-gui"], ["--run-upgrade-gui"]):
+    print("SKIP PanelNativeSmokeTests: use --run-gui, --run-sandbox-gui or --run-upgrade-gui in a macOS desktop session.")
     sys.exit(0)
 repo = Path(__file__).resolve().parent.parent
 root = Path(tempfile.mkdtemp(prefix="defenseclawmac-panel-tests-"))
@@ -35,6 +35,13 @@ try:
     env.update(DEFENSECLAW_HOME=str(fixture_root), DEFENSECLAW_CONFIG=str(fixture_root / "config.yaml"),
                DEFENSECLAW_VENV=os.environ.get("DEFENSECLAW_TEST_VENV", str(repo.parent / "defenseclaw/.venv")), PYTHONDONTWRITEBYTECODE="1",
                PARITY_SCREENSHOTS=str(root / "screenshots"))
+    if sys.argv[1:] == ["--run-sandbox-gui"]:
+        env["PARITY_SANDBOX_ONLY"] = "1"
+    if sys.argv[1:] == ["--run-upgrade-gui"]:
+        fixture_root = Path(str(fixture_root).replace("/private/tmp/", "/tmp/", 1))
+        env.update(PARITY_UPGRADE_ONLY="1", HOME=str(fixture_root), CFFIXED_USER_HOME=str(fixture_root),
+                   DEFENSECLAW_HOME=str(fixture_root), DEFENSECLAW_CONFIG=str(fixture_root / "config.yaml"),
+                   DEFENSECLAW_VENV=str(fixture_root / ".venv"))
     binary = root / "build/Build/Products/Debug/DefenseClawMac.app/Contents/MacOS/DefenseClawMac"
     args = [str(binary), "-defenseclawBinaryPath", str(fixture_root / "bin/defenseclaw"),
             "-startGatewayAutomatically", "NO", "-gatewayAdministratorMode", "NO",

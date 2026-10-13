@@ -1,0 +1,5 @@
+PASS sandbox wizard sequence: success, live output, Activity, stop on failure
+PASS sandbox wizard sequence: setup failure, live output, Activity, stop on failure
+PASS sandbox wizard sequence: image failure, live output, Activity, stop on failure
+PASS sandbox wizard sequence: doctor failure, live output, Activity, stop on failure
+PASS all native panel/form renders completed

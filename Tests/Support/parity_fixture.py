@@ -11,6 +11,7 @@ from pathlib import Path
 import sqlite3
 import sys
 import tempfile
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -19,10 +20,32 @@ def cli():
     args = sys.argv[1:]
     with (root / "commands.jsonl").open("a") as handle:
         handle.write(json.dumps(args) + "\n")
-    if "--version" in args or args == ["version"]:
-        print("defenseclaw, version 1.0.0")
+    if args in (["--version"], ["version"]):
+        version_file = root / "runtime-version"
+        print("defenseclaw, version " + (version_file.read_text().strip() if version_file.exists() else "1.0.0"))
+    elif args[:1] == ["upgrade"]:
+        assert args == ["upgrade", "--yes", "--version", "1.0.1"], "unexpected upgrade arguments"
+        assert os.environ.get("DEFENSECLAW_APP_PATH") == "none", "Mac app must be preserved"
+        for key, target in [("DEFENSECLAW_HOME", root), ("DEFENSECLAW_CONFIG", root / "config.yaml"), ("DEFENSECLAW_VENV", root / ".venv")]:
+            assert Path(os.environ[key]).resolve() == target.resolve(), "selected installation must be preserved"
+        print("Fixture runtime upgrade in progress", flush=True)
+        time.sleep(2)
+        if (root / "fail-upgrade").exists():
+            print("Error: fixture upgrade failed before activation", flush=True)
+            sys.exit(1)
+        if not (root / "unchanged-upgrade").exists():
+            (root / "runtime-version").write_text("1.0.1")
+        print("Fixture runtime upgrade completed", flush=True)
     elif "--help" in args:
         print("Usage: defenseclaw [OPTIONS] COMMAND\nCommands:\n  redaction  Redaction policy\n  codex  Codex\n  amp  Amp\n  scan  Scan\n  enable  Enable\n  disable  Disable\n  selftest  Self-test\n  findings  Findings")
+    elif args[:2] in (["sandbox", "setup"], ["sandbox", "doctor"]) or args[:3] == ["sandbox", "image", "build"]:
+        stage = args[1]
+        print("Fixture sandbox " + stage + " progress", flush=True)
+        time.sleep(2)
+        if (root / ("fail-sandbox-" + stage)).exists():
+            print("Fixture sandbox " + stage + " failed", flush=True)
+            sys.exit(1)
+        print("Fixture sandbox " + stage + " completed", flush=True)
     elif args[:4] == ["sandbox", "pack", "list", "-o"]:
         print(json.dumps({"packs": [{"name": "open", "builtin": True, "profile": "open", "description": "Synthetic fixture sandbox pack"}]}))
     elif args[:2] == ["guardrail", "validate-pack"]:

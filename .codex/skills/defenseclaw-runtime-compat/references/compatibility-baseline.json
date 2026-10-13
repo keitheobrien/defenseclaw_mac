@@ -2,8 +2,8 @@
   "config_version": 9,
   "intentional_source_differences": {
     "App/AppState.swift": {
-      "local_sha256": "8365f228775e41ccbe0f7c51be82d12a8150c8fdf5f0595871eaaeecedc8be2e",
-      "reason": "Preserve standalone lifecycle and upgrade ownership; use the 1.x canonical alert JSON and selected runtime upgrader while preserving the standalone app.",
+      "local_sha256": "dc9d9b20948fa546e9338a4cf378647bb373bc740ca142ada78531fc8358ef6a",
+      "reason": "Run the selected 1.x updater in Activity with version and ownership rechecks, exclusive CLI access, paused readers, verified completion, and standalone app preservation.",
       "upstream_sha256": "20c893580794feee6b6c2d74a912b99304eee22f3c59d00c7233652a77444f09"
     },
     "App/DefenseClawApp.swift": {
@@ -22,13 +22,13 @@
       "upstream_sha256": "a68b927ff7f57c7d81a819ea2bdfe6c050ab0bd38342a8161e9253e694fd5b7b"
     },
     "DataLayer/AuditStore.swift": {
-      "local_sha256": "ed5c7798e7e22fe466fcb0b92a5e0ca11269db591dd12165dca0b727a7ace602",
-      "reason": "Canonical bounded read behavior aligned; explanatory comment differs.",
+      "local_sha256": "2b1013d654dffb8eefe334903dfd266aa8b38f63e51fadfb68057ac5d11cca80",
+      "reason": "Retain standalone schema-9 readers and close audit handles during runtime upgrades.",
       "upstream_sha256": "7e55cd21c9d592aeb9e3f7296e45345e5186c431c6b2ac4ed62da31eaecf4671"
     },
     "DataLayer/CLIRunner.swift": {
-      "local_sha256": "7c753ca1d19995664359477ca2b5ccc40ae906cec388dcf6f18f184fc78cce82",
-      "reason": "Resolve catalog Python adjacent to the selected CLI before fallback so Settings overrides and source installations use the same runtime.",
+      "local_sha256": "99b27602e2c527acb86d6c816b016019c05c12a5ad86c02ee595d19b093c8289",
+      "reason": "Retain standalone subprocess, administrator and cancellation guards; serialize runtime replacement against all other CLI commands.",
       "upstream_sha256": "b2de16f3caa14b63934ffe670f6418fa9d038786d78e2423d56d44934bfa9687"
     },
     "DataLayer/CatalogCLI.swift": {
@@ -92,8 +92,8 @@
       "upstream_sha256": "missing"
     },
     "DataLayer/RuntimeInstaller.swift": {
-      "local_sha256": "837064f10280af4b278d46053292278f18caf9014e5c92cf451ef39c65a486d7",
-      "reason": "Support authenticated schema-3 flat 1.x gateway/ACP/wheel/lock/installer/VERSION; preserve source/newer/existing runtimes and rollback all staged components.",
+      "local_sha256": "11b60e0de999f2d962740d9b878a40c8166fafc5ff48a1039118f1e69617ba5f",
+      "reason": "Retain authenticated six-component fresh installation and fail-closed ownership guards; add validated argv/environment for the release-owned 1.x updater.",
       "upstream_sha256": "missing"
     },
     "DataLayer/RuntimeV1Alerts.swift": {
@@ -105,6 +105,11 @@
       "local_sha256": "c45516747f10db54fa11580b9b56d13863fea2b85c5944b0c0a0575453d248e0",
       "reason": "Project release-1.0 IDE extensions and stable agent identities with bounded counts and allowlisted details.",
       "upstream_sha256": "missing"
+    },
+    "DataLayer/SandboxModels.swift": {
+      "local_sha256": "2d8d2c3c1a7118d74fd3da8374e4467a91b7044844608cfd1a645d2cec8dc01e",
+      "reason": "Use runtime 1.0.1 event epochs and host-port explanation while retaining event-based restart detection for older gateways.",
+      "upstream_sha256": "b02e4c813a57554ee08cb3a304fbce905cfa57c5339ec212f578c843e71bf9d6"
     },
     "DataLayer/SkillScanner.swift": {
       "local_sha256": "98b58d9aec7a3fbd12e215a03d5cd4cd3a65e779ed91fb595478915e2b734367",
@@ -137,8 +142,8 @@
       "upstream_sha256": "e05687e14ee038eac03801c0fa07a9086c6c6edac150257e0086ea67e977457b"
     },
     "Features/AppSettingsView.swift": {
-      "local_sha256": "fd0b01dc09c0801169a3efd5e593682751523b2d560208dbc73313da1330b9f1",
-      "reason": "Standalone runtime/app updater preferences retained; sandbox notification toggle added.",
+      "local_sha256": "c8f51a715ca90fe78f695e01f6509d33e2b80a851c0f06f4c98850357b0beea5",
+      "reason": "Retain standalone update and installation controls; run supported runtime upgrades with progress, failure output and migration disclosure.",
       "upstream_sha256": "ad6734335dec9e4057338a8a25be18cfc1ff88992e2e664b2ab9052d7ce46642"
     },
     "Features/CatalogViews.swift": {
@@ -147,9 +152,9 @@
       "upstream_sha256": "f7bd80582cb9d0ddcf5025c733fa6faaa6ebd0fecb6ecbb6de208932c445321a"
     },
     "Features/ConfigEditorDefinitions.swift": {
-      "local_sha256": "29dc37210ccffc8dedb82453b2dbb5bf7b6767416c6b41a8e67121fed9136174",
-      "reason": "Adopt config-v9 admission, rule-pack and scanner names while retaining standalone safe editor transport.",
-      "upstream_sha256": "f13febb79e83f01f8d9d3e2fd7c16c218a32a7221c2dc91a98b9027181c8eb5f"
+      "local_sha256": "89c57622e31f38ab951b9caac66162642cb821150226a5b5fd322489df6a4db7",
+      "reason": "Retain standalone editor safeguards; remove the retired sandbox legacy-cleanup guidance as in runtime 1.0.1.",
+      "upstream_sha256": "4525a5be2c96bdcee95a433bbf876ac20c3862cecdb500bf0d1f375ae3daf543"
     },
     "Features/DiscoverViews.swift": {
       "local_sha256": "34d927a572731969ad9e0dd2bd6365aabd9f91c2ccd35d567b972f61f84ed430",
@@ -172,8 +177,8 @@
       "upstream_sha256": "35c02a9424209a2468cb49f234f9e31ee864aceca32ab0b5f3944283e7a31383"
     },
     "Features/MainWindow.swift": {
-      "local_sha256": "5be962eeaf7032b94b34054a000d2e5a850666e305dbd9c6852d94ec698f3740",
-      "reason": "Standalone update banners and first-run behavior retained; new panel routing and sidebar entries.",
+      "local_sha256": "47ee16d8387dbd632f5ab27cce6a38990bd3d1cf4fe2a2cd30be9afae9fc2391",
+      "reason": "Retain standalone navigation and update banners; provide in-app runtime upgrade action and progress.",
       "upstream_sha256": "6f5731199f8bffbf435b110e318c443450799ca9792e8ea096eb06cb72ed82ee"
     },
     "Features/OverviewView.swift": {
@@ -197,13 +202,13 @@
       "upstream_sha256": "c7552b68099f9a4e6ba9d8ea1f55e2517fd192cfb12b56c10b99d5b1d10c2102"
     },
     "Features/SetupDefinitions.swift": {
-      "local_sha256": "a04cfcd8396723daead7ecc03a8bb06aba12bb04f1c36fb6dee84799effbb5a2",
-      "reason": "Align removed/renamed flags to release 1.0 while preserving secret transport, runtime-discovered catalogs and standalone wizard validation.",
-      "upstream_sha256": "ca759f22b9fbd47aa06006308fdf67b2434a365fb0739e6c8221704e02e80a3c"
+      "local_sha256": "94ca0e89539eb331ab2b53b5d7fcb840951d9e7837dd2b4c73c0d6e714e58782",
+      "reason": "Preserve standalone validated setup; opt into verified OpenShell prerequisites, selected image builds and Doctor, with runtime 1.0.1 telemetry control.",
+      "upstream_sha256": "c045ff798ee3210ef2a8fbcf868f994653451bc2a94ebeab041d67f8f7779372"
     },
     "Features/SetupView.swift": {
-      "local_sha256": "f489402b7d4a22b297d70c4b008d1db865d43539af40ba88327303f59a05044c",
-      "reason": "Preserve standalone recorded and validated setup flow using release-1.0 arguments.",
+      "local_sha256": "3b698f3c43614c59f73d2798c4f6e02bc5367588c1a0ca85aaf966b7f159d3ca",
+      "reason": "Preserve recorded setup flow; stream per-run output, show sequential stages, and stop on failure, cancellation or truncation.",
       "upstream_sha256": "a935c5955c6458bc950abdf06e0245c92b3cfcf6893bbb9970817736d1437841"
     },
     "Resources/policy_catalog_bridge.py": {
@@ -212,7 +217,7 @@
       "upstream_sha256": "missing"
     }
   },
-  "mac_app_version": "1.1.27",
+  "mac_app_version": "1.1.28",
   "runtime_version": "1.0.0",
-  "upstream_commit": "57698deb67c902e563ed10114a20dbab010f8922"
+  "upstream_commit": "00ef714b8a47f3ba90dad69b91dc8aa40c735057"
 }

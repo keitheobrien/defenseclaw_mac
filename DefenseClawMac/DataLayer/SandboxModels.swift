@@ -214,6 +214,7 @@ struct SandboxAsk: Identifiable, Sendable, Hashable {
 
 struct SandboxActivity: Identifiable, Sendable, Hashable {
     var seq = 0
+    var epoch = ""
     var time: Date?
     var kind = ""
     var sandbox = ""
@@ -228,7 +229,7 @@ struct SandboxActivity: Identifiable, Sendable, Hashable {
     /// An egress.unblocked event lifted this block since it happened.
     var unblocked = false
 
-    var id: String { "\(seq)|\(kind)|\(host)" }
+    var id: String { "\(epoch)|\(seq)|\(kind)|\(host)" }
     var isBlockedDestination: Bool { kind == "egress.blocked" && !host.isEmpty }
 
     /// The same feed event (unblock marks aside): a daemon that restarted
@@ -307,7 +308,7 @@ struct SandboxSnapshot: Sendable {
     /// what asks depends on each sandbox's pack.
     static let noAsksText = "No asks are waiting. An ask appears when a program connects around DefenseClaw's proxy: "
         + "to a private-network address with any pack, to a host off the allowlist with balanced, "
-        + "and to every new destination with strict. Ports on this machine never ask; run with --host-port PORT."
+        + "and to every new destination with strict. A port on this machine asks only if the run named it with --host-port PORT."
 
     var status = SandboxStatus()
     var sandboxes: [SandboxRow] = []
@@ -413,6 +414,12 @@ struct SandboxSnapshot: Sendable {
         guard lastSeq > 0 else { return false }
         let feed = events.filter { $0.kind != "dropped" }
         if feed.isEmpty { return true }
+        // Runtime 1.0.1 identifies each feed explicitly; keep the event-based
+        // fallback for older gateways that do not return an epoch.
+        if let first = feed.first, let resumeEvent,
+           !first.epoch.isEmpty || !resumeEvent.epoch.isEmpty {
+            return first.epoch != resumeEvent.epoch
+        }
         // Only newer events: they pushed the resume point out of the feed.
         guard let same = feed.first(where: { $0.seq == lastSeq }) else { return false }
         guard let resumeEvent else { return false }
@@ -693,6 +700,7 @@ enum SandboxDecoding {
         }
         return SandboxActivity(
             seq: int(d["seq"]),
+            epoch: str(d["epoch"]),
             time: DCDates.parse(d["time"]),
             kind: kind,
             sandbox: str(d["sandbox"]),

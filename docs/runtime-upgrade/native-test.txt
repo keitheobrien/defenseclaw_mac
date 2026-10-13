@@ -1,0 +1,10 @@
+PASS render runtime-upgrade-ready; tables=0; rows=[]
+PASS render runtime-upgrade-complete; tables=0; rows=[]
+PASS automatic runtime upgrade: success
+PASS automatic runtime upgrade: failure
+PASS automatic runtime upgrade: cancelled
+PASS automatic runtime upgrade: unverified
+PASS automatic runtime upgrade: equal
+PASS automatic runtime upgrade: newer
+PASS automatic runtime upgrade: source
+PASS all native panel/form renders completed
