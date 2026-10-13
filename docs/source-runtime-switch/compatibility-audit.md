@@ -1,0 +1,60 @@
+# Compatibility audit failed
+
+- **PASS** upstream mainline 00ef714b8a47f3ba90dad69b91dc8aa40c735057 reports runtime 1.0.0
+- **PASS** upstream supports config_version 9; Mac app version is 1.1.28
+- **PASS** command palette matches all 251 upstream entries
+- **PASS** removed config-v7 flags, keys, and commands are absent
+- **PASS** legacy protected runtime protocol remains supported
+- **PASS** 1.x flat release includes authenticated gateway, ACP, wheel, lock, and installer metadata
+- **WARN** installed runtime 1.0.1 differs from source metadata 1.0.0 (/private/tmp/defenseclawmac-fresh-014vf9vz/home/.local/bin/defenseclaw); validating executable contracts and installed package metadata
+- **PASS** runtime help contract is available for setup observability
+- **PASS** runtime help contract is available for agent discovery enable
+- **PASS** runtime help contract is available for setup provider add
+- **PASS** runtime help contract is available for setup webhook add
+- **PASS** installed runtime dependencies satisfy packaged runtime requirements
+- **WARN** upstream resolver overrides were not compared across the source-version skew
+- **PASS** runtime setup catalog exposes 24 sections
+- **FAIL** unreviewed source differences: App/AppState.swift, DataLayer/CLIRunner.swift, DataLayer/RuntimeInstallFilesystem.swift, Features/AppSettingsView.swift, Features/MainWindow.swift
+- **PASS** script/test_ai_discovery_actions.sh
+- **PASS** script/test_ai_model_discovery.sh
+- **PASS** script/test_alert_queue_projection.sh
+- **PASS** script/test_app_state_signal_safety.sh
+- **PASS** script/test_canonical_event_history.sh
+- **PASS** script/test_catalog_action_safety.sh
+- **PASS** script/test_cli_cancellation.sh
+- **PASS** script/test_connector_inventory_compatibility.sh
+- **PASS** script/test_connector_onboarding.sh
+- **PASS** script/test_dependency_lock_validator.sh
+- **PASS** script/test_first_run_connector_selection.sh
+- **PASS** script/test_flat_runtime_packaging.sh
+- **PASS** script/test_gateway_admin_helper.sh
+- **PASS** script/test_gateway_admin_packaging.sh
+- **PASS** script/test_gateway_administrator.sh
+- **PASS** script/test_gateway_auto_start.sh
+- **PASS** script/test_gateway_signing_contract.sh
+- **PASS** script/test_inspector_layout_policy.sh
+- **WARN** script/test_inspector_native_layout.sh: skipped; requires separate opt-in verification
+- **PASS** script/test_installation_context.sh
+- **PASS** script/test_inventory_capability_warnings.sh
+- **PASS** script/test_local_model_discovery.sh
+- **PASS** script/test_main_window_lifecycle.sh
+- **PASS** script/test_numeric_safety.sh
+- **PASS** script/test_output_safety.sh
+- **PASS** script/test_overview_read_only_guidance.sh
+- **PASS** script/test_policy_catalog.sh
+- **PASS** script/test_policy_models.sh
+- **PASS** script/test_redaction_commands.sh
+- **PASS** script/test_resource_boundaries.sh
+- **PASS** script/test_runtime_compat_audit.sh
+- **PASS** script/test_runtime_contract_surfaces.sh
+- **PASS** script/test_runtime_install_filesystem.sh
+- **PASS** script/test_runtime_protected_artifact.sh
+- **PASS** script/test_runtime_ui_compatibility.sh
+- **PASS** script/test_sandbox_models.sh
+- **PASS** script/test_secret_file_safety.sh
+- **PASS** script/test_setup_definitions_parity.sh
+- **PASS** script/test_structured_detail_parser.sh
+- **PASS** script/test_supply_chain_safety.sh
+- **PASS** script/test_toolbar_help.sh
+- **PASS** script/test_update_checker_safety.sh
+- **PASS** script/test_update_checker_verification.sh

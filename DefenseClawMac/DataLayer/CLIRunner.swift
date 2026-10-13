@@ -591,6 +591,8 @@ actor CLIRunner {
         return true
     }
 
+    func invalidateBinaryCache() { cachedPaths.removeAll() }
+
     func locateBinary() -> String? {
         locateBinary(named: "defenseclaw")
     }

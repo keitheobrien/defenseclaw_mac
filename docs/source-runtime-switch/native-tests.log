@@ -1,0 +1,19 @@
+Native panel artifacts: /var/folders/r9/6nkm3f8s4_j2fbgvxrzx3rxh0000gn/T/defenseclawmac-panel-tests-2_s8gpb1
+Fixture: {'root': '/private/tmp/defenseclawmac-parity-fc5vvyou', 'port': 59383, 'cli': '/private/tmp/defenseclawmac-parity-fc5vvyou/bin/defenseclaw'}
+sandbox_extension_issue_file_to_process failed for /var/folders/r9/6nkm3f8s4_j2fbgvxrzx3rxh0000gn/T/defenseclawmac-panel-tests-2_s8gpb1/build/Build/Products/Debug/DefenseClawMac.app: 1 (Operation not permitted)
+PASS render runtime-upgrade-ready; tables=0; rows=[]
+PASS render runtime-upgrade-complete; tables=0; rows=[]
+PASS automatic runtime upgrade: success
+PASS automatic runtime upgrade: failure
+PASS automatic runtime upgrade: cancelled
+PASS automatic runtime upgrade: unverified
+PASS automatic runtime upgrade: equal
+PASS automatic runtime upgrade: newer
+PASS automatic runtime upgrade: source
+PASS render source-runtime-switch-ready; tables=0; rows=[]
+PASS render source-runtime-switch-complete; tables=0; rows=[]
+PASS automatic runtime upgrade: source-switch
+PASS automatic runtime upgrade: source-failure
+PASS automatic runtime upgrade: source-launcher
+PASS automatic runtime upgrade: source-stale-consent
+PASS all native panel/form renders completed

@@ -206,7 +206,7 @@ final class AppState {
         guard let existingRuntimeInstallation else { return nil }
         switch existingRuntimeInstallation.kind {
         case .sourceDevelopment:
-            return "A source/development DefenseClaw runtime was detected at \(existingRuntimeInstallation.marker). The Mac app will not install or upgrade it."
+            return "This runtime uses a development checkout. Normal updates preserve it; you can explicitly switch to a newer published release."
         case .installed:
             return "An existing DefenseClaw runtime was detected at \(existingRuntimeInstallation.marker). The bundled payload will not replace it; use the runtime updater for a newer release."
         }
@@ -402,8 +402,8 @@ final class AppState {
         )
     }
 
-    private func bindSelectedInstallation(resolved requested: InstallationContext? = nil) async {
-        guard runtimeUpgradeRunID == nil else { return }
+    private func bindSelectedInstallation(resolved requested: InstallationContext? = nil, upgradeRunID: UUID? = nil) async {
+        guard runtimeUpgradeRunID == nil || runtimeUpgradeRunID == upgradeRunID else { return }
         let initialTarget = requested ?? selectedInstallationContext()
         if installationBindInProgress {
             // Last request wins, but every caller waits until the serialized
@@ -1353,7 +1353,8 @@ final class AppState {
         if let existing = RuntimeInstallFilesystem.existingRuntime(
             home: home,
             dataHome: installationContext.homeRoot.path,
-            venvDir: installationContext.venvURL.path
+            venvDir: installationContext.venvURL.path,
+            selectedCLI: await cli.locateBinary()
         ) {
             existingRuntimeInstallation = existing
             return existing
@@ -1507,7 +1508,42 @@ final class AppState {
         }
     }
 
-    private func runRuntimeUpgradeIfAvailable() async -> Bool {
+    struct SourceRuntimeSwitchRequest: Equatable {
+        let release: ReleaseInfo
+        let installedVersion: String
+        let context: InstallationContext
+        let plan: RuntimeInstallFilesystem.SourceSwitchPlan
+        let binaryOverride: String?
+    }
+
+    var sourceRuntimeSwitchRequest: SourceRuntimeSwitchRequest? {
+        guard sourceDevelopmentRuntimeDetected, installationMutationsAllowed,
+              !updateOperationInProgress, !runtimeVersionCheckInProgress,
+              let installed = installedRuntimeVersion, installed.hasPrefix("1."),
+              let release = availableRuntimeUpdate, release.version.hasPrefix("1."),
+              UpdateChecker.isNewer(release.version, than: installed) else { return nil }
+        let override = UserDefaults.standard.string(forKey: CLIRunner.pathOverrideKey)
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        guard let plan = RuntimeInstallFilesystem.sourceSwitchPlan(home: home,
+            dataHome: installationContext.homeRoot.path, config: installationContext.configURL.path,
+            selectedCLI: override ?? installationContext.runtimeCLIURL.path) else { return nil }
+        let targetVenv = installationContext.homeRoot.appendingPathComponent(".venv").resolvingSymlinksInPath().path
+        if let pinned = ProcessInfo.processInfo.environment["DEFENSECLAW_VENV"],
+           URL(fileURLWithPath: pinned).resolvingSymlinksInPath().path != targetVenv { return nil }
+        return SourceRuntimeSwitchRequest(release: release, installedVersion: installed,
+            context: installationContext, plan: plan, binaryOverride: override)
+    }
+
+    func performSourceRuntimeSwitch(_ request: SourceRuntimeSwitchRequest) {
+        guard runtimeUpgradeRunID == nil else { return }
+        guard sourceRuntimeSwitchRequest == request else {
+            runtimeUpgradeState = .failed("The runtime selection or available release changed. Review it and confirm the switch again.")
+            return
+        }
+        Task { _ = await runRuntimeUpgradeIfAvailable(sourceSwitch: request) }
+    }
+
+    private func runRuntimeUpgradeIfAvailable(sourceSwitch: SourceRuntimeSwitchRequest? = nil) async -> Bool {
         guard runtimeUpgradeRunID == nil, !updateOperationInProgress,
               !installationBindInProgress, !runtimeVersionCheckInProgress else { return false }
         guard installationMutationsAllowed else {
@@ -1533,7 +1569,18 @@ final class AppState {
         // Refresh both provenance and version immediately before mutation.
         await refreshInstalledRuntimeVersion(upgradeRunID: runID)
         guard installationSnapshotIsCurrent(generation), selectedInstallationContext() == context else { return false }
-        if sourceDevelopmentRuntimeDetected {
+        if let request = sourceSwitch {
+            guard sourceDevelopmentRuntimeDetected, request.context == context,
+                  request.release == availableRuntimeUpdate, request.installedVersion == installedRuntimeVersion,
+                  request.binaryOverride == UserDefaults.standard.string(forKey: CLIRunner.pathOverrideKey),
+                  RuntimeInstallFilesystem.sourceSwitchPlan(home: FileManager.default.homeDirectoryForCurrentUser.path,
+                    dataHome: context.homeRoot.path, config: context.configURL.path,
+                    selectedCLI: await cli.locateBinary() ?? "") == request.plan else {
+                runtimeUpgradeState = .failed("The source installation changed. Review it and confirm the switch again.")
+                return false
+            }
+        }
+        if sourceDevelopmentRuntimeDetected, sourceSwitch == nil {
             runtimeUpgradeLog = runtimeInstallationPolicyNotice ?? "Source/development runtime left unchanged."
             return true
         }
@@ -1557,7 +1604,7 @@ final class AppState {
         }
         guard let invocation = RuntimeUpgradeResolverCommand.invocation(cliPath: selectedCLI,
                 home: context.homeRoot.path, config: context.configURL.path,
-                venv: context.venvURL.path, releaseTag: release.tag),
+                venv: sourceSwitch == nil ? context.venvURL.path : context.homeRoot.appendingPathComponent(".venv").path, releaseTag: release.tag),
               invocation.arguments.last == release.version else {
             runtimeUpgradeState = .failed("The available release version or selected installation paths are invalid. Nothing was changed.")
             return false
@@ -1568,19 +1615,36 @@ final class AppState {
         }
         runtimeUpgradeState = .installing
         await audit.setSuspendedForUpgrade(true)
-        let result = await runCommand(runID: runID, title: "Upgrade DefenseClaw runtime to \(release.version)",
+        let result = await runCommand(runID: runID, title: sourceSwitch == nil ? "Upgrade DefenseClaw runtime to \(release.version)" : "Switch to published runtime \(release.version)",
             binary: invocation.binary, arguments: invocation.arguments, environment: invocation.environment,
             category: "upgrade", origin: "Runtime Update")
         runtimeUpgradeLog = activity.entries.first(where: { $0.id == runID })?.output ?? result.output
         var verified = false
         if result.succeeded {
-            let check = await cli.run(binary: invocation.binary, arguments: ["--version"], mutation: false, runID: runID)
+            let check = await cli.run(binary: sourceSwitch?.plan.releaseCLI ?? invocation.binary, arguments: ["--version"], mutation: false, runID: runID)
             if check.succeeded, let version = UpdateChecker.parseVersion(check.output) {
                 verified = version == release.version || UpdateChecker.isNewer(version, than: release.version)
             }
         }
+        if let request = sourceSwitch, verified {
+            verified = RuntimeInstallFilesystem.selectedReleaseReplacedSource(
+                home: FileManager.default.homeDirectoryForCurrentUser.path,
+                dataHome: context.homeRoot.path, selectedCLI: request.plan.releaseCLI)
+                && request.binaryOverride == UserDefaults.standard.string(forKey: CLIRunner.pathOverrideKey)
+        }
         await audit.setSuspendedForUpgrade(false)
         await cli.endExclusiveOperation(id: runID)
+        if let request = sourceSwitch, verified {
+            // Switch app selection only after verifying the updater's launcher
+            // swap. Never rewrite or delete source metadata ourselves.
+            if request.binaryOverride != nil {
+                UserDefaults.standard.set(request.plan.launcher, forKey: CLIRunner.pathOverrideKey)
+            }
+            let savedLog = runtimeUpgradeLog
+            await cli.invalidateBinaryCache()
+            await bindSelectedInstallation(upgradeRunID: runID)
+            runtimeUpgradeLog = savedLog
+        }
         await refreshInstalledRuntimeVersion(upgradeRunID: runID)
         runtimeUpgradeLogTail = runtimeUpgradeLog.split(separator: "\n").last.map(String.init) ?? ""
         if verified {

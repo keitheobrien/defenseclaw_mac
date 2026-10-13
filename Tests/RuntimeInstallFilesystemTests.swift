@@ -28,6 +28,7 @@ struct RuntimeInstallFilesystemTests {
         symlinkDataHomeFailsClosedWithoutFollowingOrMutation()
         selectedRuntimeMarkerCoversSplitHomeAndVenv()
         sourceRuntimeMarkerIsClassifiedAsDeveloperOwned()
+        sourceSwitchRequiresValidatedSeparateDestinations()
         existingRuntimeStateClassifiesInstalledState()
         acpOnlyRuntimeIsPreserved()
         arbitrarySelectedDirectoryUsesPinnedWalk()
@@ -182,6 +183,42 @@ struct RuntimeInstallFilesystemTests {
             )
             expect(state?.marker == marker.path, "source marker is reported as the existing runtime")
             expect(state?.kind == .sourceDevelopment, "source marker is classified as developer-owned")
+        }
+    }
+
+    private static func sourceSwitchRequiresValidatedSeparateDestinations() {
+        withTemporaryHome { home in
+            let root = home.appendingPathComponent("checkout")
+            let sourceCLI = root.appendingPathComponent(".venv/bin/defenseclaw")
+            let data = home.appendingPathComponent(".defenseclaw")
+            let releaseCLI = data.appendingPathComponent(".venv/bin/defenseclaw")
+            let launcher = home.appendingPathComponent(".local/bin/defenseclaw")
+            let marker = launcher.deletingLastPathComponent().appendingPathComponent(".defenseclaw-source-root")
+            for file in [sourceCLI, releaseCLI, marker] {
+                try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data("fixture".utf8).write(to: file)
+                try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: file.path)
+            }
+            let content = try JSONSerialization.data(withJSONObject: ["schema_version": 2, "checkout_root": root.path])
+            try content.write(to: marker)
+            try FileManager.default.createSymbolicLink(at: launcher, withDestinationURL: sourceCLI)
+            func plan(_ target: URL = data, config: URL? = nil) -> RuntimeInstallFilesystem.SourceSwitchPlan? {
+                RuntimeInstallFilesystem.sourceSwitchPlan(home: home.path, dataHome: target.path,
+                    config: (config ?? data.appendingPathComponent("config.yaml")).path, selectedCLI: sourceCLI.path)
+            }
+            expect(plan() != nil, "validated source CLI has a separate release destination")
+            expect(plan(root) == nil && plan(config: root.appendingPathComponent("config.yaml")) == nil, "never migrate source checkout data")
+            expect(!RuntimeInstallFilesystem.selectedReleaseReplacedSource(home: home.path, dataHome: data.path, selectedCLI: releaseCLI.path), "old release beside active source cannot hide source ownership")
+            try FileManager.default.removeItem(at: launcher)
+            try FileManager.default.createSymbolicLink(at: launcher, withDestinationURL: releaseCLI)
+            expect(RuntimeInstallFilesystem.selectedReleaseReplacedSource(home: home.path, dataHome: data.path, selectedCLI: launcher.path), "verified launcher switch supersedes historical source marker")
+            expect(!RuntimeInstallFilesystem.selectedReleaseReplacedSource(home: home.path, dataHome: data.path, selectedCLI: sourceCLI.path), "explicit source selection stays protected")
+            expect((try? Data(contentsOf: marker)) == content, "source metadata stays untouched")
+            try FileManager.default.setAttributes([.posixPermissions: 0o666], ofItemAtPath: marker.path)
+            expect(plan() == nil, "writable marker cannot authorize switching")
+            try FileManager.default.removeItem(at: marker)
+            try FileManager.default.createSymbolicLink(at: marker, withDestinationURL: sourceCLI)
+            expect(plan() == nil, "symlink marker cannot authorize switching")
         }
     }
 

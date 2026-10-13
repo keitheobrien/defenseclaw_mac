@@ -101,11 +101,37 @@ struct PanelNativeSmokeTests {
                 let versionFile = fixture.appendingPathComponent("runtime-version")
                 let sourceMarker = fixture.appendingPathComponent(".local/bin/.defenseclaw-source-root")
                 try! FileManager.default.createDirectory(at: sourceMarker.deletingLastPathComponent(), withIntermediateDirectories: true)
-                for scenario in ["success", "failure", "cancelled", "unverified", "equal", "newer", "source"] {
+                var launchArguments = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
+                launchArguments.removeValue(forKey: CLIRunner.pathOverrideKey)
+                UserDefaults.standard.setVolatileDomain(launchArguments, forName: UserDefaults.argumentDomain)
+                for scenario in ["success", "failure", "cancelled", "unverified", "equal", "newer", "source", "source-switch", "source-failure", "source-launcher", "source-stale-consent"] {
+                    UserDefaults.standard.set(fixture.appendingPathComponent("bin/defenseclaw").path, forKey: CLIRunner.pathOverrideKey)
+                    await state.cli.invalidateBinaryCache()
+                    let switching = scenario.hasPrefix("source-")
+                    var sourceBytes: Data?
+                    let checkout = fixture.appendingPathComponent("checkout")
+                    let sourceCLI = checkout.appendingPathComponent(".venv/bin/defenseclaw")
+                    if switching {
+                        try! FileManager.default.createDirectory(at: sourceCLI.deletingLastPathComponent(), withIntermediateDirectories: true)
+                        let mock = try! String(contentsOf: fixture.appendingPathComponent("bin/defenseclaw"), encoding: .utf8)
+                        let encodedRoot = String(data: try! JSONSerialization.data(withJSONObject: fixture.path, options: [.fragmentsAllowed, .withoutEscapingSlashes]), encoding: .utf8)!
+                        sourceBytes = Data(mock.replacingOccurrences(of: "root = Path(__file__).resolve().parent.parent", with: "root = Path(\(encodedRoot))", range: mock.range(of: "root = Path(__file__).resolve().parent.parent")).utf8)
+                        try! sourceBytes!.write(to: sourceCLI)
+                        try! FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: sourceCLI.path)
+                        let markerData = try! JSONSerialization.data(withJSONObject: ["schema_version": 2, "checkout_root": checkout.path])
+                        try! markerData.write(to: sourceMarker)
+                        try! FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: sourceMarker.path)
+                        let launcher = fixture.appendingPathComponent(".local/bin/defenseclaw")
+                        try? FileManager.default.removeItem(at: launcher)
+                        try! FileManager.default.createSymbolicLink(at: launcher, withDestinationURL: sourceCLI)
+                        UserDefaults.standard.set(sourceCLI.path, forKey: CLIRunner.pathOverrideKey)
+                        try! Data().write(to: fixture.appendingPathComponent("source-switch-fixture"))
+                    }
                     try! Data((scenario == "equal" ? "1.0.1" : scenario == "newer" ? "1.0.2" : "1.0.0").utf8).write(to: versionFile)
-                    if scenario == "failure" { try! Data().write(to: fixture.appendingPathComponent("fail-upgrade")) }
+                    if ["failure", "source-failure"].contains(scenario) { try! Data().write(to: fixture.appendingPathComponent("fail-upgrade")) }
                     if scenario == "unverified" { try! Data().write(to: fixture.appendingPathComponent("unchanged-upgrade")) }
                     if scenario == "source" { try! Data("fixture source".utf8).write(to: sourceMarker) }
+                    if scenario == "source-launcher" { try! Data().write(to: fixture.appendingPathComponent("unchanged-launcher")) }
                     state.runtimeUpgradeState = .idle
                     await state.refreshInstalledRuntimeVersion()
                     state.availableRuntimeUpdate = ReleaseInfo(tag: "1.0.1", version: "1.0.1", assetName: "", assetURL: "", assetSHA256: "", htmlURL: "https://example.invalid/release", notes: "Fixture")
@@ -114,7 +140,18 @@ struct PanelNativeSmokeTests {
                     state.selectedSettingsTab = .general
                     if scenario == "success" { await show("runtime-upgrade-ready", AnyView(AppSettingsView())) }
                     let priorIDs = Set(state.activity.entries.map(\.id))
-                    state.performRuntimeUpgrade()
+                    var sourceRequest: AppState.SourceRuntimeSwitchRequest?
+                    if switching {
+                        guard let request = state.sourceRuntimeSwitchRequest else {
+                            fatalError("valid source switch must be offered")
+                        }
+                        if scenario == "source-switch" { await show("source-runtime-switch-ready", AnyView(AppSettingsView())) }
+                        if scenario == "source-stale-consent" {
+                            state.availableRuntimeUpdate = ReleaseInfo(tag: "1.0.2", version: "1.0.2", assetName: "", assetURL: "", assetSHA256: "", htmlURL: "https://example.invalid", notes: "")
+                        }
+                        sourceRequest = request
+                        state.performSourceRuntimeSwitch(request)
+                    } else { state.performRuntimeUpgrade() }
                     var streamed = false
                     for _ in 0..<200 {
                         try? await Task.sleep(for: .milliseconds(100))
@@ -132,6 +169,7 @@ struct PanelNativeSmokeTests {
                             streamed = true
                             // A second click and unrelated mutations must not overlap.
                             state.performRuntimeUpgrade()
+                            if let sourceRequest { state.performSourceRuntimeSwitch(sourceRequest) }
                             let blocked = await state.runCommand(title: "Blocked during upgrade", arguments: ["fixture-mutation"], origin: "Fixture")
                             precondition(blocked.exitCode == 75)
                         }
@@ -139,10 +177,10 @@ struct PanelNativeSmokeTests {
                     }
                     precondition(state.runtimeUpgradeRunID == nil, "upgrade must finish")
                     let calls = state.activity.entries.filter { !priorIDs.contains($0.id) && $0.category == "upgrade" }
-                    let skipped = ["equal", "newer", "source"].contains(scenario)
+                    let skipped = ["equal", "newer", "source", "source-stale-consent"].contains(scenario)
                     precondition(calls.count == (skipped ? 0 : 1), "exactly one upgrade or no mutation for preserved runtimes")
                     if !skipped { precondition(streamed, "upgrade progress must be live: \(state.runtimeUpgradeOutput)") }
-                    if ["failure", "cancelled", "unverified"].contains(scenario) {
+                    if ["failure", "cancelled", "unverified", "source-failure", "source-launcher", "source-stale-consent"].contains(scenario) {
                         guard case .failed = state.runtimeUpgradeState else { fatalError("upgrade failure must be reported") }
                     } else {
                         precondition(state.runtimeUpgradeState == .idle)
@@ -151,11 +189,22 @@ struct PanelNativeSmokeTests {
                         precondition(state.installedRuntimeVersion == "1.0.1" && state.availableRuntimeUpdate == nil)
                         await show("runtime-upgrade-complete", AnyView(AppSettingsView()))
                     }
+                    if switching {
+                        precondition((try? Data(contentsOf: sourceCLI)) == sourceBytes, "source checkout must not be replaced")
+                        precondition(FileManager.default.fileExists(atPath: sourceMarker.path), "source marker remains untouched")
+                    }
+                    if scenario == "source-switch" {
+                        precondition(!state.sourceDevelopmentRuntimeDetected && state.installedRuntimeVersion == "1.0.1", "release selected after switch despite old source marker")
+                        let reopened = AppState()
+                        await reopened.refreshInstalledRuntimeVersion()
+                        precondition(!reopened.sourceDevelopmentRuntimeDetected && reopened.installedRuntimeVersion == "1.0.1", "source marker must not block future app launches")
+                        await show("source-runtime-switch-complete", AnyView(AppSettingsView()))
+                    }
                     let resumed = await state.cli.run(arguments: ["--version"], mutation: false)
                     precondition(resumed.succeeded, "runner lock must be released on every outcome")
                     let auditResumed = await state.audit.isAvailable
                     precondition(auditResumed, "audit reader must resume on every outcome")
-                    for marker in [fixture.appendingPathComponent("fail-upgrade"), fixture.appendingPathComponent("unchanged-upgrade"), sourceMarker] {
+                    for marker in [fixture.appendingPathComponent("fail-upgrade"), fixture.appendingPathComponent("unchanged-upgrade"), fixture.appendingPathComponent("source-switch-fixture"), fixture.appendingPathComponent("unchanged-launcher"), sourceMarker] {
                         try? FileManager.default.removeItem(at: marker)
                     }
                     print("PASS automatic runtime upgrade: \(scenario)")

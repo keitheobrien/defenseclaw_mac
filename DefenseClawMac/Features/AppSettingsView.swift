@@ -105,11 +105,18 @@ private struct GeneralSettings: View {
                         .textSelection(.enabled)
                 }
                 if let update = appState.availableRuntimeUpdate {
-                    LabeledContent("Available", value: update.tag)
+                    LabeledContent("Available") {
+                        HStack {
+                            Text(update.tag)
+                            if appState.sourceDevelopmentRuntimeDetected {
+                                RuntimeSourceSwitchButton().controlSize(.small)
+                            }
+                        }
+                    }
                     runtimeStatus
                     if appState.sourceDevelopmentRuntimeDetected, let url = URL(string: update.htmlURL) {
                         Link("Review newer runtime release", destination: url)
-                        Text("Your source installation is preserved. Update it through its existing source workflow.")
+                        Text("Keep using your checkout, or explicitly switch to the published release. Your source files stay in place.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -125,9 +132,11 @@ private struct GeneralSettings: View {
                             .textSelection(.enabled)
                             .accessibilityLabel("Authenticated runtime upgrade command")
                     }
+                    if !appState.sourceDevelopmentRuntimeDetected {
                         Text("Upgrade Runtime runs the selected runtime’s built-in updater for the displayed release. It verifies downloads, handles migrations and rollback, and restarts runtime services. Progress appears in Activity; the Mac app is preserved. Upgrading from 0.x to 1.x migrates configuration to schema 9 and starts a new audit history, retaining the old database in the rollback snapshot.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    }
                 } else {
                     LabeledContent("Status", value: runtimeStatusSummary)
                     runtimeStatus
@@ -162,10 +171,12 @@ private struct GeneralSettings: View {
                     }
                     .disabled(macAppActionDisabled)
 
-                    Button(runtimeButtonTitle) {
-                        appState.performRuntimeUpgradeCheck()
+                    if !appState.sourceDevelopmentRuntimeDetected {
+                        Button(runtimeButtonTitle) {
+                            appState.performRuntimeUpgradeCheck()
+                        }
+                        .disabled(runtimeActionDisabled)
                     }
-                    .disabled(runtimeActionDisabled)
 
                     Button(bothButtonTitle) {
                         appState.performBothUpgrades()
@@ -525,6 +536,29 @@ private struct ConnectionSettings: View {
                 .font(.callout.monospaced())
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+/// Shared by Settings and the main update banner. Consent is tied to the exact
+/// release and installation displayed when the user opens this confirmation.
+struct RuntimeSourceSwitchButton: View {
+    @Environment(AppState.self) private var appState
+    @State private var confirmation: AppState.SourceRuntimeSwitchRequest?
+
+    var body: some View {
+        Button("Switch to Published Runtime…") {
+            confirmation = appState.sourceRuntimeSwitchRequest
+        }
+        .disabled(appState.sourceRuntimeSwitchRequest == nil)
+        .help("Use a newer published 1.x runtime while preserving the source checkout. Custom environment selections must point to the release destination.")
+        .alert("Switch to Published Runtime?", isPresented: Binding(
+            get: { confirmation != nil }, set: { if !$0 { confirmation = nil } }
+        ), presenting: confirmation) { request in
+            Button("Switch to \(request.release.version)") { appState.performSourceRuntimeSwitch(request) }
+            Button("Cancel", role: .cancel) { }
+        } message: { request in
+            Text("The runtime updater will install version \(request.release.version), replace the active CLI and gateway launchers, migrate data if needed, and restart runtime services. DefenseClawMac will then use the published runtime. Your checkout at \(request.plan.checkoutRoot) stays untouched. The updater owns backup and rollback. This also replaces any older release installation at \(request.context.homeRoot.path)/.venv.")
         }
     }
 }

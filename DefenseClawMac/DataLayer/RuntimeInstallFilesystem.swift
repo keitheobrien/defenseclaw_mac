@@ -32,6 +32,56 @@ enum RuntimeInstallFilesystem {
         var kind: Kind
     }
 
+    struct SourceSwitchPlan: Equatable, Sendable {
+        let checkoutRoot: String
+        let sourceCLI: String
+        let releaseCLI: String
+        let launcher: String
+    }
+
+    /// Read only the bounded, owner-controlled marker. Malformed or unsafe
+    /// provenance keeps the installation protected rather than guessing.
+    static func sourceCheckoutRoot(home: String) -> String? {
+        let fd = open(home + "/.local/bin/.defenseclaw-source-root", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
+        var metadata = stat()
+        guard fstat(fd, &metadata) == 0, metadata.st_mode & S_IFMT == S_IFREG,
+              metadata.st_uid == getuid(), metadata.st_mode & 0o022 == 0,
+              metadata.st_nlink == 1, metadata.st_size > 0, metadata.st_size <= 4096 else { return nil }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: false)
+        guard let data = try? handle.read(upToCount: 4097), data.count <= 4096,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              json["schema_version"] as? Int == 2,
+              let root = json["checkout_root"] as? String, root.hasPrefix("/"), root != "/",
+              !root.contains(where: { $0.isNewline || $0 == "\0" }),
+              !root.split(separator: "/").contains("..") else { return nil }
+        return URL(fileURLWithPath: root).resolvingSymlinksInPath().path
+    }
+
+    static func sourceSwitchPlan(home: String, dataHome: String, config: String, selectedCLI: String) -> SourceSwitchPlan? {
+        guard let root = sourceCheckoutRoot(home: home) else { return nil }
+        func resolved(_ path: String) -> String { URL(fileURLWithPath: path).resolvingSymlinksInPath().path }
+        func inCheckout(_ path: String) -> Bool { let p = resolved(path); return p == root || p.hasPrefix(root + "/") }
+        let sourceCLI = root + "/.venv/bin/defenseclaw"
+        let releaseCLI = resolved(dataHome + "/.venv/bin/defenseclaw")
+        guard resolved(selectedCLI) == sourceCLI, !inCheckout(dataHome), !inCheckout(config),
+              !inCheckout(releaseCLI), FileManager.default.isExecutableFile(atPath: sourceCLI) else { return nil }
+        return SourceSwitchPlan(checkoutRoot: root, sourceCLI: sourceCLI, releaseCLI: releaseCLI,
+                                launcher: home + "/.local/bin/defenseclaw")
+    }
+
+    /// A release installer leaves the old source marker intact. Only stop
+    /// treating it as active when BOTH the selected CLI and public launcher
+    /// point to the release venv outside the checkout.
+    static func selectedReleaseReplacedSource(home: String, dataHome: String, selectedCLI: String?) -> Bool {
+        guard let selectedCLI, let root = sourceCheckoutRoot(home: home) else { return false }
+        func resolved(_ path: String) -> String { URL(fileURLWithPath: path).resolvingSymlinksInPath().path }
+        let release = resolved(dataHome + "/.venv/bin/defenseclaw")
+        return !release.hasPrefix(root + "/") && FileManager.default.isExecutableFile(atPath: release)
+            && resolved(selectedCLI) == release && resolved(home + "/.local/bin/defenseclaw") == release
+    }
+
     struct PathIdentity: Codable, Equatable {
         var device: UInt64
         var inode: UInt64
@@ -127,16 +177,18 @@ enum RuntimeInstallFilesystem {
     }
 
     /// Classifies an existing runtime before any bundled payload decision is
-    /// exposed to the user. A source-root marker is authoritative developer
-    /// provenance: the Mac app must leave that runtime entirely alone, even
-    /// when the published release is numerically older or newer.
+    /// exposed to the user. Active source provenance blocks ordinary upgrades
+    /// and bundled installation. An explicit source-to-release switch uses the
+    /// runtime updater; its completed launcher swap supersedes the old marker.
     static func existingRuntime(
         home: String,
         dataHome: String,
-        venvDir: String
+        venvDir: String,
+        selectedCLI: String? = nil
     ) -> ExistingRuntime? {
         let sourceMarker = home + "/.local/bin/.defenseclaw-source-root"
-        if lexicalPathExists(sourceMarker) {
+        if lexicalPathExists(sourceMarker),
+           !selectedReleaseReplacedSource(home: home, dataHome: dataHome, selectedCLI: selectedCLI) {
             return ExistingRuntime(marker: sourceMarker, kind: .sourceDevelopment)
         }
 
