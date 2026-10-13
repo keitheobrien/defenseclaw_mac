@@ -35,6 +35,17 @@ def cli():
             sys.exit(1)
         if not (root / "unchanged-upgrade").exists():
             (root / "runtime-version").write_text("1.0.1")
+        if (root / "source-switch-fixture").exists() and not (root / "unchanged-upgrade").exists():
+            release_cli = root / ".venv/bin/defenseclaw"
+            release_cli.parent.mkdir(parents=True, exist_ok=True)
+            source = (root / "bin/defenseclaw").read_text().replace(
+                "root = Path(__file__).resolve().parent.parent", "root = Path(" + repr(str(root)) + ")", 1)
+            release_cli.write_text(source)
+            release_cli.chmod(0o700)
+            if not (root / "unchanged-launcher").exists():
+                launcher = root / ".local/bin/defenseclaw"
+                launcher.unlink(missing_ok=True)
+                launcher.symlink_to(release_cli)
         print("Fixture runtime upgrade completed", flush=True)
     elif "--help" in args:
         print("Usage: defenseclaw [OPTIONS] COMMAND\nCommands:\n  redaction  Redaction policy\n  codex  Codex\n  amp  Amp\n  scan  Scan\n  enable  Enable\n  disable  Disable\n  selftest  Self-test\n  findings  Findings")

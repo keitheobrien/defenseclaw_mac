@@ -256,7 +256,10 @@ struct MainWindow: View {
                 .buttonStyle(.borderless)
                 .accessibilityLabel("Dismiss runtime update")
             default:
-                if !appState.sourceDevelopmentRuntimeDetected {
+                if appState.sourceDevelopmentRuntimeDetected {
+                    RuntimeSourceSwitchButton()
+                        .controlSize(.small)
+                } else {
                     Button("Upgrade Runtime") { appState.performRuntimeUpgrade() }
                         .controlSize(.small)
                         .buttonStyle(.borderedProminent)
@@ -302,7 +305,7 @@ struct MainWindow: View {
             return why
         default:
             if appState.sourceDevelopmentRuntimeDetected {
-                return "A newer release is available. Your source installation is preserved; update it through its existing source workflow."
+                return "A newer release is available. Keep your source build or explicitly switch to the published runtime."
             }
             return "Update CLI and gateway from \(appState.installedRuntimeVersion ?? "unknown") using the runtime’s built-in updater."
         }

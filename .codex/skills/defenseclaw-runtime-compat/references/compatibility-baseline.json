@@ -2,8 +2,8 @@
   "config_version": 9,
   "intentional_source_differences": {
     "App/AppState.swift": {
-      "local_sha256": "dc9d9b20948fa546e9338a4cf378647bb373bc740ca142ada78531fc8358ef6a",
-      "reason": "Run the selected 1.x updater in Activity with version and ownership rechecks, exclusive CLI access, paused readers, verified completion, and standalone app preservation.",
+      "local_sha256": "5eac3728310e3fab29787a25f469cce7d6f7af401b3ea7a66576f25f60bc4c27",
+      "reason": "Retain exclusive recorded 1.x upgrades and standalone app preservation; explicitly confirm source conversion, recheck consent, verify version and launcher replacement, then rebind readers before completing.",
       "upstream_sha256": "20c893580794feee6b6c2d74a912b99304eee22f3c59d00c7233652a77444f09"
     },
     "App/DefenseClawApp.swift": {
@@ -27,8 +27,8 @@
       "upstream_sha256": "7e55cd21c9d592aeb9e3f7296e45345e5186c431c6b2ac4ed62da31eaecf4671"
     },
     "DataLayer/CLIRunner.swift": {
-      "local_sha256": "99b27602e2c527acb86d6c816b016019c05c12a5ad86c02ee595d19b093c8289",
-      "reason": "Retain standalone subprocess, administrator and cancellation guards; serialize runtime replacement against all other CLI commands.",
+      "local_sha256": "77fd24b8c8594bdbad0a2acedee12831c55c92a6aa3362c929cd979025fe46da",
+      "reason": "Retain standalone subprocess, administrator, cancellation and exclusive-upgrade guards; invalidate resolved binary cache after a verified runtime switch.",
       "upstream_sha256": "b2de16f3caa14b63934ffe670f6418fa9d038786d78e2423d56d44934bfa9687"
     },
     "DataLayer/CatalogCLI.swift": {
@@ -87,8 +87,8 @@
       "upstream_sha256": "missing"
     },
     "DataLayer/RuntimeInstallFilesystem.swift": {
-      "local_sha256": "edba2f17f38116c5a3b00bb27aa89152ea5e4d85ebf7c3f17811e1d03d642551",
-      "reason": "Preserve no-replace inode-bound installation; extend exact journal allowlist to the six-component ACP transaction.",
+      "local_sha256": "6260bc7f2f9171979c25891746d1ff1ceb760daaef4c0211782809cc3fbe9ecf",
+      "reason": "Preserve inode-bound six-component installation; validate owner-controlled source markers and safe conversion destinations, and recognize only verified release launcher replacement.",
       "upstream_sha256": "missing"
     },
     "DataLayer/RuntimeInstaller.swift": {
@@ -142,8 +142,8 @@
       "upstream_sha256": "e05687e14ee038eac03801c0fa07a9086c6c6edac150257e0086ea67e977457b"
     },
     "Features/AppSettingsView.swift": {
-      "local_sha256": "c8f51a715ca90fe78f695e01f6509d33e2b80a851c0f06f4c98850357b0beea5",
-      "reason": "Retain standalone update and installation controls; run supported runtime upgrades with progress, failure output and migration disclosure.",
+      "local_sha256": "488991020fb614bdc5f1503662617e8e96597bffdbd3e2b1169f25d3c3a542f6",
+      "reason": "Retain standalone settings and update controls; expose an explicit confirmed source-to-published runtime switch beside the available version.",
       "upstream_sha256": "ad6734335dec9e4057338a8a25be18cfc1ff88992e2e664b2ab9052d7ce46642"
     },
     "Features/CatalogViews.swift": {
@@ -177,8 +177,8 @@
       "upstream_sha256": "35c02a9424209a2468cb49f234f9e31ee864aceca32ab0b5f3944283e7a31383"
     },
     "Features/MainWindow.swift": {
-      "local_sha256": "47ee16d8387dbd632f5ab27cce6a38990bd3d1cf4fe2a2cd30be9afae9fc2391",
-      "reason": "Retain standalone navigation and update banners; provide in-app runtime upgrade action and progress.",
+      "local_sha256": "8c5bfcc70bdaef367b7a860dafdb119fe78b983e279d8fa675a27e4442b5ce43",
+      "reason": "Retain standalone lifecycle and runtime banners; offer the same explicit confirmed source switch while ordinary updates preserve source installations.",
       "upstream_sha256": "6f5731199f8bffbf435b110e318c443450799ca9792e8ea096eb06cb72ed82ee"
     },
     "Features/OverviewView.swift": {
@@ -217,7 +217,7 @@
       "upstream_sha256": "missing"
     }
   },
-  "mac_app_version": "1.1.28",
+  "mac_app_version": "1.1.29",
   "runtime_version": "1.0.0",
   "upstream_commit": "00ef714b8a47f3ba90dad69b91dc8aa40c735057"
 }

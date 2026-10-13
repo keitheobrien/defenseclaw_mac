@@ -29,7 +29,7 @@ Requires **Apple silicon (arm64) and macOS 14 or later**. Both downloads are sig
 2. Open the app. If no runtime is installed, choose **Install DefenseClaw Runtime** from the unified build, then complete setup. Runtime installation uses the bundled payload and downloads Python dependencies, plus uv and Python 3.12 when needed.
 3. Leave **Start gateway automatically** enabled. After successful setup, the app starts the gateway and checks its health. Results appear in **Activity**.
 
-An existing runtime is preserved. For supported releases, **Upgrade Runtime** runs the selected runtime’s built-in authenticated updater inside the app, shows progress in Activity, and verifies the installed version afterward. Equal or newer installed runtimes remain unchanged; custom, partial, and source/development installations receive guidance instead of being overwritten by the bundled installer. Updating the Mac app does not replace the installed runtime.
+An existing runtime is preserved. For supported releases, **Upgrade Runtime** runs the selected runtime’s built-in authenticated updater inside the app, shows progress in Activity, and verifies the installed version afterward. Equal or newer installed runtimes remain unchanged; custom, partial, and source/development installations receive guidance instead of being overwritten by the bundled installer. A supported source build can explicitly **Switch to Published Runtime** after confirmation; the authenticated runtime updater changes the active installation while preserving the checkout. Updating the Mac app does not replace the installed runtime.
 
 ### Automatic gateway startup
 
