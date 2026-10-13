@@ -223,7 +223,7 @@ struct MainWindow: View {
     }
 
     /// Distinct from the Mac-app banner: runtime mutation must happen through
-    /// the release-owned latest-mode resolver outside this app.
+    /// the selected runtime's built-in updater, with legacy resolver fallback.
     private var runtimeUpdateBanner: some View {
         HStack(spacing: 10) {
             Image(systemName: "server.rack")
@@ -257,7 +257,7 @@ struct MainWindow: View {
                 .accessibilityLabel("Dismiss runtime update")
             default:
                 if !appState.sourceDevelopmentRuntimeDetected {
-                    Button("Show Upgrade Command") { appState.performRuntimeUpgrade() }
+                    Button("Upgrade Runtime") { appState.performRuntimeUpgrade() }
                         .controlSize(.small)
                         .buttonStyle(.borderedProminent)
                         .tint(Cisco.green)
@@ -295,9 +295,7 @@ struct MainWindow: View {
         case .checking:
             return "Checking for the latest DefenseClaw runtime…"
         case .installing, .downloading:
-            return appState.runtimeUpgradeLogTail.isEmpty
-                ? "Preparing release-owned resolver guidance…"
-                : appState.runtimeUpgradeLogTail
+            return appState.runtimeUpgradeProgressText
         case .actionRequired(let guidance, _):
             return guidance
         case .failed(let why):
@@ -306,7 +304,7 @@ struct MainWindow: View {
             if appState.sourceDevelopmentRuntimeDetected {
                 return "A newer release is available. Your source installation is preserved; update it through its existing source workflow."
             }
-            return "Runtime update (CLI + gateway) — installed: \(appState.installedRuntimeVersion ?? "unknown"). Use the release-owned resolver in latest mode without --version."
+            return "Update CLI and gateway from \(appState.installedRuntimeVersion ?? "unknown") using the runtime’s built-in updater."
         }
     }
 

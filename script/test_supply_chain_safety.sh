@@ -64,7 +64,7 @@ checks = {
     "self-update ZIP validates its notarization ticket after extraction": 'xcrun stapler validate "$ZIP_CHECK/$APP_NAME.app"' in build,
     "self-update ZIP passes Gatekeeper after extraction": 'spctl -a -t install -vv "$ZIP_CHECK/$APP_NAME.app"' in build,
     "gateway signing helper fixes the installer-required identifier": 'GATEWAY_IDENTIFIER="com.cisco.defenseclaw.gateway"' in gateway_signing,
-    "runtime installer uses the exact release gateway requirement": '#"=identifier "com.cisco.defenseclaw.gateway""#' in runtime,
+    "runtime installer pins the release gateway identifier, Apple anchor and team": '#"=anchor apple generic and identifier "com.cisco.defenseclaw.gateway" and certificate leaf[subject.OU] = "9R236BB67S""#' in runtime,
     "gateway signer assigns the fixed identifier": '--identifier "$GATEWAY_IDENTIFIER"' in gateway_signing,
     "release build uses the shared gateway signer": 'sign_gateway_for_release "$GATEWAY" "$IDENTITY"' in build,
     "decoded gateway is contract verified": 'verify_gateway_signature "$GATEWAY" "$TEAM_ID"' in build,

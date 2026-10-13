@@ -125,17 +125,16 @@ private struct GeneralSettings: View {
                             .textSelection(.enabled)
                             .accessibilityLabel("Authenticated runtime upgrade command")
                     }
-                    if shouldShowRuntimeUpgradeLog {
-                        Button("Copy Full Upgrade Log") {
-                            copyToPasteboard(appState.runtimeUpgradeLog)
-                        }
-                        .controlSize(.small)
-                    }
-                        Text("The app does not run a bare CLI upgrade. Choose Show Upgrade Command below, then copy the runnable command that authenticates the release-owned defenseclaw-upgrade.sh asset, checksums.txt manifest, signature, and certificate before running latest mode without --version. The same path is documented at https://cisco-ai-defense.github.io/defenseclaw/docs/get-started/upgrade/.")
+                        Text("Upgrade Runtime runs the selected runtime’s built-in updater for the displayed release. It verifies downloads, handles migrations and rollback, and restarts runtime services. Progress appears in Activity; the Mac app is preserved. Upgrading from 0.x to 1.x migrates configuration to schema 9 and starts a new audit history, retaining the old database in the rollback snapshot.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
                     LabeledContent("Status", value: runtimeStatusSummary)
+                    runtimeStatus
+                }
+                if shouldShowRuntimeUpgradeLog {
+                    Button("Copy Full Upgrade Log") { copyToPasteboard(appState.runtimeUpgradeOutput) }
+                        .controlSize(.small)
                 }
                 if let payload = RuntimePayload.bundled {
                     LabeledContent("Bundled payload", value: "v\(payload.version)")
@@ -226,7 +225,7 @@ private struct GeneralSettings: View {
         case .checking:
             Text("Checking…").font(.caption).foregroundStyle(.secondary)
         case .installing, .downloading:
-            Text(appState.runtimeUpgradeLogTail.isEmpty ? "Preparing release-owned resolver guidance…" : appState.runtimeUpgradeLogTail)
+            Text(appState.runtimeUpgradeProgressText)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -240,9 +239,9 @@ private struct GeneralSettings: View {
     }
 
     private var shouldShowRuntimeUpgradeLog: Bool {
-        guard !appState.runtimeUpgradeLog.isEmpty else { return false }
+        guard !appState.runtimeUpgradeOutput.isEmpty else { return false }
         return switch appState.runtimeUpgradeState {
-        case .failed: true
+        case .failed, .installing, .downloading: true
         default: false
         }
     }
@@ -267,8 +266,8 @@ private struct GeneralSettings: View {
         if appState.sourceDevelopmentRuntimeDetected { return "Runtime Left Unchanged" }
         switch appState.runtimeUpgradeState {
         case .checking: return "Checking Runtime…"
-        case .downloading, .installing: return "Preparing Upgrade Command…"
-        default: return appState.availableRuntimeUpdate == nil ? "Check Runtime" : "Show Upgrade Command"
+        case .downloading, .installing: return "Upgrading Runtime…"
+        default: return appState.availableRuntimeUpdate == nil ? "Check Runtime" : "Upgrade Runtime"
         }
     }
 
@@ -314,17 +313,18 @@ private struct GeneralSettings: View {
     }
 
     private var macAppActionDisabled: Bool {
-        switch appState.upgradeState {
+        if appState.runtimeUpgradeRunID != nil || appState.runtimeInstallState.isRunning { return true }
+        return switch appState.upgradeState {
         case .checking, .downloading, .installing: true
         default: false
         }
     }
 
     private var runtimeActionDisabled: Bool {
-        if !appState.installationMutationsAllowed { return true }
+        if !appState.installationMutationsAllowed || appState.updateOperationInProgress { return true }
         if appState.sourceDevelopmentRuntimeDetected { return true }
         if appState.runtimeVersionCheckInProgress { return true }
-        // Do not overlap bundled-payload installation with upgrade guidance.
+        // Do not overlap bundled-payload installation with runtime upgrades.
         if appState.runtimeInstallState.isRunning { return true }
         return switch appState.runtimeUpgradeState {
         case .checking, .downloading, .installing: true

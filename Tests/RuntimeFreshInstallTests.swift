@@ -26,14 +26,15 @@ struct RuntimeFreshInstallTests {
                 fflush(stdout)
                 exit(1)
             }
+            let version = RuntimePayload.bundled!.version
             let bin = expected.appendingPathComponent(".local/bin")
             for name in ["defenseclaw", "defenseclaw-gateway", "defenseclaw-acp"] {
                 let result = await state.cli.run(binary: bin.appendingPathComponent(name).path, arguments: ["--version"], mutation: false)
-                precondition(result.succeeded && UpdateChecker.parseVersion(result.output) == "1.0.0", "installed component version")
+                precondition(result.succeeded && UpdateChecker.parseVersion(result.output) == version, "installed component version")
             }
             let data = state.installationContext.homeRoot
             precondition(FileManager.default.fileExists(atPath: data.appendingPathComponent("installer/install.sh").path))
-            precondition((try? String(contentsOf: data.appendingPathComponent("VERSION"), encoding: .utf8)) == "1.0.0\n")
+            precondition((try? String(contentsOf: data.appendingPathComponent("VERSION"), encoding: .utf8)) == version + "\n")
             precondition(!FileManager.default.fileExists(atPath: data.appendingPathComponent(".fresh-install-activation-journal.json").path))
             await state.installBundledRuntime()
             guard case .failed = state.runtimeInstallState else { fatalError("existing runtime must not be overwritten") }

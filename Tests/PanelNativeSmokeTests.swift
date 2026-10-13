@@ -9,6 +9,9 @@ struct PanelNativeSmokeTests {
         CLIProcessGroupLauncher.execIfRequested()
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
+        if ProcessInfo.processInfo.environment["PARITY_UPGRADE_ONLY"] == "1" {
+            precondition(FileManager.default.homeDirectoryForCurrentUser.path == ProcessInfo.processInfo.environment["HOME"], "upgrade test must use only the disposable home")
+        }
         let state = AppState()
         let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 1180, height: 800),
                               styleMask: [.titled, .resizable, .closable], backing: .buffered, defer: false)
@@ -93,6 +96,131 @@ struct PanelNativeSmokeTests {
                                                  mutation: false, category: "diagnostics", origin: "Parity fixture")
             precondition(version.succeeded && version.output.contains("1.0.0"))
             precondition(!state.activity.entries.isEmpty, "CLI command must be recorded in Activity")
+            if ProcessInfo.processInfo.environment["PARITY_UPGRADE_ONLY"] == "1" {
+                let fixture = URL(fileURLWithPath: ProcessInfo.processInfo.environment["DEFENSECLAW_HOME"]!)
+                let versionFile = fixture.appendingPathComponent("runtime-version")
+                let sourceMarker = fixture.appendingPathComponent(".local/bin/.defenseclaw-source-root")
+                try! FileManager.default.createDirectory(at: sourceMarker.deletingLastPathComponent(), withIntermediateDirectories: true)
+                for scenario in ["success", "failure", "cancelled", "unverified", "equal", "newer", "source"] {
+                    try! Data((scenario == "equal" ? "1.0.1" : scenario == "newer" ? "1.0.2" : "1.0.0").utf8).write(to: versionFile)
+                    if scenario == "failure" { try! Data().write(to: fixture.appendingPathComponent("fail-upgrade")) }
+                    if scenario == "unverified" { try! Data().write(to: fixture.appendingPathComponent("unchanged-upgrade")) }
+                    if scenario == "source" { try! Data("fixture source".utf8).write(to: sourceMarker) }
+                    state.runtimeUpgradeState = .idle
+                    await state.refreshInstalledRuntimeVersion()
+                    state.availableRuntimeUpdate = ReleaseInfo(tag: "1.0.1", version: "1.0.1", assetName: "", assetURL: "", assetSHA256: "", htmlURL: "https://example.invalid/release", notes: "Fixture")
+                    state.publishedRuntimeVersion = "1.0.1"
+                    state.runtimeReleaseChecked = true
+                    state.selectedSettingsTab = .general
+                    if scenario == "success" { await show("runtime-upgrade-ready", AnyView(AppSettingsView())) }
+                    let priorIDs = Set(state.activity.entries.map(\.id))
+                    state.performRuntimeUpgrade()
+                    var streamed = false
+                    for _ in 0..<200 {
+                        try? await Task.sleep(for: .milliseconds(100))
+                        if state.runtimeUpgradeOutput.contains("Fixture runtime upgrade in progress"),
+                           let currentID = state.runtimeUpgradeRunID,
+                           state.activity.entries.contains(where: { $0.id == currentID && $0.status.isActive }) {
+                            if !streamed && scenario == "success", let host = window.contentView { capture("runtime-upgrade-progress", host) }
+                            await state.refreshInstalledRuntimeVersion()
+                            precondition(state.installedRuntimeVersion == "1.0.0", "background checks must not clear the installed version mid-upgrade")
+                            let auditAvailable = await state.audit.isAvailable
+                            precondition(!auditAvailable, "audit reader must be suspended during replacement")
+                            if !streamed, scenario == "cancelled", let runID = state.runtimeUpgradeRunID {
+                                state.activity.cancel(runID)
+                            }
+                            streamed = true
+                            // A second click and unrelated mutations must not overlap.
+                            state.performRuntimeUpgrade()
+                            let blocked = await state.runCommand(title: "Blocked during upgrade", arguments: ["fixture-mutation"], origin: "Fixture")
+                            precondition(blocked.exitCode == 75)
+                        }
+                        if state.runtimeUpgradeRunID == nil { break }
+                    }
+                    precondition(state.runtimeUpgradeRunID == nil, "upgrade must finish")
+                    let calls = state.activity.entries.filter { !priorIDs.contains($0.id) && $0.category == "upgrade" }
+                    let skipped = ["equal", "newer", "source"].contains(scenario)
+                    precondition(calls.count == (skipped ? 0 : 1), "exactly one upgrade or no mutation for preserved runtimes")
+                    if !skipped { precondition(streamed, "upgrade progress must be live: \(state.runtimeUpgradeOutput)") }
+                    if ["failure", "cancelled", "unverified"].contains(scenario) {
+                        guard case .failed = state.runtimeUpgradeState else { fatalError("upgrade failure must be reported") }
+                    } else {
+                        precondition(state.runtimeUpgradeState == .idle)
+                    }
+                    if scenario == "success" {
+                        precondition(state.installedRuntimeVersion == "1.0.1" && state.availableRuntimeUpdate == nil)
+                        await show("runtime-upgrade-complete", AnyView(AppSettingsView()))
+                    }
+                    let resumed = await state.cli.run(arguments: ["--version"], mutation: false)
+                    precondition(resumed.succeeded, "runner lock must be released on every outcome")
+                    let auditResumed = await state.audit.isAvailable
+                    precondition(auditResumed, "audit reader must resume on every outcome")
+                    for marker in [fixture.appendingPathComponent("fail-upgrade"), fixture.appendingPathComponent("unchanged-upgrade"), sourceMarker] {
+                        try? FileManager.default.removeItem(at: marker)
+                    }
+                    print("PASS automatic runtime upgrade: \(scenario)")
+                }
+                print("PASS all native panel/form renders completed")
+                fflush(stdout)
+                app.terminate(nil)
+                return
+            }
+            if ProcessInfo.processInfo.environment["PARITY_SANDBOX_ONLY"] == "1" {
+                let fixture = URL(fileURLWithPath: ProcessInfo.processInfo.environment["DEFENSECLAW_HOME"]!)
+                let wizard = TUIWizards.all.first { $0.id == "sandbox" }!
+                @MainActor func pressDefaultAction() {
+                    let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                                timestamp: ProcessInfo.processInfo.systemUptime,
+                                                windowNumber: window.windowNumber, context: nil,
+                                                characters: "\r", charactersIgnoringModifiers: "\r",
+                                                isARepeat: false, keyCode: 36)!
+                    precondition(window.performKeyEquivalent(with: event), "wizard default action must be reachable")
+                }
+                for failingStage in ["", "setup", "image", "doctor"] {
+                    let marker = fixture.appendingPathComponent("fail-sandbox-" + failingStage)
+                    if !failingStage.isEmpty { try! Data().write(to: marker) }
+                    let host = NSHostingView(rootView: WizardSheet(wizard: wizard).id(UUID()).environment(state))
+                    window.contentView = host
+                    window.setContentSize(NSSize(width: 660, height: 660))
+                    window.makeKeyAndOrderFront(nil)
+                    try? await Task.sleep(for: .seconds(1))
+                    if failingStage.isEmpty { capture("sandbox-form", host) }
+                    pressDefaultAction()
+                    try? await Task.sleep(for: .milliseconds(500))
+                    if failingStage.isEmpty { capture("sandbox-review", host) }
+                    let previousIDs = Set(state.activity.entries.map(\.id))
+                    pressDefaultAction()
+                    var streamed = false
+                    var completed = false
+                    let expectedCount = failingStage == "setup" ? 1 : (failingStage == "image" ? 2 : 3)
+                    for _ in 0..<160 {
+                        try? await Task.sleep(for: .milliseconds(100))
+                        let active = state.activity.entries.filter { !previousIDs.contains($0.id) && $0.category == "setup" }
+                        if !streamed, active.contains(where: { $0.status == .running && $0.output.contains("Fixture sandbox setup progress") }) {
+                            streamed = true
+                            if failingStage.isEmpty { capture("sandbox-progress", host) }
+                        }
+                        if active.count >= expectedCount && active.allSatisfy({ !$0.status.isActive }) {
+                            completed = true
+                            try? await Task.sleep(for: .milliseconds(500))
+                            break
+                        }
+                    }
+                    precondition(completed && streamed, "wizard must stream output and finish within deadline")
+                    let calls = state.activity.entries.filter { !previousIDs.contains($0.id) && $0.category == "setup" }
+                        .sorted { $0.startedAt < $1.startedAt }
+                    precondition(calls.count == expectedCount, "no follow-up stage may run after failure")
+                    precondition(calls.last!.status == (failingStage.isEmpty ? .succeeded : .failed))
+                    precondition(calls.first!.command.contains("--install-openshell"))
+                    capture("sandbox-" + (failingStage.isEmpty ? "success" : "failed-" + failingStage), host)
+                    if !failingStage.isEmpty { try! FileManager.default.removeItem(at: marker) }
+                    print("PASS sandbox wizard sequence: \(failingStage.isEmpty ? "success" : failingStage + " failure"), live output, Activity, stop on failure")
+                }
+                print("PASS all native panel/form renders completed")
+                fflush(stdout)
+                app.terminate(nil)
+                return
+            }
             state.installedRuntimeVersion = "1.0.0"
             await state.refreshAlerts()
             let panels: [(PanelID, AnyView)] = [

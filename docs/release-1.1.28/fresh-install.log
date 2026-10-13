@@ -1,0 +1,6 @@
+Verified OK
+Verified complete runtime 1.0.1 payload, source 00ef714b8a47f3ba90dad69b91dc8aa40c735057
+Disposable fresh-install artifacts: /private/tmp/defenseclawmac-fresh-014vf9vz
+/private/tmp/defenseclawmac-fresh-014vf9vz/build/Build/Products/Debug/DefenseClawMac.app: replacing existing signature
+Isolated home: /tmp/defenseclawmac-fresh-014vf9vz/home expected: /tmp/defenseclawmac-fresh-014vf9vz/home
+PASS real fresh install: CLI, gateway, ACP, installer, VERSION; repeat refused

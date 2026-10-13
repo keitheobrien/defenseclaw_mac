@@ -529,6 +529,19 @@ actor CLIRunner {
         case administrator(GatewayAdministratorOperation)
     }
 
+    private var exclusiveOperationID: UUID?
+
+    /// Runtime replacement must not race CLI commands using the same venv.
+    func beginExclusiveOperation(id: UUID) -> Bool {
+        guard exclusiveOperationID == nil, runStates.isEmpty else { return false }
+        exclusiveOperationID = id
+        return true
+    }
+
+    func endExclusiveOperation(id: UUID) {
+        if exclusiveOperationID == id { exclusiveOperationID = nil }
+    }
+
     private var cachedPaths: [String: String] = [:]
     private var runStates: [UUID: RunState] = [:]
     private var installationContext: InstallationContext
@@ -956,6 +969,9 @@ actor CLIRunner {
             case nil:
                 break
             }
+        }
+        if let exclusiveOperationID, exclusiveOperationID != executionID {
+            return CLIResult(exitCode: 75, output: "A runtime upgrade is in progress. Wait for it to finish before running another command.\n")
         }
         // The caller can cancel between Activity reservation and this actor's
         // dispatch. Consume the reservation above, then refuse before any

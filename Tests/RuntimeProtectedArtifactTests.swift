@@ -62,7 +62,13 @@ struct RuntimeProtectedArtifactTests {
         expect(command?.contains("DEFENSECLAW_APP_PATH=none") == true, "upgrading the runtime preserves the standalone Mac app")
         expect(command?.contains("upgrade --yes --version '1.0.0'") == true, "upgrade is pinned to the reviewed release")
         expect(command?.contains("'\"'\"'") == true, "selected executable is quoted")
+        let invocation = RuntimeUpgradeResolverCommand.invocation(cliPath: "/tmp/quote'path/bin/defenseclaw", home: "/tmp/home space", config: "/tmp/config.yaml", venv: "/tmp/venv", releaseTag: "v1.0.1")
+        expect(invocation?.binary == "/tmp/quote'path/bin/defenseclaw", "absolute executable is passed without shell quoting")
+        expect(invocation?.arguments == ["upgrade", "--yes", "--version", "1.0.1"], "automatic upgrade uses exact version-pinned argv")
+        expect(invocation?.environment == ["DEFENSECLAW_APP_PATH": "none", "DEFENSECLAW_HOME": "/tmp/home space", "DEFENSECLAW_CONFIG": "/tmp/config.yaml", "DEFENSECLAW_VENV": "/tmp/venv"], "selected installation and standalone app preservation travel through environment")
+        expect(RuntimeUpgradeResolverCommand.invocation(cliPath: "relative-cli", home: "/tmp/home", config: "/tmp/config", venv: "/tmp/venv", releaseTag: "1.0.1") == nil, "relative executable is rejected")
         for version in ["1.0.0;bad", "1.0.0\n", "2.0.0", "1.00.0"] {
+            expect(RuntimeUpgradeResolverCommand.invocation(cliPath: "/tmp/cli", home: "/tmp/home", config: "/tmp/config", venv: "/tmp/venv", releaseTag: version) == nil, "invalid automatic upgrade version rejected")
             expect(RuntimeUpgradeResolverCommand.builtin(cliPath: "/tmp/cli", home: "/tmp/home", config: "/tmp/config", venv: "/tmp/venv", releaseTag: version) == nil, "invalid upgrade version rejected")
         }
     }

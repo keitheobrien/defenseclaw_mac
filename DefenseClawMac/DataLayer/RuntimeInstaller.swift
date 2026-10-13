@@ -343,6 +343,25 @@ struct RuntimePayload: Sendable {
 /// Produces the runnable, signed-release resolver command shared by native-app
 /// upgrade surfaces. The release tag is validated before URL interpolation.
 enum RuntimeUpgradeResolverCommand {
+    struct Invocation: Equatable {
+        let binary: String
+        let arguments: [String]
+        let environment: [String: String]
+    }
+
+    /// Direct argv/environment execution; the display command is never fed to a shell.
+    static func invocation(cliPath: String, home: String, config: String, venv: String, releaseTag: String) -> Invocation? {
+        let version = releaseTag.hasPrefix("v") ? String(releaseTag.dropFirst()) : releaseTag
+        guard version.hasPrefix("1."), version.utf8.allSatisfy({ (48...57).contains($0) || $0 == 46 }),
+              authenticated(releaseTag: version) != nil,
+              [cliPath, home, config, venv].allSatisfy({
+                  $0.hasPrefix("/") && !$0.contains(where: { $0.isNewline || $0 == "\0" })
+              }) else { return nil }
+        return Invocation(binary: cliPath, arguments: ["upgrade", "--yes", "--version", version],
+                          environment: ["DEFENSECLAW_APP_PATH": "none", "DEFENSECLAW_HOME": home,
+                                        "DEFENSECLAW_CONFIG": config, "DEFENSECLAW_VENV": venv])
+    }
+
     static func builtin(cliPath: String, home: String, config: String, venv: String, releaseTag: String) -> String? {
         let version = releaseTag.hasPrefix("v") ? String(releaseTag.dropFirst()) : releaseTag
         guard version.hasPrefix("1."), version.utf8.allSatisfy({ (48...57).contains($0) || $0 == 46 }),

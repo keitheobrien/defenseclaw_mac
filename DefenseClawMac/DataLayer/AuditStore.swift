@@ -35,6 +35,13 @@ actor AuditStore {
         let sharedMemory: FileIdentity?
     }
 
+    private var suspendedForUpgrade = false
+
+    func setSuspendedForUpgrade(_ suspended: Bool) {
+        suspendedForUpgrade = suspended
+        close()
+    }
+
     private var db: OpaquePointer?
     private var openedIdentity: DatabaseFamilyIdentity?
     private var lastQuerySucceeded = false
@@ -58,6 +65,7 @@ actor AuditStore {
     }
 
     private func ensureOpen() {
+        guard !suspendedForUpgrade else { return }
         let currentIdentity = databaseFamilyIdentity()
         if db != nil, currentIdentity != openedIdentity {
             close()

@@ -129,9 +129,22 @@ struct SetupDefinitionsParityTests {
     }
 
     private static func sandboxSetupMatchesCurrentMacWorkflow() {
-        expect(TUIWizards.sandboxCommands([:], false) == [["sandbox", "setup", "--non-interactive", "--harness", "claudecode", "--harness", "codex", "--no-wrappers"]], "sandbox defaults select both harnesses without installing dependencies")
-        expect(TUIWizards.sandboxCommands(["action": "doctor"], false) == [["sandbox", "doctor"]], "sandbox doctor is read only")
-        expect(TUIWizards.sandboxCommands(["harness-codex": "no", "wrappers": "yes", "build-images": "no"], false) == [["sandbox", "setup", "--non-interactive", "--harness", "claudecode", "--wrappers", "--skip-images"]], "sandbox flags match current macOS setup")
+        let defaults = TUIWizards.sandboxCommands([:], false)
+        expect(defaults == [
+            ["sandbox", "setup", "--non-interactive", "--install-openshell", "--harness", "claudecode", "--harness", "codex", "--no-wrappers", "--skip-images"],
+            ["sandbox", "image", "build", "claudecode", "codex"],
+            ["sandbox", "doctor"]
+        ], "sandbox defaults install prerequisites, configure, build both images, then verify")
+        expect(TUIWizards.sandboxCommands(["action": "doctor", "install-openshell": "yes"], false) == [["sandbox", "doctor"]], "doctor never installs or builds even with stale setup choices")
+        let optedOut = TUIWizards.sandboxCommands(["install-openshell": "no", "harness-codex": "no", "wrappers": "yes", "build-images": "no"], false)
+        expect(optedOut == [["sandbox", "setup", "--non-interactive", "--harness", "claudecode", "--wrappers", "--skip-images"], ["sandbox", "doctor"]], "explicit install and build opt-outs are respected")
+        expect(TUIWizards.sandboxCommands(["telemetry-off": "no"], false)[0].contains("--upstream-telemetry"), "upstream telemetry opt-in reaches the runtime")
+        let codexOnly = TUIWizards.sandboxCommands(["harness-claudecode": "no"], false)
+        expect(codexOnly[1] == ["sandbox", "image", "build", "codex"], "build only selected harnesses")
+        expect(!defaults.flatMap { $0 }.contains("--yes") && !defaults.flatMap { $0 }.contains("--restart-gateway"), "installation consent does not force active sandbox restarts or blanket answers")
+        let wizard = TUIWizards.all.first { $0.id == "sandbox" }!
+        let formDefaults = Dictionary(uniqueKeysWithValues: wizard.fields.map { ($0.key, $0.defaultValue) })
+        expect(TUIWizards.sandboxCommands(formDefaults, true) == defaults, "reviewed defaults match actual execution")
         expect(TUIWizards.sandboxValidation(["harness-claudecode": "no", "harness-codex": "no"]) != nil, "empty harness selection is rejected")
         expect(TUIWizards.sandboxValidation(["action": "doctor"]) == nil, "doctor does not require a harness")
     }

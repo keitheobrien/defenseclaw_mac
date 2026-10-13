@@ -171,6 +171,13 @@ struct WizardSheet: View {
     @State private var output = ""
     @State private var exitCode: Int32?
     @State private var confirmConnectorReplacement = false
+    @State private var activeRunID: UUID?
+    @State private var runningStep = "Applying…"
+
+    private var displayedOutput: String {
+        let live = activeRunID.flatMap { id in appState.activity.entries.first { $0.id == id }?.output } ?? ""
+        return output + live
+    }
 
     enum Phase { case form, review, running, done }
 
@@ -281,7 +288,7 @@ struct WizardSheet: View {
             }
         }
         .padding(18)
-        .frame(width: 560, height: 480)
+        .frame(width: wizard.id == "sandbox" ? 640 : 560, height: wizard.id == "sandbox" ? 640 : 480)
         .onAppear {
             for field in wizard.fields where values[field.key] == nil {
                 values[field.key] = field.defaultValue
@@ -382,7 +389,7 @@ struct WizardSheet: View {
             Text("Review").font(.subheadline.weight(.semibold))
             Text(wizard.interactiveOnly
                  ? "This subcommand is an interactive terminal wizard (it takes no flags). Copy it and run it in your terminal:"
-                 : "This exact command will run (matching the terminal TUI’s behavior):")
+                 : "These commands will run in order. Processing stops if a command fails:")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Text(displayCommand)
@@ -443,7 +450,7 @@ struct WizardSheet: View {
             HStack {
                 if phase == .running {
                     ProgressView().controlSize(.small)
-                    Text("Applying…").font(.subheadline)
+                    Text(runningStep).font(.subheadline)
                 } else if exitCode == 0 {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(Cisco.green)
                     Text("Applied successfully").font(.subheadline.weight(.semibold))
@@ -453,7 +460,7 @@ struct WizardSheet: View {
                 }
             }
             ScrollView {
-                Text(output.isEmpty ? "…" : output)
+                Text(displayedOutput.isEmpty ? "…" : displayedOutput)
                     .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -496,22 +503,44 @@ struct WizardSheet: View {
                 let secret = index == 0 ? wizard.secretInputField.flatMap { key in
                     visibleFields.contains(where: { $0.key == key }) ? values[key] : nil
                 } : nil
+                let runID = UUID()
+                activeRunID = runID
+                let stepTitle: String
+                if wizard.id == "sandbox" {
+                    if arguments == ["sandbox", "doctor"] {
+                        stepTitle = "Check sandbox readiness"
+                    } else if arguments.prefix(3) == ["sandbox", "image", "build"] {
+                        stepTitle = "Build agent images"
+                    } else {
+                        stepTitle = "Set up OpenShell"
+                    }
+                } else {
+                    stepTitle = wizard.title
+                }
+                runningStep = "Step \(index + 1) of \(commands.count): \(stepTitle)"
                 let result = await appState.runCommand(
-                    title: wizard.title,
+                    runID: runID,
+                    title: stepTitle,
                     binary: "defenseclaw",
                     arguments: arguments,
                     standardInput: secret,
                     environment: index == 0 ? commandEnvironment : [:],
+                    mutation: arguments != ["sandbox", "doctor"],
                     category: "setup",
                     origin: "Setup",
                     refreshOnSuccess: true
                 )
-                if let entry = appState.activity.entries.first(where: { $0.id == appState.activity.selectedID }) {
-                    output += entry.output
-                }
-                if output.isEmpty { output = result.output }
+                let recordedOutput = appState.activity.entries.first(where: { $0.id == runID })?.output
+                output += recordedOutput ?? result.output
+                if !output.hasSuffix("\n") { output += "\n" }
+                activeRunID = nil
                 finalCode = result.exitCode
-                if !result.succeeded { break }
+                if !result.succeeded {
+                    // Cancellation or truncated output cannot report success,
+                    // even when the direct process happened to exit zero.
+                    if finalCode == 0 { finalCode = 1 }
+                    break
+                }
             }
             exitCode = finalCode
             phase = .done

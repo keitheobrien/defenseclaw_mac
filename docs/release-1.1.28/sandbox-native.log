@@ -1,0 +1,8 @@
+Native panel artifacts: /var/folders/r9/6nkm3f8s4_j2fbgvxrzx3rxh0000gn/T/defenseclawmac-panel-tests-2_s8gpb1
+Fixture: {'root': '/private/tmp/defenseclawmac-parity-7pgg_x5m', 'port': 51423, 'cli': '/private/tmp/defenseclawmac-parity-7pgg_x5m/bin/defenseclaw'}
+sandbox_extension_issue_file_to_process failed for /var/folders/r9/6nkm3f8s4_j2fbgvxrzx3rxh0000gn/T/defenseclawmac-panel-tests-2_s8gpb1/build/Build/Products/Debug/DefenseClawMac.app: 1 (Operation not permitted)
+PASS sandbox wizard sequence: success, live output, Activity, stop on failure
+PASS sandbox wizard sequence: setup failure, live output, Activity, stop on failure
+PASS sandbox wizard sequence: image failure, live output, Activity, stop on failure
+PASS sandbox wizard sequence: doctor failure, live output, Activity, stop on failure
+PASS all native panel/form renders completed
