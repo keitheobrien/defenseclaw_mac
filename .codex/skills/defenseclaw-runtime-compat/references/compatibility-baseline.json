@@ -2,8 +2,8 @@
   "config_version": 9,
   "intentional_source_differences": {
     "App/AppState.swift": {
-      "local_sha256": "5eac3728310e3fab29787a25f469cce7d6f7af401b3ea7a66576f25f60bc4c27",
-      "reason": "Retain exclusive recorded 1.x upgrades and standalone app preservation; explicitly confirm source conversion, recheck consent, verify version and launcher replacement, then rebind readers before completing.",
+      "local_sha256": "e1a898798cf28eacc80ec7144efddc7d5d0dfa9740e3eaf544988cee74d233c7",
+      "reason": "Retain standalone upgrade and source-conversion guards; permit sandbox inspection reads only for the current installation generation outside exclusive runtime updates.",
       "upstream_sha256": "20c893580794feee6b6c2d74a912b99304eee22f3c59d00c7233652a77444f09"
     },
     "App/DefenseClawApp.swift": {
@@ -106,9 +106,19 @@
       "reason": "Project release-1.0 IDE extensions and stable agent identities with bounded counts and allowlisted details.",
       "upstream_sha256": "missing"
     },
+    "DataLayer/SandboxInspection.swift": {
+      "local_sha256": "a8e1c11a66103eafc95a2b7444e3f1a52be3ec8a7ca4ae77884ece2d2fa885f9",
+      "reason": "Add bounded, redacted read-only policy, revision, destination and log projections; distinguish applied versus unverified enforcement and observed destinations from permissions.",
+      "upstream_sha256": "missing"
+    },
+    "DataLayer/SandboxInspectionStore.swift": {
+      "local_sha256": "df15f3463ad6b4d81bbedb286e01365f4f9791933caa291b789d88efd9374939",
+      "reason": "Add explicit-target read-only CLI queries with timeout/cancellation, revision validation, bounded history, stale-state retention, pause and installation-generation invalidation.",
+      "upstream_sha256": "missing"
+    },
     "DataLayer/SandboxModels.swift": {
-      "local_sha256": "2d8d2c3c1a7118d74fd3da8374e4467a91b7044844608cfd1a645d2cec8dc01e",
-      "reason": "Use runtime 1.0.1 event epochs and host-port explanation while retaining event-based restart detection for older gateways.",
+      "local_sha256": "a2a7837e37112b225a4900481430b6af895525913fabaad545ecd0a85e4b6410",
+      "reason": "Retain runtime 1.0.1 event epochs and host-port explanations; project explicit OpenShell gateway/workspace identity and activity severity/rule for read-only inspection.",
       "upstream_sha256": "b02e4c813a57554ee08cb3a304fbce905cfa57c5339ec212f578c843e71bf9d6"
     },
     "DataLayer/SkillScanner.swift": {
@@ -196,9 +206,14 @@
       "reason": "Current runtime redaction sheet using separately tested command builder.",
       "upstream_sha256": "missing"
     },
+    "Features/SandboxInspectorView.swift": {
+      "local_sha256": "6c2213914976fcdfbacafd4244575ac41bb08b427615909186e0f0e3e9d10099",
+      "reason": "Add read-only policy layers/history, network visibility and filtered monitoring with redacted export; no policy editor or runtime mutation interface.",
+      "upstream_sha256": "missing"
+    },
     "Features/SandboxesView.swift": {
-      "local_sha256": "8a4457982f4cf265ae2a2c5c83fd00cdd5e0b1cbc94e04e1de040ae03df71dc6",
-      "reason": "Current native sandbox UI; argument-safe copied command and stale-state guard before CLI mutations.",
+      "local_sha256": "fbb88bb1680cc0fd796138691a65845a8b70b47ba2de9f2fe43913ac26603a9f",
+      "reason": "Present sandbox inspection tabs while preserving existing lifecycle/approval actions; invalidate inspection views when installation identity changes.",
       "upstream_sha256": "c7552b68099f9a4e6ba9d8ea1f55e2517fd192cfb12b56c10b99d5b1d10c2102"
     },
     "Features/SetupDefinitions.swift": {
@@ -217,7 +232,7 @@
       "upstream_sha256": "missing"
     }
   },
-  "mac_app_version": "1.1.29",
+  "mac_app_version": "1.1.30",
   "runtime_version": "1.0.0",
   "upstream_commit": "00ef714b8a47f3ba90dad69b91dc8aa40c735057"
 }

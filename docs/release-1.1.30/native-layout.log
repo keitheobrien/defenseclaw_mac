@@ -1,0 +1,37 @@
+Native inspector regression artifacts: /var/folders/98/c5z97r555l9gcwzqktsc2_gw0000gn/T//defenseclaw-inspector-native-tests.UWj2qE
+/Users/kobrien/git/defenseclaw_mac/Tests/InspectorNativeLayoutTests.swift:141:36: warning: 'accessibilityAttributeValue' was deprecated in macOS 10.10: Use the NSAccessibility protocol methods instead (see NSAccessibilityProtocols.h) [#DeprecatedDeclaration]
+139 |             // point used by accessibility clients, not the modern row setter.
+140 |             // The deprecated API is intentional in this test-only control.
+141 |             guard let rows = table.accessibilityAttributeValue(.rows) as? [NSObject],
+    |                                    `- warning: 'accessibilityAttributeValue' was deprecated in macOS 10.10: Use the NSAccessibility protocol methods instead (see NSAccessibilityProtocols.h) [#DeprecatedDeclaration]
+142 |                   rows.count >= 4,
+143 |                   rows.allSatisfy({ $0.accessibilityIsAttributeSettable(.selected) }) else {
+
+/Users/kobrien/git/defenseclaw_mac/Tests/InspectorNativeLayoutTests.swift:143:40: warning: 'accessibilityIsAttributeSettable' was deprecated in macOS 10.10: Use the NSAccessibility protocol methods instead (see NSAccessibilityProtocols.h) [#DeprecatedDeclaration]
+141 |             guard let rows = table.accessibilityAttributeValue(.rows) as? [NSObject],
+142 |                   rows.count >= 4,
+143 |                   rows.allSatisfy({ $0.accessibilityIsAttributeSettable(.selected) }) else {
+    |                                        `- warning: 'accessibilityIsAttributeSettable' was deprecated in macOS 10.10: Use the NSAccessibility protocol methods instead (see NSAccessibilityProtocols.h) [#DeprecatedDeclaration]
+144 |                 fail("native AX row selection unavailable", code: 94)
+145 |             }
+
+/Users/kobrien/git/defenseclaw_mac/Tests/InspectorNativeLayoutTests.swift:147:29: warning: 'accessibilitySetValue(_:forAttribute:)' was deprecated in macOS 10.10: Use the NSAccessibility protocol methods instead (see NSAccessibilityProtocols.h) [#DeprecatedDeclaration]
+145 |             }
+146 |             if let index {
+147 |                 rows[index].accessibilitySetValue(NSNumber(value: true), forAttribute: .selected)
+    |                             `- warning: 'accessibilitySetValue(_:forAttribute:)' was deprecated in macOS 10.10: Use the NSAccessibility protocol methods instead (see NSAccessibilityProtocols.h) [#DeprecatedDeclaration]
+148 |             } else {
+149 |                 for row in rows {
+
+/Users/kobrien/git/defenseclaw_mac/Tests/InspectorNativeLayoutTests.swift:150:25: warning: 'accessibilitySetValue(_:forAttribute:)' was deprecated in macOS 10.10: Use the NSAccessibility protocol methods instead (see NSAccessibilityProtocols.h) [#DeprecatedDeclaration]
+148 |             } else {
+149 |                 for row in rows {
+150 |                     row.accessibilitySetValue(NSNumber(value: false), forAttribute: .selected)
+    |                         `- warning: 'accessibilitySetValue(_:forAttribute:)' was deprecated in macOS 10.10: Use the NSAccessibility protocol methods instead (see NSAccessibilityProtocols.h) [#DeprecatedDeclaration]
+151 |                 }
+152 |             }
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+PASS fixed-native-980: native inputs, close/open resize cycles, variable hydration, parent updates, and 20-second open-details dwell completed; exit=0
+PASS fixed-accessibility-1180: native inputs, close/open resize cycles, variable hydration, parent updates, and 20-second open-details dwell completed; exit=0
+Native inspector regression report: /var/folders/98/c5z97r555l9gcwzqktsc2_gw0000gn/T/defenseclaw-inspector-native-tests.UWj2qE/results.json
