@@ -50,6 +50,9 @@ struct SandboxStatus: Sendable, Hashable {
     var available = false
     var reason = ""
     var gateway = ""
+    var gatewayName = ""
+    var gatewayWorkspace = ""
+    var gatewayVersion = ""
     /// gateway.driver: "docker" or "vm"; empty from a daemon older than the
     /// field, or before a gateway answered.
     var driver = ""
@@ -226,6 +229,8 @@ struct SandboxActivity: Identifiable, Sendable, Hashable {
     var unblockable = false
     var approvalID = ""
     var tool = ""
+    var severity = ""
+    var rule = ""
     /// An egress.unblocked event lifted this block since it happened.
     var unblocked = false
 
@@ -579,6 +584,9 @@ enum SandboxDecoding {
         out.available = (d["available"] as? Bool) ?? false
         out.reason = str(d["reason"])
         let gateway = dict(d["gateway"])
+        out.gatewayName = str(gateway["name"])
+        out.gatewayWorkspace = str(gateway["workspace"])
+        out.gatewayVersion = str(gateway["version"])
         out.driver = str(gateway["driver"]).trimmingCharacters(in: .whitespaces)
         if !gateway.isEmpty {
             let version = str(gateway["version"])
@@ -711,7 +719,9 @@ enum SandboxDecoding {
             message: message,
             unblockable: (d["unblockable"] as? Bool) ?? false,
             approvalID: str(d["approval_id"]),
-            tool: str(d["tool"])
+            tool: str(d["tool"]),
+            severity: str(d["severity"]),
+            rule: str(d["rule"])
         )
     }
 

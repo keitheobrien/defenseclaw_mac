@@ -8,8 +8,8 @@ import subprocess
 import sys
 import tempfile
 
-if sys.argv[1:] not in (["--run-gui"], ["--run-sandbox-gui"], ["--run-upgrade-gui"]):
-    print("SKIP PanelNativeSmokeTests: use --run-gui, --run-sandbox-gui or --run-upgrade-gui in a macOS desktop session.")
+if sys.argv[1:] not in (["--run-gui"], ["--run-sandbox-gui"], ["--run-upgrade-gui"], ["--run-inspection-gui"]):
+    print("SKIP PanelNativeSmokeTests: use --run-gui, --run-sandbox-gui, --run-upgrade-gui, or --run-inspection-gui in a macOS desktop session.")
     sys.exit(0)
 repo = Path(__file__).resolve().parent.parent
 root = Path(tempfile.mkdtemp(prefix="defenseclawmac-panel-tests-"))
@@ -35,6 +35,8 @@ try:
     env.update(DEFENSECLAW_HOME=str(fixture_root), DEFENSECLAW_CONFIG=str(fixture_root / "config.yaml"),
                DEFENSECLAW_VENV=os.environ.get("DEFENSECLAW_TEST_VENV", str(repo.parent / "defenseclaw/.venv")), PYTHONDONTWRITEBYTECODE="1",
                PARITY_SCREENSHOTS=str(root / "screenshots"))
+    if sys.argv[1:] == ["--run-inspection-gui"]:
+        env["PARITY_INSPECTION_ONLY"] = "1"
     if sys.argv[1:] == ["--run-sandbox-gui"]:
         env["PARITY_SANDBOX_ONLY"] = "1"
     if sys.argv[1:] == ["--run-upgrade-gui"]:

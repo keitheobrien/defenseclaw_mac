@@ -47,7 +47,9 @@ struct PanelNativeSmokeTests {
             print("NOTE bitmap fallback for \(name): window capture unavailable")
         }
         func show(_ name: String, _ view: AnyView) async {
-            let host = NSHostingView(rootView: view.environment(state))
+            let content = name.hasPrefix("inspection-")
+                ? AnyView(ScrollView { view.frame(maxWidth: .infinity, alignment: .leading).padding(12) }) : view
+            let host = NSHostingView(rootView: content.environment(state))
             window.contentView = host
             window.title = "Parity fixture: " + name
             window.makeKeyAndOrderFront(nil)
@@ -213,6 +215,44 @@ struct PanelNativeSmokeTests {
                 fflush(stdout)
                 app.terminate(nil)
                 return
+            }
+            if ProcessInfo.processInfo.environment["PARITY_INSPECTION_ONLY"] == "1" {
+                state.selectedPanel = .sandboxes
+                await state.refreshSandboxes()
+                let fixture = URL(fileURLWithPath: ProcessInfo.processInfo.environment["DEFENSECLAW_HOME"]!)
+                let fixtureCLI = state.cli
+                let read: SandboxInspectionStore.Reader = { binary, arguments in
+                    await fixtureCLI.run(binary: binary == "openshell" ? fixture.appendingPathComponent("bin/openshell").path : binary,
+                                         arguments: arguments, mutation: false)
+                }
+                let row = state.sandbox.sandboxes.first!
+                let target = SandboxInspectionTarget(sandbox: row.name, gateway: "fixture", workspace: "default")
+                let inspection = SandboxInspectionStore()
+                await inspection.refresh(target: target, read: read)
+                precondition(inspection.effective.value != nil && inspection.base.value != nil)
+                precondition(inspection.destinations.value?.count == 2)
+                precondition(inspection.sandboxLogs.value?.contains { $0.decision == "Blocked" } == true)
+                precondition(inspection.effective.value!.fields.count > inspection.base.value!.fields.count)
+                for tab in ["Overview", "Policy", "Network", "Activity & Logs"] {
+                    await show("inspection-" + tab.replacingOccurrences(of: " ", with: "-"),
+                               AnyView(SandboxInspectorView(row: row, initialTab: tab, store: inspection, readOverride: read)))
+                }
+                for scope in ["DefenseClaw", "Base", "History"] {
+                    await show("inspection-policy-" + scope, AnyView(SandboxInspectorView(row: row, initialTab: "Policy",
+                        initialPolicyScope: scope, initialRevision: scope == "History" ? 1 : nil, store: inspection, readOverride: read)))
+                }
+                await inspection.loadRevision(1, read: read)
+                precondition(!SandboxInspectionDecoding.difference(inspection.revision.value!.fields, inspection.base.value!.fields).isEmpty)
+                try! Data().write(to: fixture.appendingPathComponent("inspection-fail"))
+                await inspection.refresh(target: target, read: read)
+                precondition(inspection.effective.note.hasPrefix("Stale:"))
+                await show("inspection-stale", AnyView(SandboxInspectorView(row: row, initialTab: "Policy", store: inspection, readOverride: read)))
+                try! FileManager.default.removeItem(at: fixture.appendingPathComponent("inspection-fail"))
+                await inspection.refresh(target: target, read: read)
+                precondition(inspection.effective.error.isEmpty)
+                print("PASS inspection policy/base/history, destination and blocked-log fixtures; stale state and recovery")
+                print("PASS all native panel/form renders completed")
+                fflush(stdout); app.terminate(nil); return
             }
             if ProcessInfo.processInfo.environment["PARITY_SANDBOX_ONLY"] == "1" {
                 let fixture = URL(fileURLWithPath: ProcessInfo.processInfo.environment["DEFENSECLAW_HOME"]!)

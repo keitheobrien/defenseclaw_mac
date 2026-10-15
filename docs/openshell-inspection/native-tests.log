@@ -1,0 +1,13 @@
+Native panel artifacts: /var/folders/98/c5z97r555l9gcwzqktsc2_gw0000gn/T/defenseclawmac-panel-tests-otnbr9_2
+Fixture: {'root': '/private/tmp/defenseclawmac-parity-se5itpq8', 'port': 54830, 'cli': '/private/tmp/defenseclawmac-parity-se5itpq8/bin/defenseclaw'}
+sandbox_extension_issue_file_to_process failed for /var/folders/98/c5z97r555l9gcwzqktsc2_gw0000gn/T/defenseclawmac-panel-tests-otnbr9_2/build/Build/Products/Debug/DefenseClawMac.app: 1 (Operation not permitted)
+PASS render inspection-Overview; tables=0; rows=[]
+PASS render inspection-Policy; tables=1; rows=[13]
+PASS render inspection-Network; tables=2; rows=[2, 6]
+PASS render inspection-Activity-&-Logs; tables=1; rows=[7]
+PASS render inspection-policy-DefenseClaw; tables=1; rows=[7]
+PASS render inspection-policy-Base; tables=1; rows=[11]
+PASS render inspection-policy-History; tables=2; rows=[2, 2]
+PASS render inspection-stale; tables=1; rows=[13]
+PASS inspection policy/base/history, destination and blocked-log fixtures; stale state and recovery
+PASS all native panel/form renders completed

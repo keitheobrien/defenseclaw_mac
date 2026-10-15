@@ -20,7 +20,37 @@ def cli():
     args = sys.argv[1:]
     with (root / "commands.jsonl").open("a") as handle:
         handle.write(json.dumps(args) + "\n")
-    if args in (["--version"], ["version"]):
+    if Path(sys.argv[0]).name == "openshell":
+        if (root / "inspection-fail").exists():
+            print("Fixture gateway unavailable")
+            sys.exit(1)
+        sandbox = "fixture-codex"
+        rule = {"binaries": [{"path": "/usr/bin/curl"}], "endpoints": [{"host": "api.example.invalid", "port": 443, "access": "read-only"}]}
+        policy = {"version": 1, "filesystem_policy": {"read_only": ["/usr"], "read_write": ["/work", "/tmp"]},
+                  "landlock": {"compatibility": "hard_requirement"}, "network_policies": {"api": rule},
+                  "process": {"run_as_user": "501", "run_as_group": "20"}}
+        if "logs" in args:
+            source = args[args.index("--source") + 1]
+            now = time.time()
+            print(f"[{now}] [{source}] [OCSF] NET:OPEN DENIED /usr/bin/curl -> blocked.example.invalid:443 [policy:api] [reason:no matching policy]")
+            print(f"[{now - 1}] [{source}] [OCSF] NET:OPEN ALLOWED /usr/bin/curl -> api.example.invalid:443 [policy:api]")
+            print(f"[{now - 2}] [{source}] [ERROR] Provider authentication failed; reconnect inside the sandbox")
+        elif "list" in args:
+            print(json.dumps({"revisions": [{"sandbox": sandbox, "scope": "sandbox", "version": n, "status": "loaded",
+                 "created_at_ms": int(time.time() * 1000), "loaded_at_ms": int(time.time() * 1000), "hash": "fixture digest"} for n in [2, 1]], "next_page_token": ""}))
+        else:
+            version = int(args[args.index("--rev") + 1]) if "--rev" in args else 2
+            if version == 1: policy["filesystem_policy"]["read_write"] = ["/tmp"]
+            if "--full" in args: policy["network_policies"]["provider"] = {"endpoints": [{"host": "provider.example.invalid", "port": 443}]}
+            print(json.dumps({"sandbox": sandbox, "scope": "global" if "--global" in args else "sandbox", "version": version,
+                              "active_version": 2, "status": "effective", "policy_source": "sandbox", "hash": "fixture digest", "policy": policy}))
+    elif args[:3] == ["sandbox", "policy", "explain"]:
+        print(json.dumps({"pack": "balanced", "profile": "balanced", "network_mode": "proxy", "admin": {"configured": True, "authority": "organization"},
+                          "settings": [{"key": "egress.allow", "value": "api.example.invalid", "source": "pack", "origin": "balanced"},
+                                       {"key": "allow_yolo", "value": "false", "source": "organization", "origin": "managed policy"}]}))
+    elif args[:2] == ["sandbox", "destinations"]:
+        print(json.dumps({"name": "fixture-codex", "destinations": [{"host": "api.example.invalid", "contacted": True, "blocked": 0}, {"host": "blocked.example.invalid", "contacted": False, "blocked": 2}]}))
+    elif args in (["--version"], ["version"]):
         version_file = root / "runtime-version"
         print("defenseclaw, version " + (version_file.read_text().strip() if version_file.exists() else "1.0.0"))
     elif args[:1] == ["upgrade"]:
@@ -87,6 +117,8 @@ def serve():
     (root / "bin").mkdir()
     (root / "bin/defenseclaw").write_text(Path(__file__).read_text())
     (root / "bin/defenseclaw").chmod(0o755)
+    (root / "bin/openshell").write_text(Path(__file__).read_text())
+    (root / "bin/openshell").chmod(0o755)
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
     db = sqlite3.connect(root / "audit.db")
     db.execute("CREATE TABLE audit_events (id TEXT, timestamp TEXT, bucket TEXT, event_name TEXT, source TEXT, signal TEXT, severity TEXT, action TEXT, actor TEXT, details TEXT, connector TEXT, payload_json TEXT, projected_record_json TEXT, target TEXT)")
@@ -107,7 +139,7 @@ def serve():
         "/health": {"state": "running", "version": "1.0.0", "uptime_ms": 100000, "guardrail": {"state": "running"}, "watcher": {"state": "running"}, "connectors": [{"name": "codex", "state": "running", "requests": 5}]},
         "/api/v1/ai-usage": {"enabled": True, "signals": signals, "summary": {"active_signals": 2, "files_scanned": 10, "scanned_at": now}},
         "/api/v1/ai-usage/runtime": {"enabled": True, "planes": [{"name": "agent actions", "running": True, "available": True}], "findings": [], "last_poll": now},
-        "/api/v1/sandbox/status": {"enabled": True, "available": True, "running": 1, "sandboxes": 1, "gateway": {"name": "fixture", "driver": "vm"}},
+        "/api/v1/sandbox/status": {"enabled": True, "available": True, "running": 1, "sandboxes": 1, "gateway": {"name": "fixture", "workspace": "default", "version": "0.1.3", "driver": "vm"}},
         "/api/v1/sandbox/sandboxes": {"sandboxes": [sandbox]},
         "/api/v1/sandbox/approvals": {"approvals": [{"id": "fixture-ask", "sandbox": "fixture-codex", "host": "example.invalid", "port": 443, "kind": "egress", "status": "pending"}]},
         "/api/v1/sandbox/activity": {"events": [{"seq": 1, "kind": "egress.blocked", "sandbox": "fixture-codex", "host": "example.invalid", "unblockable": True, "message": "Synthetic block"}]},
