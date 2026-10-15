@@ -49,7 +49,13 @@ struct SandboxesView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
                         sandboxTable
-                        if let selected { detail(selected) }
+                        if let selected {
+                            SandboxInspectorView(row: selected, overview: AnyView(detail(selected)))
+                                .id("\(appState.installationGeneration)|\(selected.name)")
+                        } else {
+                            Text("Select a sandbox to inspect its policy, network destinations, health, and logs.")
+                                .font(.callout).foregroundStyle(.secondary)
+                        }
                         asksCard
                         activityCard
                     }

@@ -1112,6 +1112,10 @@ final class AppState {
 
     // MARK: - OpenShell sandboxes
 
+    func sandboxInspectionMayRead(generation: Int) -> Bool {
+        installationSnapshotIsCurrent(generation) && !updateOperationInProgress
+    }
+
     /// Whether the sandbox API is worth polling: sandboxes are on in
     /// config.yaml or at the daemon, or the operator is looking at them.
     private var sandboxesWatched: Bool {

@@ -112,6 +112,8 @@ Select a connector (the roster chip, a Connectors-table row, or ⌃M) and the Co
 
 **Sandboxes** shows status, instances, approval requests, and activity, with reviewed actions for approval, unblock, stop, undo, and workspace review. Unavailable or stale state is visible and cannot authorize changes.
 
+Select a sandbox to inspect its health, OpenShell effective and base policies, DefenseClaw setting sources and organization constraints, and policy revision history. The Network tab connects observed destinations with policy permissions. Activity & Logs combines DefenseClaw events with bounded OpenShell logs, with search, source/severity/decision/time filters, pause/resume, and redacted diagnostic export. Inspection is read-only; unavailable data and retained snapshots are labeled explicitly.
+
 **Inventory** combines per-connector assets with IDE extensions and stable agent identities. IDE inventory includes enablement, AI classification, user, scope, and remote location; observed agents include session counts and first/last-seen details. AI Discovery also separates discovered products from local models.
 
 ### Runtime
