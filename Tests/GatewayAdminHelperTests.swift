@@ -148,6 +148,7 @@ private enum GatewayAdminHelperTests {
         }
         try testInstalledGatewayCopy(root: root, account: account)
         try testGatewayLifecycle()
+        try testVendorPolicyGuard(root: root)
 
         var idle = GatewayAdminIdleState()
         check(idle.isIdle, "The helper should begin idle")
@@ -306,6 +307,74 @@ private enum GatewayAdminHelperTests {
         check(grantACL.terminationStatus == 0, "Could not prepare source ACL fixture")
         rejects("An ACL-writable source was accepted through its descriptor") { _ = try prepare() }
         check(try Data(contentsOf: current) == activated, "Rejected source validation changed the current gateway")
+    }
+
+    /// The vendor policy repair only ever touches the fixed list, only real
+    /// directory chains, only folders owned by the expected account that others
+    /// cannot traverse; it removes empty trees with rmdir and otherwise opens
+    /// the folder to 0755. Fixtures stand in for /etc/codex and friends, with
+    /// this account standing in for root.
+    private static func testVendorPolicyGuard(root: URL) throws {
+        let fm = FileManager.default
+        let owner = getuid()
+        let etc = root.appendingPathComponent("etc", isDirectory: true)
+        try fm.createDirectory(at: etc, withIntermediateDirectories: false,
+                               attributes: [.posixPermissions: NSNumber(value: 0o755)])
+        func make(_ path: URL, mode: Int) throws {
+            try fm.createDirectory(at: path, withIntermediateDirectories: true)
+            _ = chmod(path.path, mode_t(mode))
+        }
+        func mode(_ path: URL) -> Int { Int((try? fm.attributesOfItem(atPath: path.path)[.posixPermissions] as? NSNumber)?.intValue ?? -1) }
+
+        // An unreadable tree of only empty folders (the watcher's /etc/codex/skills) is removed.
+        let codex = etc.appendingPathComponent("codex", isDirectory: true)
+        try make(codex.appendingPathComponent("skills", isDirectory: true), mode: 0o700)
+        _ = chmod(codex.path, 0o700)
+        // An unreadable folder with real content is opened to 0755, content untouched.
+        let cursor = etc.appendingPathComponent("cursor", isDirectory: true)
+        try make(cursor, mode: 0o700)
+        try Data("{}".utf8).write(to: cursor.appendingPathComponent("hooks.json"))
+        _ = chmod(cursor.path, 0o700)
+        // A readable folder is left alone.
+        let copilot = etc.appendingPathComponent("github-copilot", isDirectory: true)
+        try make(copilot.appendingPathComponent("policy.d", isDirectory: true), mode: 0o700)
+        _ = chmod(copilot.path, 0o755)
+        // A symlinked vendor folder and a folder behind a symlinked parent are never followed.
+        let elsewhere = root.appendingPathComponent("elsewhere", isDirectory: true)
+        try make(elsewhere, mode: 0o700)
+        let opencode = etc.appendingPathComponent("opencode")
+        try fm.createSymbolicLink(at: opencode, withDestinationURL: elsewhere)
+        let linkedEtc = root.appendingPathComponent("linked-etc")
+        try fm.createSymbolicLink(at: linkedEtc, withDestinationURL: etc)
+        let viaLink = linkedEtc.appendingPathComponent("cursor", isDirectory: true)
+        // A folder owned by a different account is left alone.
+        let claude = etc.appendingPathComponent("ClaudeCode", isDirectory: true)
+        try make(claude, mode: 0o700)
+
+        let outcome = GatewayAdminVendorPolicyGuard.sweep(
+            directories: [codex.path, cursor.path, copilot.path, opencode.path, viaLink.path, root.appendingPathComponent("etc/missing").path],
+            owner: owner)
+        check(outcome.removed == [codex.path], "Only the empty unreadable tree is removed: \(outcome.removed)")
+        check(!fm.fileExists(atPath: codex.path), "The empty unreadable vendor folder must be gone")
+        check(outcome.repaired == [cursor.path], "Only the unreadable folder with content is opened: \(outcome.repaired)")
+        check(mode(cursor) == 0o755, "An unreadable folder with content becomes 0755, got \(mode(cursor))")
+        check(fm.fileExists(atPath: cursor.appendingPathComponent("hooks.json").path), "Policy content must survive the repair")
+        check(mode(copilot) == 0o755 && mode(copilot.appendingPathComponent("policy.d")) == 0o700,
+              "A readable folder and what is below it stay untouched")
+        check(mode(elsewhere) == 0o700, "A symlinked vendor folder must never be followed")
+        check(outcome.notes.count == 2, "One note per repair, got \(outcome.notes)")
+
+        let foreign = GatewayAdminVendorPolicyGuard.sweep(directories: [claude.path], owner: owner &+ 1)
+        check(foreign.removed.isEmpty && foreign.repaired.isEmpty && mode(claude) == 0o700,
+              "A folder owned by another account must be left alone")
+
+        // settle reports nothing when nothing needs repair, and a stop action does a single pass.
+        check(GatewayAdminVendorPolicyGuard.settle(after: .stop, owner: owner, directories: [copilot.path]).isEmpty,
+              "A clean sweep must add nothing to the activity record")
+        _ = chmod(claude.path, 0o700)
+        let settled = GatewayAdminVendorPolicyGuard.settle(after: .start, owner: owner, directories: [claude.path], window: .zero)
+        check(settled.contains("Removed " + claude.path), "A start settle must report the repair: \(settled)")
+        check(!fm.fileExists(atPath: claude.path), "The settle pass must perform the repair")
     }
 
     private static func testGatewayLifecycle() throws {
