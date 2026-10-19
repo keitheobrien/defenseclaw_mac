@@ -24,6 +24,10 @@ The app compares the installed runtime with the latest published DefenseClaw rel
 
 Managed installations remain read-only in the app; their administrator controls the system service. Do not change ownership of your home directory or `.defenseclaw` to enable Runtime monitoring.
 
+## Vendor policy folders
+
+DefenseClaw runtimes before the fix for `/etc/codex` created any missing watch root with mode 0700, so a gateway running as root left `/etc/codex` root-owned and unreadable, and Codex paused every launch with "Organization settings could not be loaded". After every administrator Start, Restart or Stop, the helper inspects a fixed list of vendor policy folders (`/etc/codex`, `/etc/cursor`, `/etc/github-copilot`, `/Library/Application Support/ClaudeCode`, `/Library/Application Support/opencode`). A root-owned folder that others cannot traverse is repaired: a tree of nothing but empty folders is removed (`rmdir`, deepest first), and a folder with content is opened to 0755 so the agent can read the policy it holds. Readable folders, files, symlinks and folders owned by anyone else are never touched, and the repair is reported in the action's Activity record. A Start keeps checking for a few seconds because the watcher creates its roots shortly after the gateway daemonizes.
+
 ## Local development verification
 
 The signed development build is available at `build/gateway-administrator/DefenseClawMac.app`. The tested runtime is the locally repaired gateway (0.8.10, commit `85029e57+runtime-repair`). This is a local test build, not a notarized release. The installed `/Applications/DefenseClawMac.app` and `~/.local/bin/defenseclaw-gateway` are preserved.
