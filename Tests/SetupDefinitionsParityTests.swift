@@ -136,11 +136,15 @@ struct SetupDefinitionsParityTests {
 
     private static func sandboxSetupMatchesCurrentMacWorkflow() {
         let defaults = TUIWizards.sandboxCommands([:], false)
+        // 1.0.x: --install-openshell upgrades an installed OpenShell in place
+        // and restarts the gateway, so it is opt-in (the TUI pre-checks it
+        // only when doctor reports OpenShell missing).
         expect(defaults == [
-            ["sandbox", "setup", "--non-interactive", "--install-openshell", "--harness", "claudecode", "--harness", "codex", "--no-wrappers", "--skip-images"],
+            ["sandbox", "setup", "--non-interactive", "--harness", "claudecode", "--harness", "codex", "--no-wrappers", "--skip-images"],
             ["sandbox", "image", "build", "claudecode", "codex"],
             ["sandbox", "doctor"]
-        ], "sandbox defaults install prerequisites, configure, build both images, then verify")
+        ], "sandbox defaults configure the installed OpenShell, build both images, then verify")
+        expect(TUIWizards.sandboxCommands(["install-openshell": "yes"], false)[0].contains("--install-openshell"), "opting in installs or upgrades OpenShell")
         expect(TUIWizards.sandboxCommands(["action": "doctor", "install-openshell": "yes"], false) == [["sandbox", "doctor"]], "doctor never installs or builds even with stale setup choices")
         let optedOut = TUIWizards.sandboxCommands(["install-openshell": "no", "harness-codex": "no", "wrappers": "yes", "build-images": "no"], false)
         expect(optedOut == [["sandbox", "setup", "--non-interactive", "--harness", "claudecode", "--wrappers", "--skip-images"], ["sandbox", "doctor"]], "explicit install and build opt-outs are respected")

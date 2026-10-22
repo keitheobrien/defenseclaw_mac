@@ -848,11 +848,16 @@ enum TUIWizards {
             WizardField(key: "action", label: "Action", kind: .choice(options: ["setup", "doctor"]),
                         defaultValue: "setup",
                         help: "setup: the one-time sandbox setup. doctor: only check this machine."),
-            WizardField(key: "install-openshell", label: "Install OpenShell prerequisites", kind: .bool,
-                        defaultValue: "yes", visibleWhen: (key: "action", equals: ["setup"]),
-                        help: "Allow the runtime's verified installer to install or update supported OpenShell "
-                            + "components with Homebrew, install e2fsprogs, and repair the MicroVM signature if needed. "
-                            + "Setup configures the local OpenShell service and may restart it. Runs as your user."),
+            // Runtime 1.0.x upgrades an installed OpenShell in place under
+            // --install-openshell --non-interactive and restarts the gateway
+            // (setup.go offerOpenShellUpgrade); the TUI checks it only when
+            // `sandbox doctor` reports OpenShell missing. Opt in here.
+            WizardField(key: "install-openshell", label: "Install or upgrade OpenShell", kind: .bool,
+                        defaultValue: "no", visibleWhen: (key: "action", equals: ["setup"]),
+                        help: "Check when OpenShell is missing or `sandbox doctor` offers an upgrade: the runtime's "
+                            + "verified installer installs or upgrades supported OpenShell components with Homebrew, "
+                            + "installs e2fsprogs, repairs the MicroVM signature if needed, and restarts the gateway. "
+                            + "Unchecked, setup configures the OpenShell already installed. Runs as your user."),
             WizardField(key: "harness-claudecode", label: "Claude Code", kind: .bool, defaultValue: "yes",
                         visibleWhen: (key: "action", equals: ["setup"]),
                         help: "Run `claude` in a sandbox (--harness claudecode)."),
@@ -877,7 +882,7 @@ enum TUIWizards {
         func on(_ key: String, _ fallback: String) -> Bool { value(v, key, fallback) == "yes" }
         if value(v, "action", "setup") == "doctor" { return [["sandbox", "doctor"]] }
         var args = ["sandbox", "setup", "--non-interactive"]
-        if on("install-openshell", "yes") { args.append("--install-openshell") }
+        if on("install-openshell", "no") { args.append("--install-openshell") }
         let harnesses = ["claudecode", "codex"].filter { on("harness-\($0)", "yes") }
         for harness in harnesses { args += ["--harness", harness] }
         if !on("telemetry-off", "yes") { args.append("--upstream-telemetry") }
