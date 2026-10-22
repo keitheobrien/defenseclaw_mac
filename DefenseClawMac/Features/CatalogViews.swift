@@ -482,11 +482,16 @@ struct ToolsView: View {
 
     private func load() async {
         let installationGeneration = appState.installationGeneration
+        // enforce/policy.py tool_rule_entries: on runtime 1.0.x the tool rules
+        // live in config.yaml asset_policy.tool; the audit.db actions rows are
+        // the rule source only on Secure Client hosts. Leftover 0.x rows must
+        // not resurface as live overrides the gateway no longer enforces.
+        let operatorLists = OperatorAssetLists.read(raw: appState.config.raw)
         do {
             let cliItems = try await CatalogCLI.tools(using: appState.cli)
             guard installationGeneration == appState.installationGeneration else { return }
             let freshItems: [ToolItem]
-            if cliItems.isEmpty {
+            if cliItems.isEmpty, operatorLists.secureClient {
                 freshItems = await appState.audit.toolOverrideRows()
                 guard installationGeneration == appState.installationGeneration else { return }
             } else {
@@ -496,8 +501,13 @@ struct ToolsView: View {
             error = nil
         } catch {
             let failure = error.localizedDescription
-            let fallback = await appState.audit.toolOverrideRows()
-            guard installationGeneration == appState.installationGeneration else { return }
+            let fallback: [ToolItem]
+            if operatorLists.secureClient {
+                fallback = await appState.audit.toolOverrideRows()
+                guard installationGeneration == appState.installationGeneration else { return }
+            } else {
+                fallback = operatorLists.toolRuleEntries()
+            }
             items = fallback
             self.error = fallback.isEmpty ? failure : nil
         }

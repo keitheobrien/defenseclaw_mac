@@ -392,24 +392,53 @@ actor AuditStore {
             .filter { $0.severity != .info }
     }
 
-    /// db.py::get_counts — Overview ENFORCEMENT summary.
-    func enforcementSummary() -> (blockedSkills: Int, allowedSkills: Int, blockedMCPs: Int, allowedMCPs: Int, totalScans: Int, activeAlerts: Int) {
+    /// db.py::get_enforcement_counts(cfg=) — Overview ENFORCEMENT summary.
+    ///
+    /// The skill/MCP block and allow counts are the journal rows with the
+    /// operator decisions of config.yaml `asset_policy` folded in
+    /// (asset_lists.install_counts): on runtime 1.0.x `skill block` and
+    /// `mcp allow` write config.yaml, not audit.db, so the actions table
+    /// alone shows 0 after every operator decision. Pass `nil` (or a Secure
+    /// Client snapshot) to count the journal only, as the runtime does there.
+    func enforcementSummary(
+        operatorLists: OperatorAssetLists? = nil
+    ) -> (blockedSkills: Int, allowedSkills: Int, blockedMCPs: Int, allowedMCPs: Int, totalScans: Int, activeAlerts: Int) {
         func count(_ sql: String) -> Int {
             (query(sql).first?["n"] as? Int) ?? 0
         }
-        let qSkill = "SELECT COUNT(*) AS n FROM actions WHERE target_type='skill' AND json_extract(actions_json,'$.install')="
-        let qMCP = "SELECT COUNT(*) AS n FROM actions WHERE target_type='mcp' AND json_extract(actions_json,'$.install')="
         let hasActions = tableExists("actions")
         let hasScans = tableExists("scan_results")
         let hasAudit = tableExists("audit_events")
+        let skills = hasActions ? installJournalRows(targetType: "skill") : []
+        let mcps = hasActions ? installJournalRows(targetType: "mcp") : []
+        let lists = operatorLists ?? OperatorAssetLists(secureClient: true, allowed: [:], denied: [:])
+        let installs = lists.installCounts(skills: skills, mcps: mcps)
         return (
-            blockedSkills: hasActions ? count(qSkill + "'block'") : 0,
-            allowedSkills: hasActions ? count(qSkill + "'allow'") : 0,
-            blockedMCPs: hasActions ? count(qMCP + "'block'") : 0,
-            allowedMCPs: hasActions ? count(qMCP + "'allow'") : 0,
+            blockedSkills: installs.blockedSkills,
+            allowedSkills: installs.allowedSkills,
+            blockedMCPs: installs.blockedMCPs,
+            allowedMCPs: installs.allowedMCPs,
             totalScans: hasScans ? count("SELECT COUNT(*) AS n FROM scan_results") : 0,
             activeAlerts: hasAudit ? count("SELECT COUNT(*) AS n FROM audit_events WHERE UPPER(severity) IN ('CRITICAL','HIGH','MEDIUM','LOW')") : 0
         )
+    }
+
+    /// db.py::list_actions_by_type reduced to the install decision: every
+    /// `actions` row of one target type with its connector ("" = global on
+    /// schemas before the connector column) and `actions_json.install`.
+    func installJournalRows(targetType: String) -> [InstallJournalRow] {
+        guard tableExists("actions") else { return [] }
+        let hasConnector = columnNames(in: "actions").contains("connector")
+        let rows = query("""
+            SELECT target_name, \(hasConnector ? "connector" : "'' AS connector"),
+                   json_extract(actions_json, '$.install') AS install
+            FROM actions WHERE target_type = ? ORDER BY updated_at DESC
+            """, binds: [targetType])
+        return rows.compactMap { row in
+            guard let name = row["target_name"] as? String else { return nil }
+            let install = ((row["install"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return InstallJournalRow(name: name, connector: (row["connector"] as? String) ?? "", install: install)
+        }
     }
 
     /// db.py::connector_hook_event_stats — ALL-TIME per-connector totals for
