@@ -579,6 +579,30 @@ actor GatewayClient {
         return SandboxDecoding.approvals(from: json)
     }
 
+    /// GET /sandboxes/{name}/processes: a sandbox's process tree while its
+    /// process tree is on (observe.process_tree); the raw payload, rendered
+    /// by SandboxProcessTree.
+    func sandboxProcesses(name: String) async throws -> Any {
+        let segment = try encodedPathSegment(name)
+        return try await getJSON("/api/v1/sandbox/sandboxes/\(segment)/processes")
+    }
+
+    /// GET /sandboxes/{name}/logs?lines=1: how the sandbox's latest detached
+    /// run ended, from the log the daemon kept when it last stopped it; nil
+    /// when no log was kept (404 not_found).
+    func sandboxRunLog(name: String) async throws -> SandboxRunLog? {
+        let segment = try encodedPathSegment(name)
+        do {
+            let data = try await request(
+                "GET", "/api/v1/sandbox/sandboxes/\(segment)/logs",
+                queryItems: [URLQueryItem(name: "lines", value: "1")]
+            )
+            return SandboxRunLog.decode(try JSONSerialization.jsonObject(with: data))
+        } catch GatewayError.degraded(let status, _) where status == 404 {
+            return nil
+        }
+    }
+
     /// Buffered activity after `since` (the app polls; the TUI streams).
     func sandboxActivity(since: Int) async throws -> [SandboxActivity] {
         let items = since > 0 ? [URLQueryItem(name: "since", value: String(since))] : []
