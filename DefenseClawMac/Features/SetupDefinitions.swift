@@ -771,6 +771,15 @@ enum TUIWizards {
             WizardField(key: "region", label: "Region / zone", kind: .text(placeholder: "us or prod-us-east-0"), visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["newrelic", "grafana-cloud"])),
             WizardField(key: "dataset", label: "Honeycomb dataset", kind: .text(placeholder: "defenseclaw"), defaultValue: "defenseclaw", visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["honeycomb"])),
             WizardField(key: "endpoint", label: "Endpoint", kind: .text(placeholder: "host:port or URL"), visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["splunk-enterprise", "galileo", "otlp"])),
+            // 1.0.x no longer opts a Splunk HEC add into private networks by
+            // itself (GAP-0208): a collector on this computer or the LAN
+            // needs --allow-private-networks (TUI: splunk-hec form field).
+            // The runtime accepts the flag for any preset whose endpoint the
+            // operator types, so the same toggle covers those.
+            WizardField(key: "allow-private-networks", label: "Allow private networks", kind: .bool, defaultValue: "no",
+                        visibleWhen: (key: "action", equals: ["add"]),
+                        visibleWhen2: (key: "preset", equals: ["splunk-hec", "splunk-enterprise", "otlp", "webhook"]),
+                        help: "Allow an endpoint on this computer or a private network (a collector you run yourself)."),
             WizardField(key: "protocol", label: "OTLP protocol", kind: .choice(options: ["grpc", "http"]), defaultValue: "grpc", visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["otlp"])),
             WizardField(key: "project", label: "Galileo project", kind: .text(placeholder: "project name or ID"), visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["galileo"])),
             WizardField(key: "logstream", label: "Galileo Log stream", kind: .text(placeholder: "default"), defaultValue: "default", visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["galileo"])),
@@ -1407,6 +1416,9 @@ enum TUIWizards {
             default: keys = []
             }
             for key in keys { append(v, key, flag: "--\(key)", to: &args) }
+            if ["splunk-hec", "splunk-enterprise", "otlp", "webhook"].contains(preset), yes(v, "allow-private-networks") {
+                args.append("--allow-private-networks")
+            }
             if preset == "splunk-hec" {
                 let verifyTLS = value(v, "verify-tls-hec", "yes") != "no"
                 let insecureLoopback = !verifyTLS

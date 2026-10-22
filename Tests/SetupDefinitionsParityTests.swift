@@ -116,6 +116,7 @@ struct SetupDefinitionsParityTests {
         mcpScannerWizardMatchesRuntime103()
         genericBuilderFollowsTheTUIFormRules()
         splunkHECDefaultsToVerifiedTLS()
+        observabilityAddOffersPrivateNetworks()
         secureSetupSecretsUseChildEnvironment()
         webhookBuilderCoversCurrentNotifierOptions()
         webhookValidationRequiresProviderCredentials()
@@ -559,6 +560,24 @@ struct SetupDefinitionsParityTests {
         values["quiet"] = "yes"; values["force"] = "yes"
         let more = TUIWizards.genericArguments(for: wizard, values: values, seeded: [:], visibleFields: wizard.fields)
         expect(more.contains("--quiet") && more.contains("--force") && !more.contains("hunter2"), "a change emits; a missing baseline compares against the default: \(more)")
+    }
+
+    private static func observabilityAddOffersPrivateNetworks() {
+        guard let wizard = TUIWizards.all.first(where: { $0.id == "observability" }),
+              let field = wizard.fields.first(where: { $0.key == "allow-private-networks" }) else {
+            expect(false, "Allow private networks field exists"); return
+        }
+        expect(field.defaultValue == "no", "private networks stay off unless asked (TUI default no)")
+        expect(field.visibleWhen2?.equals.contains("splunk-hec") == true, "offered for Splunk HEC like the TUI form")
+        let base = ["action": "add", "preset": "splunk-hec", "name": "lab", "host": "localhost"]
+        let off = TUIWizards.observabilityCommands(base, false)[0]
+        expect(!off.contains("--allow-private-networks"), "unchecked emits nothing: \(off)")
+        let on = TUIWizards.observabilityCommands(base.merging(["allow-private-networks": "yes"]) { $1 }, false)[0]
+        expect(on.contains("--allow-private-networks") && on.contains("--verify-tls"), "checked emits the bare flag next to the TLS choice: \(on)")
+        let otlp = TUIWizards.observabilityCommands(["action": "add", "preset": "otlp", "endpoint": "10.0.0.5:4317", "allow-private-networks": "yes"], false)[0]
+        expect(otlp.contains("--allow-private-networks"), "a typed private OTLP endpoint can be allowed too: \(otlp)")
+        let galileo = TUIWizards.observabilityCommands(["action": "add", "preset": "galileo", "allow-private-networks": "yes"], false)[0]
+        expect(!galileo.contains("--allow-private-networks"), "presets without a typed endpoint never carry a stale value")
     }
 
     private static func splunkHECDefaultsToVerifiedTLS() {
