@@ -24,6 +24,7 @@ private struct CatalogListScaffold<Content: View, Action: View>: View {
     @Binding var warning: String?
     let isEmpty: Bool
     let isUnavailable: Bool
+    let isLoading: Bool
     let emptyMessage: String
     let searchPrompt: String
     @Binding var search: String
@@ -37,6 +38,7 @@ private struct CatalogListScaffold<Content: View, Action: View>: View {
         warning: Binding<String?>,
         isEmpty: Bool,
         isUnavailable: Bool,
+        isLoading: Bool = false,
         emptyMessage: String,
         searchPrompt: String,
         search: Binding<String>,
@@ -49,6 +51,7 @@ private struct CatalogListScaffold<Content: View, Action: View>: View {
         _warning = warning
         self.isEmpty = isEmpty
         self.isUnavailable = isUnavailable
+        self.isLoading = isLoading
         self.emptyMessage = emptyMessage
         self.searchPrompt = searchPrompt
         _search = search
@@ -64,6 +67,7 @@ private struct CatalogListScaffold<Content: View, Action: View>: View {
             warning: $warning,
             isEmpty: isEmpty,
             isUnavailable: isUnavailable,
+            isLoading: isLoading,
             emptyMessage: emptyMessage,
             recoveryCommand: recoveryCommand
         ) {
@@ -109,6 +113,7 @@ struct SkillsView: View {
             warning: $warning,
             isEmpty: loaded && error == nil && filtered.isEmpty,
             isUnavailable: loaded && error != nil && items.isEmpty,
+            isLoading: !loaded,
             emptyMessage: "No skills were reported by `defenseclaw skill list --json`.",
             searchPrompt: "Search skills",
             search: $search,
@@ -222,6 +227,7 @@ struct MCPsView: View {
             warning: $warning,
             isEmpty: loaded && error == nil && filtered.isEmpty,
             isUnavailable: loaded && error != nil && items.isEmpty,
+            isLoading: !loaded,
             emptyMessage: warning != nil && !auditHistoryUnavailable
                 ? "No readable MCP entries were returned. Resolve the discovery warning and refresh."
                 : "No MCP servers were reported by `defenseclaw mcp list --json`.",
@@ -334,6 +340,7 @@ struct PluginsView: View {
             warning: $warning,
             isEmpty: loaded && error == nil && filtered.isEmpty,
             isUnavailable: loaded && error != nil && items.isEmpty,
+            isLoading: !loaded,
             emptyMessage: "No plugins were reported by `defenseclaw plugin list --json`.",
             searchPrompt: "Search plugins",
             search: $search,
@@ -443,6 +450,7 @@ struct ToolsView: View {
             warning: $warning,
             isEmpty: loaded && error == nil && filtered.isEmpty,
             isUnavailable: loaded && error != nil && items.isEmpty,
+            isLoading: !loaded,
             emptyMessage: "No tool policy rows. Unblocked tools do not appear in this table.",
             searchPrompt: "Search tools",
             search: $search,
@@ -945,13 +953,38 @@ private struct CatalogContainer<Content: View>: View {
     @Binding var warning: String?
     let isEmpty: Bool
     let isUnavailable: Bool
+    var isLoading = false
     let emptyMessage: String
     let recoveryCommand: (() async -> String?)?
     @ViewBuilder var content: Content
     @State private var recoveryStatus: String?
+    /// A first load that outlives this window is shown as such, with
+    /// Refresh as the recovery, instead of an empty table that looks like
+    /// an empty catalog.
+    @State private var loadingLong = false
+    private let slowLoadThreshold: Duration = .seconds(20)
 
     var body: some View {
         VStack(spacing: 0) {
+            if isLoading, error == nil {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(loadingLong
+                         ? "Still loading — the runtime is slow to answer. Refresh to retry."
+                         : "Loading from the DefenseClaw runtime…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding(8)
+                .background(Color.secondary.opacity(0.06))
+                .task(id: isLoading) {
+                    loadingLong = false
+                    guard isLoading else { return }
+                    try? await Task.sleep(for: slowLoadThreshold)
+                    if !Task.isCancelled { loadingLong = true }
+                }
+            }
             if let error {
                 HStack {
                     Label(error, systemImage: "exclamationmark.triangle")
