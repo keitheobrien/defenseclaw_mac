@@ -275,7 +275,8 @@ actor AuditStore {
             }
         }
         if !conds.isEmpty { sql += " WHERE " + conds.joined(separator: " AND ") }
-        sql += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+        // db.py: rowid breaks timestamp ties so pages neither skip nor repeat a row.
+        sql += " ORDER BY timestamp DESC, rowid DESC LIMIT ? OFFSET ?"
         binds.append(contentsOf: [limit, offset])
         return query(sql, binds: binds).map(decodeAuditEvent)
     }
@@ -299,7 +300,7 @@ actor AuditStore {
         guard !conditions.isEmpty else { return [] }
         binds.append(limit)
         return query(
-            "SELECT * FROM audit_events WHERE \(conditions.joined(separator: " AND ")) ORDER BY timestamp DESC LIMIT ?",
+            "SELECT * FROM audit_events WHERE \(conditions.joined(separator: " AND ")) ORDER BY timestamp DESC, rowid DESC LIMIT ?",
             binds: binds
         ).map(decodeAuditEvent)
     }
@@ -327,7 +328,7 @@ actor AuditStore {
         }
         binds.append(limit)
         let rows = query(
-            "SELECT * FROM scan_results WHERE \(conditions.joined(separator: " AND ")) ORDER BY timestamp DESC LIMIT ?",
+            "SELECT * FROM scan_results WHERE \(conditions.joined(separator: " AND ")) ORDER BY timestamp DESC, rowid DESC LIMIT ?",
             binds: binds
         )
         return rows.flatMap { row -> [ScanFindingEvent] in
@@ -678,7 +679,7 @@ actor AuditStore {
 
     func activityEvents(limit: Int) -> [ActivityMutation] {
         guard tableExists("activity_events") else { return [] }
-        return query("SELECT * FROM activity_events ORDER BY timestamp DESC LIMIT ?", binds: [limit]).map { r in
+        return query("SELECT * FROM activity_events ORDER BY timestamp DESC, rowid DESC LIMIT ?", binds: [limit]).map { r in
             ActivityMutation(
                 id: (r["id"] as? String) ?? String(describing: r["id"] ?? UUID().uuidString),
                 timestamp: DCDates.parse(r["timestamp"]) ?? Date(timeIntervalSince1970: 0),
@@ -698,7 +699,7 @@ actor AuditStore {
 
     func egressEvents(limit: Int) -> [EgressEvent] {
         guard tableExists("network_egress_events") else { return [] }
-        return query("SELECT * FROM network_egress_events ORDER BY timestamp DESC LIMIT ?", binds: [limit]).map { r in
+        return query("SELECT * FROM network_egress_events ORDER BY timestamp DESC, rowid DESC LIMIT ?", binds: [limit]).map { r in
             let blocked = ((r["blocked"] as? Int) ?? 0) == 1
             return EgressEvent(
                 id: (r["id"] as? String) ?? String(describing: r["id"] ?? UUID().uuidString),
@@ -779,7 +780,7 @@ actor AuditStore {
         let rows = query("""
             SELECT timestamp FROM audit_events
             WHERE action LIKE '%block%' OR action LIKE '%reject%'
-            ORDER BY timestamp DESC LIMIT 1
+            ORDER BY timestamp DESC, rowid DESC LIMIT 1
             """)
         return DCDates.parse(rows.first?["timestamp"])
     }
