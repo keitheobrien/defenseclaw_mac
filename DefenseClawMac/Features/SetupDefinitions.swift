@@ -445,14 +445,6 @@ enum TUIWizards {
                 defaultValue: "15",
                 visibleWhen: (key: "action", equals: ["test"])
             ),
-            WizardField(
-                key: "direct",
-                label: "Test Galileo directly",
-                kind: .flagOnly,
-                defaultValue: "no",
-                visibleWhen: (key: "action", equals: ["test"]),
-                help: "Troubleshooting only: bypasses gateway filtering, batching, and fan-out."
-            ),
         ]
     )
 
@@ -1078,8 +1070,9 @@ enum TUIWizards {
             return [args]
         case "test":
             var args = ["setup", "galileo", "test"]
+            // `--direct` was removed upstream in 0.8.5 (v8 cut); runtime 1.0.x
+            // `setup galileo test` accepts only --timeout.
             append(v, "timeout", flag: "--timeout", to: &args, unless: "15")
-            flag(v, "direct", "--direct", to: &args)
             return [args]
         case "enable", "disable":
             return [["setup", "galileo", action]]

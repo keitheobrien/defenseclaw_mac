@@ -110,6 +110,7 @@ struct SetupDefinitionsParityTests {
         customProviderBuilderDropsStaleFamilyOptions()
         customProviderValidationCatchesUnsafeInputs()
         observabilityBuilderCoversPresetSpecificInputs()
+        galileoTestEmitsOnlyTimeout()
         splunkHECDefaultsToVerifiedTLS()
         secureSetupSecretsUseChildEnvironment()
         webhookBuilderCoversCurrentNotifierOptions()
@@ -428,6 +429,21 @@ struct SetupDefinitionsParityTests {
             "enabled": "yes",
         ], false)[0]
         expect(value(after: "--signals", in: galileo) == "traces", "Galileo emits traces only")
+    }
+
+    /// `setup galileo test` accepts only --timeout since 0.8.5; the retired
+    /// --direct toggle made the wizard's Test action exit 2.
+    private static func galileoTestEmitsOnlyTimeout() {
+        guard let wizard = TUIWizards.all.first(where: { $0.id == "galileo" }) else {
+            fputs("FAILED: galileo wizard missing\n", stderr)
+            exit(1)
+        }
+        expect(!wizard.fields.contains(where: { $0.key == "direct" }), "galileo wizard no longer offers the retired --direct toggle")
+        let defaultTest = wizard.commandBuilder?(["action": "test", "timeout": "15"], false).flatMap { $0 } ?? []
+        expect(defaultTest == ["setup", "galileo", "test"], "galileo test with the default timeout emits no options")
+        let longer = wizard.commandBuilder?(["action": "test", "timeout": "30", "direct": "yes"], false).flatMap { $0 } ?? []
+        expect(value(after: "--timeout", in: longer) == "30", "galileo test forwards a custom timeout")
+        expect(!longer.contains("--direct"), "a stale direct value never reaches argv")
     }
 
     private static func splunkHECDefaultsToVerifiedTLS() {

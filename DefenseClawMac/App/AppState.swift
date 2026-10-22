@@ -967,6 +967,11 @@ final class AppState {
         // Any user mutation during the startup probe supersedes that probe,
         // including an explicit Stop that finishes before the probe returns.
         if mutation { commandGeneration += 1 }
+        // `keys set` secrets: use the runtime's documented stdin flag when the
+        // installed runtime accepts it (see SecretStandardInputTransport).
+        let arguments = SecretStandardInputTransport.arguments(
+            arguments, binary: binary, standardInput: standardInput, runtimeVersion: installedRuntimeVersion
+        )
         let result = await activity.run(
             id: runID,
             title: title,
