@@ -779,8 +779,9 @@ struct AIDiscoveryView: View {
         let detector = [
             signal.detector.isEmpty ? "" : "detector=\(signal.detector)",
             signal.source.isEmpty ? "" : "source=\(signal.source)",
+            signal.sandboxName.isEmpty ? "" : "sandbox=\(signal.sandboxName)",
         ].filter { !$0.isEmpty }.joined(separator: " ")
-        let runtime = signal.runtime.map(AIDiscoveryGrouping.runtimeDetail) ?? ""
+        let runtime = signal.runtime.map { AIDiscoveryGrouping.runtimeDetail($0, sandboxName: signal.sandboxName) } ?? ""
         let activity = AIDiscoveryGrouping.activityDetail(signal)
 
         return VStack(alignment: .leading, spacing: 3) {
