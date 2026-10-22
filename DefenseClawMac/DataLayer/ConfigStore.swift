@@ -134,7 +134,9 @@ enum ConfigValidation {
     /// Load failures the runtime reports (config.py _unreadable_config_message
     /// and the 1.0.x validate line "X line N, column M: invalid YAML (…)");
     /// a semantic issue the file still loads with is not one.
-    static let loadFailureMarkers = ["invalid yaml", "parse error", "cannot read the defenseclaw configuration", "not valid utf-8"]
+    /// `deployment_mode is "…"` is the one key the 1.0.x loader refuses outright
+    /// that `config validate` reports without the YAML wording.
+    static let loadFailureMarkers = ["invalid yaml", "parse error", "cannot read the defenseclaw configuration", "not valid utf-8", "deployment_mode is \""]
 
     static func invalidConfigSummary(fileName: String, exitCode: Int32, output: String, cancelled: Bool = false) -> String? {
         guard !cancelled, exitCode == 1 else { return nil }

@@ -75,6 +75,8 @@ struct ConfigEditorContractTests {
         expect(ConfigValidation.invalidConfigSummary(fileName: "config.yaml", exitCode: 1,
                output: "  X line 3: guardrail.mode is \"bogus\"; allowed values: observe, action.") == nil,
                "a semantic issue on a file that loads is not a load failure")
+        expect(ConfigValidation.invalidConfigSummary(fileName: "config.yaml", exitCode: 1, output: "  X line 2: deployment_mode is \"bogus\"; allowed values: managed_enterprise, unmanaged_byod")
+               == "config.yaml line 2 is invalid; run defenseclaw config validate", "a deployment_mode the loader refuses is a load failure")
         expect(ConfigValidation.invalidConfigSummary(fileName: "config.yaml", exitCode: 0, output: "config is valid") == nil, "a valid file raises nothing")
         expect(ConfigValidation.invalidConfigSummary(fileName: "config.yaml", exitCode: 1, output: "✗ guardrail.mode: unknown value") == nil,
                "a semantic issue the file still loads with is not a load failure")

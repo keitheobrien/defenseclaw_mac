@@ -512,8 +512,14 @@ enum TUIWizards {
     /// off (tui/panels/setup.py _cfg_bool_field, GAP-2571): an unchanged
     /// field emits no flag; a change emits --key or --no-key.
     private static func configuredToggle(_ key: String, label: String, defaultValue: String = "no", help: String = "") -> WizardField {
-        WizardField(key: key, label: label, kind: .bool, defaultValue: defaultValue, help: help, emitsOnlyOnChange: true)
+        // 0.8.x declares these `is_flag` (no --no- form): a bare flag there.
+        WizardField(key: key, label: label, kind: .bool, defaultValue: defaultValue, help: help, emitsOnlyOnChange: true,
+                    legacyKind: .flagOnly, legacyDefault: "no")
     }
+    /// setup skill-scanner / mcp-scanner --llm-provider on 0.8.x: anthropic or openai.
+    static let legacyScannerLLMProviders = ["anthropic", "openai"]
+    /// setup skill-scanner --policy on 0.8.x.
+    static let legacySkillScannerPolicies = ["strict", "balanced", "permissive", "none"]
 
     private static func configuredFlag(_ raw: YAMLNode, _ path: String) -> String? {
         guard let node = raw[path] else { return nil }
@@ -549,7 +555,44 @@ enum TUIWizards {
                             ("lenient", "scanners.skill_scanner.lenient")] {
             if let flag = configuredFlag(raw, path) { out[key] = flag }
         }
+        // A config_version 8 file (0.8.x, or a 1.0.x upgrade before `defenseclaw
+        // migrate`) carries the analyzer switches as use_virustotal /
+        // use_aidefense; the loader folds them into analyzers.* (config.py).
+        for (key, path) in [("use-virustotal", "scanners.skill_scanner.use_virustotal"),
+                            ("use-aidefense", "scanners.skill_scanner.use_aidefense")] where out[key] == nil {
+            if let flag = configuredFlag(raw, path) { out[key] = flag }
+        }
         return out
+    }
+
+    /// What `defenseclaw sandbox doctor --json` says about this machine for
+    /// the Sandbox wizard (tui/panels/setup.py sandbox_machine_check):
+    /// whether setup must install OpenShell (openshell_install, or on an
+    /// older doctor a failed openshell-cli check), whether it offers an
+    /// in-place upgrade (openshell_upgrade), and the release it installs.
+    struct SandboxMachineCheck: Equatable {
+        var openshellNeeded = false
+        var openshellUpgrade = false
+        var release = ""
+    }
+
+    static func sandboxMachineCheck(from output: String) -> SandboxMachineCheck? {
+        guard let start = output.firstIndex(of: "{"),
+              let data = String(output[start...]).data(using: .utf8),
+              let report = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else { return nil }
+        var check = SandboxMachineCheck()
+        if let install = report["openshell_install"] as? Bool {
+            check.openshellNeeded = install
+        } else {
+            let checks = (report["checks"] as? [[String: Any]]) ?? []
+            let cli = checks.first { ($0["id"] as? String) == "openshell-cli" }
+            let status = ((cli?["status"] as? String) ?? "").lowercased()
+            check.openshellNeeded = cli == nil || status.isEmpty || status == "fail"
+        }
+        check.openshellUpgrade = !check.openshellNeeded && (report["openshell_upgrade"] as? Bool) == true
+        check.release = ((report["openshell_install_version"] as? String) ?? "").trimmingCharacters(in: .whitespaces)
+        return check
     }
 
     private static let skillScanner = WizardDefinition(
@@ -563,22 +606,25 @@ enum TUIWizards {
             configuredToggle("use-llm", label: "LLM judge", defaultValue: "yes",
                              help: "Have an LLM review each skill's instructions, with the LLM provider and model below."),
             WizardField(key: "llm-provider", label: "LLM provider", kind: .choice(options: scannerLLMProviders),
-                        defaultValue: "anthropic", emitsOnlyOnChange: true),
+                        defaultValue: "anthropic", emitsOnlyOnChange: true,
+                        legacyKind: .choice(options: legacyScannerLLMProviders)),
             WizardField(key: "llm-model", label: "LLM model", kind: .text(placeholder: "optional model")),
             WizardField(key: "llm-base-url", label: "LLM base URL", kind: .text(placeholder: "http://127.0.0.1:8000/v1"),
-                        help: "Endpoint of an openai-compatible or vllm judge."),
+                        help: "Endpoint of an openai-compatible or vllm judge.", minimumRuntimeMajor: 1),
             WizardField(key: "llm-consensus-runs", label: "Consensus runs", kind: .text(placeholder: "0"), defaultValue: "0",
                         help: "LLM reviews per skill; only findings most runs agree on are kept. 0 = one review.",
                         emitsOnlyOnChange: true),
+            // 0.8.x: strict|balanced|permissive|none, SkillScannerConfig.policy = permissive.
             WizardField(key: "policy", label: "Scan policy", kind: .choice(options: skillScannerPolicies), defaultValue: "quiet",
                         help: "quiet (recommended, with the LLM judge): fewest false positives; low-noise and balanced report more for review; strict: fewest exceptions; permissive: trusted skills.",
-                        emitsOnlyOnChange: true),
+                        emitsOnlyOnChange: true,
+                        legacyKind: .choice(options: legacySkillScannerPolicies), legacyDefault: "permissive"),
             WizardField(key: "fail-on-severity", label: "Block at", kind: .choice(options: scannerSeverities), defaultValue: "HIGH",
                         help: "Findings at or above this severity block the skill (recommended: HIGH).",
-                        emitsOnlyOnChange: true),
+                        emitsOnlyOnChange: true, minimumRuntimeMajor: 1),
             WizardField(key: "review-queue-min", label: "Review from", kind: .choice(options: scannerSeverities), defaultValue: "MEDIUM",
                         help: "Findings from this severity up to the block level are flagged for review (MEDIUM).",
-                        emitsOnlyOnChange: true),
+                        emitsOnlyOnChange: true, minimumRuntimeMajor: 1),
             configuredToggle("use-behavioral", label: "Behavioral analyzer",
                              help: "Follow data through the skill's scripts to catch behavior its description hides."),
             configuredToggle("enable-meta", label: "Meta analyzer",
@@ -589,11 +635,12 @@ enum TUIWizards {
                              help: "Optional: look up the skill's files on VirusTotal; needs VIRUSTOTAL_API_KEY."),
             configuredToggle("use-aidefense", label: "AI Defense analyzer",
                              help: "Optional: send skill content to Cisco AI Defense; needs an AI Defense API key."),
-            configuredToggle("use-osv", label: "OSV dependency checks",
-                             help: "Optional: check the skill's declared dependencies against OSV.dev (needs network)."),
+            WizardField(key: "use-osv", label: "OSV dependency checks", kind: .bool, defaultValue: "no",
+                        help: "Optional: check the skill's declared dependencies against OSV.dev (needs network).",
+                        emitsOnlyOnChange: true, minimumRuntimeMajor: 1),
             WizardField(key: "lenient", label: "Lenient parsing", kind: .bool, defaultValue: "yes",
                         help: "yes (the default): scan skills with malformed front matter or missing fields; no: fail them.",
-                        emitsOnlyOnChange: true),
+                        emitsOnlyOnChange: true, legacyKind: .flagOnly, legacyDefault: "no"),
             WizardField(key: "verify", label: "Verify after setup", kind: .bool, defaultValue: "yes"),
         ]
     )
@@ -624,15 +671,16 @@ enum TUIWizards {
                         help: "CSV of analyzer IDs (yara, api, llm, behavioral, readiness); auto: YARA plus a ready LLM.",
                         emitsOnlyOnChange: true),
             WizardField(key: "llm-provider", label: "LLM provider", kind: .choice(options: scannerLLMProviders),
-                        defaultValue: "anthropic", emitsOnlyOnChange: true),
+                        defaultValue: "anthropic", emitsOnlyOnChange: true,
+                        legacyKind: .choice(options: legacyScannerLLMProviders)),
             WizardField(key: "llm-model", label: "LLM model", kind: .text(placeholder: "optional model")),
             WizardField(key: "llm-base-url", label: "LLM base URL", kind: .text(placeholder: "http://127.0.0.1:8000/v1"),
-                        help: "Endpoint of an openai-compatible or vllm judge."),
+                        help: "Endpoint of an openai-compatible or vllm judge.", minimumRuntimeMajor: 1),
             WizardField(key: "api-endpoint", label: "API endpoint", kind: .text(placeholder: "Cisco AI Defense API URL"),
-                        help: "Cisco AI Defense API URL for the api analyzer."),
+                        help: "Cisco AI Defense API URL for the api analyzer.", minimumRuntimeMajor: 1),
             WizardField(key: "api-key-env", label: "API key env", kind: .text(placeholder: "AI_DEFENSE_API_KEY"),
-                        help: "Env var NAME holding the Cisco AI Defense API key; store it with Setup > Credentials."),
-            WizardField(key: "api-timeout-ms", label: "API timeout (ms)", kind: .text(placeholder: "optional")),
+                        help: "Env var NAME holding the Cisco AI Defense API key; store it with Setup > Credentials.", minimumRuntimeMajor: 1),
+            WizardField(key: "api-timeout-ms", label: "API timeout (ms)", kind: .text(placeholder: "optional"), minimumRuntimeMajor: 1),
             configuredToggle("scan-prompts", label: "Scan prompts"),
             configuredToggle("scan-resources", label: "Scan resources"),
             configuredToggle("scan-instructions", label: "Scan instructions"),
@@ -781,7 +829,8 @@ enum TUIWizards {
             WizardField(key: "allow-private-networks", label: "Allow private networks", kind: .bool, defaultValue: "no",
                         visibleWhen: (key: "action", equals: ["add"]),
                         visibleWhen2: (key: "preset", equals: ["splunk-hec", "splunk-enterprise", "otlp", "webhook"]),
-                        help: "Allow an endpoint on this computer or a private network (a collector you run yourself)."),
+                        help: "Allow an endpoint on this computer or a private network (a collector you run yourself).",
+                        minimumRuntimeMajor: 1),
             WizardField(key: "protocol", label: "OTLP protocol", kind: .choice(options: ["grpc", "http"]), defaultValue: "grpc", visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["otlp"])),
             WizardField(key: "project", label: "Galileo project", kind: .text(placeholder: "project name or ID"), visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["galileo"])),
             WizardField(key: "logstream", label: "Galileo Log stream", kind: .text(placeholder: "default"), defaultValue: "default", visibleWhen: (key: "action", equals: ["add"]), visibleWhen2: (key: "preset", equals: ["galileo"])),
@@ -1776,6 +1825,27 @@ enum TUIWizards {
         connector(v, to: &args)
         if action != "status" && !yes(v, "restart") { args.append("--no-restart") }
         return [args]
+    }
+
+    /// The installed runtime's major version; nil when unknown (treated as
+    /// pre-1.0, the conservative rule SecretStandardInputTransport uses).
+    static func runtimeMajor(_ version: String?) -> Int? {
+        version?.split(separator: ".").first.flatMap { Int($0) }
+    }
+
+    /// The wizard's fields as the installed runtime accepts them: 1.0.x
+    /// additions are dropped on an older or unknown runtime, and fields that
+    /// changed shape take their legacy kind and default there.
+    static func fields(of wizard: WizardDefinition, runtimeMajor: Int?) -> [WizardField] {
+        let legacy = (runtimeMajor ?? 0) < 1
+        return wizard.fields.compactMap { field in
+            if let minimum = field.minimumRuntimeMajor, (runtimeMajor ?? 0) < minimum { return nil }
+            guard legacy else { return field }
+            var out = field
+            if let kind = field.legacyKind { out = WizardField(key: field.key, label: field.label, kind: kind, defaultValue: field.legacyDefault ?? field.defaultValue, visibleWhen: field.visibleWhen, visibleWhen2: field.visibleWhen2, visibleWhen3: field.visibleWhen3, help: field.help, emitsOnlyOnChange: field.emitsOnlyOnChange) }
+            else if let fallback = field.legacyDefault { out.defaultValue = fallback }
+            return out
+        }
     }
 
     /// The generic wizard argv (tui/panels/setup.py _wizard_args for the

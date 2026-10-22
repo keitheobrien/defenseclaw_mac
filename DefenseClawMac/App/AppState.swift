@@ -738,26 +738,30 @@ final class AppState {
             // The first read (launch, rebind) must not hold the health read
             // behind a CLI start, so it validates in the background.
             let firstRead = lastConfigSignature.isEmpty
+            var problem: String?
             if !firstRead {
                 let validation = await cli.run(arguments: ["config", "validate"], mutation: false)
                 guard installationSnapshotIsCurrent(generation) else { return }
-                if let problem = ConfigValidation.invalidConfigSummary(
+                problem = ConfigValidation.invalidConfigSummary(
                     fileName: installationContext.configURL.lastPathComponent,
                     exitCode: validation.exitCode, output: validation.output, cancelled: validation.cancelled
-                ) {
-                    if config.loadError != problem { config.loadError = problem }
-                    lastConfigSignature = signature
-                    return
-                }
+                )
             }
-            let cfg = await configStore.reload()
-            guard installationSnapshotIsCurrent(generation) else { return }
-            await gateway.update(config: cfg)
-            guard installationSnapshotIsCurrent(generation) else { return }
-            config = cfg
-            lastConfigSignature = signature
-            configDiskGeneration += 1
-            if firstRead { validateConfigInBackground(generation: generation, signature: signature) }
+            if let problem {
+                // Keep the last valid snapshot; the health and alert reads
+                // below still run this pulse.
+                if config.loadError != problem { config.loadError = problem }
+                lastConfigSignature = signature
+            } else {
+                let cfg = await configStore.reload()
+                guard installationSnapshotIsCurrent(generation) else { return }
+                await gateway.update(config: cfg)
+                guard installationSnapshotIsCurrent(generation) else { return }
+                config = cfg
+                lastConfigSignature = signature
+                configDiskGeneration += 1
+                if firstRead { validateConfigInBackground(generation: generation, signature: signature) }
+            }
         }
         await resolveProbePaths(generation: generation) // no-op after the first pulse
         guard installationSnapshotIsCurrent(generation) else { return }

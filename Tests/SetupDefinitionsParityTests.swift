@@ -36,6 +36,14 @@ struct WizardField: Identifiable {
     var visibleWhen3: (key: String, equals: [String])? = nil
     var help: String = ""
     var emitsOnlyOnChange: Bool = false
+    /// Hidden on runtimes older than this major (runtime 1.0.x additions
+    /// a 0.8.x CLI rejects as unknown options). An unknown runtime version
+    /// counts as pre-1.0, as SecretStandardInputTransport does.
+    var minimumRuntimeMajor: Int? = nil
+    /// On pre-1.0 runtimes the field takes this kind (a click `is_flag`
+    /// toggle has no --no- form; a choice list is narrower) and default.
+    var legacyKind: Kind? = nil
+    var legacyDefault: String? = nil
     var id: String { key }
 }
 
@@ -115,6 +123,8 @@ struct SetupDefinitionsParityTests {
         skillScannerWizardMatchesRuntime103()
         mcpScannerWizardMatchesRuntime103()
         genericBuilderFollowsTheTUIFormRules()
+        legacyRuntimesKeepThe08Contract()
+        sandboxMachineCheckPresetsTheInstall()
         splunkHECDefaultsToVerifiedTLS()
         observabilityAddOffersPrivateNetworks()
         secureSetupSecretsUseChildEnvironment()
@@ -546,6 +556,54 @@ struct SetupDefinitionsParityTests {
         let changed = argv(wizard, seeded: seeded, ["scan-prompts": "no", "scan-resources": "yes", "api-key-env": "AI_DEFENSE_API_KEY"])
         expect(changed.contains("--no-scan-prompts") && changed.contains("--scan-resources") && changed.contains("--api-key-env=AI_DEFENSE_API_KEY"),
                "MCP toggles turn off and on, text fields emit when set: \(changed)")
+    }
+
+    /// A 0.8.x CLI rejects the 1.0.x options and --no- forms as unknown, so
+    /// on such a runtime (or an unknown version) the wizards keep the shape
+    /// release 1.1.31 shipped.
+    private static func legacyRuntimesKeepThe08Contract() {
+        expect(TUIWizards.runtimeMajor("1.0.3") == 1 && TUIWizards.runtimeMajor("0.8.10") == 0 && TUIWizards.runtimeMajor(nil) == nil, "runtime major parsing")
+        let skill = TUIWizards.all.first { $0.id == "skill-scanner" }!
+        for major in [Int?.none, 0] {
+            let fields = TUIWizards.fields(of: skill, runtimeMajor: major)
+            let keys = fields.map(\.key)
+            expect(!keys.contains("fail-on-severity") && !keys.contains("review-queue-min") && !keys.contains("use-osv") && !keys.contains("llm-base-url"),
+                   "1.0.x-only fields are hidden on a legacy runtime (\(String(describing: major)))")
+            guard case .choice(let policies)? = fields.first(where: { $0.key == "policy" })?.kind,
+                  case .choice(let providers)? = fields.first(where: { $0.key == "llm-provider" })?.kind else { expect(false, "legacy choices"); return }
+            expect(policies == ["strict", "balanced", "permissive", "none"] && providers == ["anthropic", "openai"], "legacy choice lists: \(policies) \(providers)")
+            expect(fields.first { $0.key == "policy" }?.defaultValue == "permissive", "0.8.x SkillScannerConfig.policy default")
+            for key in ["use-llm", "use-behavioral", "use-virustotal", "lenient"] {
+                guard let toggle = fields.first(where: { $0.key == key }), case .flagOnly = toggle.kind, toggle.defaultValue == "no" else {
+                    expect(false, "\(key) is a bare flag on 0.8.x"); continue
+                }
+            }
+            var seeded: [String: String] = [:]
+            for field in fields { seeded[field.key] = field.defaultValue }
+            let untouched = TUIWizards.genericArguments(for: skill, values: seeded, seeded: seeded, visibleFields: fields)
+            expect(untouched == ["setup", "skill-scanner", "--verify", "--non-interactive"], "untouched legacy form: \(untouched)")
+            let on = TUIWizards.genericArguments(for: skill, values: seeded.merging(["use-llm": "yes", "policy": "strict"]) { $1 }, seeded: seeded, visibleFields: fields)
+            expect(on.contains("--use-llm") && on.contains("--policy=strict") && !on.contains(where: { $0.hasPrefix("--no-") }), "legacy toggles emit bare flags only: \(on)")
+        }
+        let modern = TUIWizards.fields(of: skill, runtimeMajor: 1)
+        expect(modern.count == skill.fields.count && modern.contains { $0.key == "use-osv" }, "1.0.x keeps every field")
+        let mcp = TUIWizards.fields(of: TUIWizards.all.first { $0.id == "mcp-scanner" }!, runtimeMajor: 0)
+        expect(!mcp.contains { ["llm-base-url", "api-endpoint", "api-key-env", "api-timeout-ms"].contains($0.key) }, "MCP 1.0.x fields hidden on 0.8.x")
+        guard let prompts = mcp.first(where: { $0.key == "scan-prompts" }), case .flagOnly = prompts.kind else { expect(false, "scan-prompts legacy flag"); return }
+        let observability = TUIWizards.fields(of: TUIWizards.all.first { $0.id == "observability" }!, runtimeMajor: 0)
+        expect(!observability.contains { $0.key == "allow-private-networks" }, "--allow-private-networks hidden on 0.8.x")
+    }
+
+    private static func sandboxMachineCheckPresetsTheInstall() {
+        let missing = TUIWizards.sandboxMachineCheck(from: "diag line\n{\"ok\": false, \"openshell_install\": true, \"openshell_upgrade\": false, \"openshell_install_version\": \"0.9.2\", \"checks\": []}")!
+        expect(missing.openshellNeeded && !missing.openshellUpgrade && missing.release == "0.9.2", "a missing OpenShell presets the install: \(missing)")
+        let upgrade = TUIWizards.sandboxMachineCheck(from: "{\"ok\": true, \"openshell_install\": false, \"openshell_upgrade\": true}")!
+        expect(!upgrade.openshellNeeded && upgrade.openshellUpgrade, "a supported older OpenShell offers the in-place upgrade")
+        let older = TUIWizards.sandboxMachineCheck(from: "{\"checks\": [{\"id\": \"openshell-cli\", \"status\": \"fail\"}]}")!
+        expect(older.openshellNeeded, "an older doctor: a failed CLI check")
+        let fine = TUIWizards.sandboxMachineCheck(from: "{\"checks\": [{\"id\": \"openshell-cli\", \"status\": \"pass\"}]}")!
+        expect(!fine.openshellNeeded && !fine.openshellUpgrade, "an older doctor with a passing CLI check")
+        expect(TUIWizards.sandboxMachineCheck(from: "no json here") == nil, "no report, no check")
     }
 
     private static func genericBuilderFollowsTheTUIFormRules() {

@@ -158,7 +158,9 @@ struct SandboxesView: View {
     /// detail opens); a running sandbox has no kept run to show.
     private var runLogKey: String {
         guard let selected, !selected.running else { return "" }
-        return "\(appState.installationGeneration)|\(selected.name)"
+        // While no answer is cached (a transport failure), re-read on each poll.
+        let pending = detachedRuns[selected.name] == nil ? "|\(snapshot.fetchedAt?.timeIntervalSince1970 ?? 0)" : ""
+        return "\(appState.installationGeneration)|\(selected.name)|\(selected.phase)\(pending)"
     }
 
     private func loadProcesses() async {
@@ -174,8 +176,13 @@ struct SandboxesView: View {
     private func loadDetachedRun() async {
         guard let selected, !selected.running else { return }
         let name = selected.name
-        let kept = try? await appState.gateway.sandboxRunLog(name: name)
-        detachedRuns[name] = kept.flatMap { $0 }?.text(name: name) ?? ""
+        do {
+            // nil is the daemon's 404: no log was kept (a definitive "").
+            let kept = try await appState.gateway.sandboxRunLog(name: name)
+            detachedRuns[name] = kept?.text(name: name) ?? ""
+        } catch {
+            detachedRuns[name] = nil
+        }
     }
 
     /// The alerts the Alerts panel lists for this sandbox (raised since it

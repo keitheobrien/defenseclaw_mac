@@ -49,6 +49,14 @@ struct WizardField: Identifiable {
     /// value it opened on emits no flag, a change always emits one — so an
     /// untouched Run never rewrites a setting the CLI would otherwise keep.
     var emitsOnlyOnChange: Bool = false
+    /// Hidden on runtimes older than this major (runtime 1.0.x additions
+    /// a 0.8.x CLI rejects as unknown options). An unknown runtime version
+    /// counts as pre-1.0, as SecretStandardInputTransport does.
+    var minimumRuntimeMajor: Int? = nil
+    /// On pre-1.0 runtimes the field takes this kind (a click `is_flag`
+    /// toggle has no --no- form; a choice list is narrower) and default.
+    var legacyKind: Kind? = nil
+    var legacyDefault: String? = nil
 
     var id: String { key }
 }
@@ -173,6 +181,9 @@ struct WizardSheet: View {
     /// The values the form opened on (static defaults + live config), the
     /// baseline for fields that emit only when changed.
     @State private var seededValues: [String: String] = [:]
+    /// What `sandbox doctor` said about this machine while the Sandbox form
+    /// is open (the TUI's machine line under Install OpenShell).
+    @State private var sandboxMachineNote = "Checking this machine… (defenseclaw sandbox doctor)"
     @State private var revealedSecrets: Set<String> = []
     @State private var phase: Phase = .form
     @State private var output = ""
@@ -188,8 +199,14 @@ struct WizardSheet: View {
 
     enum Phase { case form, review, running, done }
 
+    /// The fields the installed runtime accepts (1.0.x additions hidden on
+    /// older runtimes, legacy kinds there).
+    private var effectiveFields: [WizardField] {
+        TUIWizards.fields(of: wizard, runtimeMajor: TUIWizards.runtimeMajor(appState.installedRuntimeVersion))
+    }
+
     private var visibleFields: [WizardField] {
-        wizard.fields.filter { field in
+        effectiveFields.filter { field in
             matches(field.visibleWhen)
                 && matches(field.visibleWhen2)
                 && matches(field.visibleWhen3)
@@ -201,6 +218,36 @@ struct WizardSheet: View {
         let current = values[condition.key] ?? ""
         if condition.equals == ["*nonempty*"] { return !current.isEmpty }
         return condition.equals.contains(current)
+    }
+
+    /// tui/panels/setup.py apply_sandbox_machine_check: read `sandbox doctor
+    /// --json` (read-only) as the Sandbox form opens; Install OpenShell
+    /// follows the check unless the operator already changed it. A missing
+    /// OpenShell pre-checks the install; a working one leaves the in-place
+    /// upgrade (which restarts the gateway) off until the operator turns it on.
+    private func checkSandboxMachine() {
+        Task {
+            let result = await appState.runCommand(
+                title: "Sandbox machine check", arguments: ["sandbox", "doctor", "--json"],
+                mutation: false, category: "info", origin: "Setup"
+            )
+            guard phase == .form, let check = TUIWizards.sandboxMachineCheck(from: result.output) else {
+                sandboxMachineNote = "Could not check this machine; yes installs OpenShell with Homebrew."
+                return
+            }
+            let release = check.release.isEmpty ? "OpenShell" : "OpenShell \(check.release)"
+            if check.openshellNeeded {
+                if values["install-openshell"] == seededValues["install-openshell"] {
+                    values["install-openshell"] = "yes"
+                    seededValues["install-openshell"] = "yes"
+                }
+                sandboxMachineNote = "OpenShell is missing: yes installs \(release) with Homebrew."
+            } else if check.openshellUpgrade {
+                sandboxMachineNote = "OpenShell works; yes upgrades it in place to \(release) (Homebrew), only while no MicroVM sandbox runs, and restarts the gateway."
+            } else {
+                sandboxMachineNote = "OpenShell is installed; setup configures it. Yes would reinstall it with Homebrew."
+            }
+        }
     }
 
     /// The exact CLI invocation, shown verbatim in review (parity requirement);
@@ -272,7 +319,7 @@ struct WizardSheet: View {
         .padding(18)
         .frame(width: wizard.id == "sandbox" ? 640 : 560, height: wizard.id == "sandbox" ? 640 : 480)
         .onAppear {
-            for field in wizard.fields where values[field.key] == nil {
+            for field in effectiveFields where values[field.key] == nil {
                 values[field.key] = field.defaultValue
             }
             // Live-config prefill outranks static defaults (never downgrade
@@ -292,6 +339,7 @@ struct WizardSheet: View {
             }
             seededValues = values
             if wizard.interactiveOnly { phase = .review } // nothing to fill in
+            if wizard.id == "sandbox" { checkSandboxMachine() }
         }
         .alert("Replace the connector roster?", isPresented: $confirmConnectorReplacement) {
             Button("Cancel", role: .cancel) {}
@@ -308,6 +356,9 @@ struct WizardSheet: View {
                     fieldRow(field)
                     if !field.help.isEmpty {
                         Text(field.help).font(.caption2).foregroundStyle(.secondary)
+                    }
+                    if wizard.id == "sandbox", field.key == "install-openshell" {
+                        Text(sandboxMachineNote).font(.caption2).foregroundStyle(Cisco.orange)
                     }
                 }
             }
@@ -359,8 +410,10 @@ struct WizardSheet: View {
             // A configured value outside the catalog (a custom scanner
             // policy, a retired provider) stays selectable so an untouched
             // Run keeps it, as the TUI prepends it to the choices.
-            let current = values[field.key] ?? ""
-            let choices = current.isEmpty || options.contains(current) ? options : [current] + options
+            // The entry comes from the value the form opened on (the TUI
+            // builds its choices once), so it survives browsing the catalog.
+            let opened = seededValues[field.key] ?? values[field.key] ?? ""
+            let choices = opened.isEmpty || options.contains(opened) ? options : [opened] + options
             Picker(field.label, selection: binding) {
                 ForEach(choices, id: \.self) { Text($0).tag($0) }
             }
