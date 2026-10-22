@@ -821,10 +821,12 @@ enum SandboxRaisedAlerts {
         var out: [Severity: Int] = [:]
         for alert in alerts {
             guard case .audit(let event) = alert else { continue }
-            // cmd_alerts.py: the row's "sandbox" fact names the sandbox; when
-            // it equals the target the fact is blank and target names it.
+            // cmd_alerts.py: the row's "sandbox" fact names the sandbox; a
+            // sandbox-finding row whose target is the sandbox blanks the
+            // fact, so there the target names it (no other row does).
             let named = event.runtimeFacts.first { $0.label == "Sandbox" }?.value ?? ""
-            guard named == row.name || (named.isEmpty && event.target == row.name) else { continue }
+            guard named == row.name
+                || (named.isEmpty && event.action == "sandbox-finding" && event.target == row.name) else { continue }
             if let since = row.createdAt, event.timestamp < since { continue }
             out[event.severity, default: 0] += 1
         }

@@ -64,6 +64,17 @@ struct ConfigEditorContractTests {
         """
         expect(ConfigValidation.invalidConfigSummary(fileName: "config.yaml", exitCode: 1, output: output)
                == "config.yaml line 12 is invalid; run defenseclaw config validate", "the banner names the line")
+        // What 1.0.3's `config validate` actually prints for a malformed file.
+        let v103 = """
+          Config: /Users/x/.defenseclaw/config.yaml
+          OK file exists
+          X line 4, column 10: invalid YAML (expected ',' or ']', but got ':'). Fix that line in config.yaml, then run 'defenseclaw config validate' again
+        """
+        expect(ConfigValidation.invalidConfigSummary(fileName: "config.yaml", exitCode: 1, output: v103)
+               == "config.yaml line 4 is invalid; run defenseclaw config validate", "the 1.0.3 wording is recognised")
+        expect(ConfigValidation.invalidConfigSummary(fileName: "config.yaml", exitCode: 1,
+               output: "  X line 3: guardrail.mode is \"bogus\"; allowed values: observe, action.") == nil,
+               "a semantic issue on a file that loads is not a load failure")
         expect(ConfigValidation.invalidConfigSummary(fileName: "config.yaml", exitCode: 0, output: "config is valid") == nil, "a valid file raises nothing")
         expect(ConfigValidation.invalidConfigSummary(fileName: "config.yaml", exitCode: 1, output: "✗ guardrail.mode: unknown value") == nil,
                "a semantic issue the file still loads with is not a load failure")

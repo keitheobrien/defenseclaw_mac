@@ -61,12 +61,13 @@ struct OperatorAssetLists: Sendable, Hashable {
         return trimmed.precomposedStringWithCanonicalMapping.lowercased()
     }
 
-    /// connector_paths.normalize: the canonical lowercase connector name; an
-    /// empty value is the pre-S1.x default, "openclaw".
+    /// asset_lists._connector_key: "" for an unscoped rule or row, otherwise
+    /// connector_paths.normalize (the canonical lowercase name). An unscoped
+    /// rule never matches an openclaw-scoped row, as in the runtime.
     static func connectorKey(_ connector: String) -> String {
         let name = connector.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         switch name {
-        case "": return "openclaw"
+        case "": return ""
         case "open-hands", "open_hands": return "openhands"
         case "claude-code", "claude_code": return "claudecode"
         default: return name

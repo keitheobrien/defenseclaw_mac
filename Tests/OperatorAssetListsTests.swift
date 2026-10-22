@@ -102,7 +102,10 @@ struct OperatorAssetListsTests {
         expect(merged.first { $0.name == "PENTEST" }?.install == "block", "claude-code and claudecode are the same connector")
         expect(OperatorAssetLists.assetNameKey("Caf\u{0065}\u{0301}", targetType: "skill") == "café", "NFC folding")
         expect(OperatorAssetLists.assetNameKey("Bash", targetType: "tool") == "Bash", "tool names compare exactly")
-        expect(OperatorAssetLists.connectorKey("") == "openclaw", "an empty connector is the pre-S1.x default")
+        expect(OperatorAssetLists.connectorKey("") == "", "an unscoped rule or row keys as empty (asset_lists._connector_key)")
+        let unscoped = lists.mergedInstalls(
+            journal: [InstallJournalRow(name: "trusted", connector: "openclaw", install: "block")], targetType: "skill")
+        expect(unscoped.filter { $0.name.lowercased() == "trusted" }.count == 2, "an unscoped allow rule never re-decides an openclaw-scoped row: \(unscoped)")
         expect(OperatorAssetLists.connectorKey("Open-Hands") == "openhands", "connector aliases normalize")
     }
 

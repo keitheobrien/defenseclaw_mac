@@ -735,15 +735,20 @@ final class AppState {
             // tui/app.py _poll_config_once: a config.yaml the runtime cannot
             // load keeps the last valid snapshot and raises a banner naming
             // the line, rather than rendering a lenient parser's guesses.
-            let validation = await cli.run(arguments: ["config", "validate"], mutation: false)
-            guard installationSnapshotIsCurrent(generation) else { return }
-            if let problem = ConfigValidation.invalidConfigSummary(
-                fileName: installationContext.configURL.lastPathComponent,
-                exitCode: validation.exitCode, output: validation.output, cancelled: validation.cancelled
-            ) {
-                if config.loadError != problem { config.loadError = problem }
-                lastConfigSignature = signature
-                return
+            // The first read (launch, rebind) must not hold the health read
+            // behind a CLI start, so it validates in the background.
+            let firstRead = lastConfigSignature.isEmpty
+            if !firstRead {
+                let validation = await cli.run(arguments: ["config", "validate"], mutation: false)
+                guard installationSnapshotIsCurrent(generation) else { return }
+                if let problem = ConfigValidation.invalidConfigSummary(
+                    fileName: installationContext.configURL.lastPathComponent,
+                    exitCode: validation.exitCode, output: validation.output, cancelled: validation.cancelled
+                ) {
+                    if config.loadError != problem { config.loadError = problem }
+                    lastConfigSignature = signature
+                    return
+                }
             }
             let cfg = await configStore.reload()
             guard installationSnapshotIsCurrent(generation) else { return }
@@ -752,6 +757,7 @@ final class AppState {
             config = cfg
             lastConfigSignature = signature
             configDiskGeneration += 1
+            if firstRead { validateConfigInBackground(generation: generation, signature: signature) }
         }
         await resolveProbePaths(generation: generation) // no-op after the first pulse
         guard installationSnapshotIsCurrent(generation) else { return }
@@ -2595,6 +2601,22 @@ final class AppState {
         if !fromHealth.isEmpty { return fromHealth }
         if !config.connectors.isEmpty { return config.connectors }
         return Self.knownConnectors
+    }
+
+    /// The launch-time counterpart of the blocking check in pulse(): run
+    /// `config validate` off the pulse path and raise the banner if the file
+    /// does not load. Only this signature's verdict is applied.
+    private func validateConfigInBackground(generation: Int, signature: String) {
+        Task { [weak self] in
+            guard let self else { return }
+            let validation = await self.cli.run(arguments: ["config", "validate"], mutation: false)
+            guard self.installationSnapshotIsCurrent(generation), self.lastConfigSignature == signature else { return }
+            guard let problem = ConfigValidation.invalidConfigSummary(
+                fileName: self.installationContext.configURL.lastPathComponent,
+                exitCode: validation.exitCode, output: validation.output, cancelled: validation.cancelled
+            ) else { return }
+            if self.config.loadError.isEmpty { self.config.loadError = problem }
+        }
     }
 
     func reloadConfig() {

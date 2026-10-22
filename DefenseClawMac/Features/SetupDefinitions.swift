@@ -511,8 +511,8 @@ enum TUIWizards {
     /// A yes/no field that opens on the configured value and can turn it
     /// off (tui/panels/setup.py _cfg_bool_field, GAP-2571): an unchanged
     /// field emits no flag; a change emits --key or --no-key.
-    private static func configuredToggle(_ key: String, label: String, help: String = "") -> WizardField {
-        WizardField(key: key, label: label, kind: .bool, defaultValue: "no", help: help, emitsOnlyOnChange: true)
+    private static func configuredToggle(_ key: String, label: String, defaultValue: String = "no", help: String = "") -> WizardField {
+        WizardField(key: key, label: label, kind: .bool, defaultValue: defaultValue, help: help, emitsOnlyOnChange: true)
     }
 
     private static func configuredFlag(_ raw: YAMLNode, _ path: String) -> String? {
@@ -558,7 +558,9 @@ enum TUIWizards {
         baseArgs: ["setup", "skill-scanner"], appendNonInteractive: true,
         liveDefaults: skillScannerLiveDefaults,
         fields: [
-            configuredToggle("use-llm", label: "LLM judge",
+            // SkillScannerConfig.use_llm defaults to true: the TUI reads the
+            // loaded Config, so a file without the key opens on "yes".
+            configuredToggle("use-llm", label: "LLM judge", defaultValue: "yes",
                              help: "Have an LLM review each skill's instructions, with the LLM provider and model below."),
             WizardField(key: "llm-provider", label: "LLM provider", kind: .choice(options: scannerLLMProviders),
                         defaultValue: "anthropic", emitsOnlyOnChange: true),
@@ -1796,7 +1798,14 @@ enum TUIWizards {
         }
         for field in visibleFields where field.key != wizard.commandField {
             let value = values[field.key] ?? ""
-            if field.emitsOnlyOnChange, value == (seeded[field.key] ?? field.defaultValue) { continue }
+            let opened = seeded[field.key] ?? field.defaultValue
+            if field.emitsOnlyOnChange, value == opened { continue }
+            if wizard.id == "mcp-scanner", field.key == "analyzers", value.trimmingCharacters(in: .whitespaces).isEmpty {
+                // Clearing the list means auto, as the hint says (GAP-2572);
+                // nothing to send when it already was.
+                if !["", "auto"].contains(opened) { args.append("--analyzers=auto") }
+                continue
+            }
             switch field.kind {
             case .bool:
                 args.append(value == "yes" ? "--\(field.key)" : "--no-\(field.key)")

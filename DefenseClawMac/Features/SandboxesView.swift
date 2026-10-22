@@ -300,8 +300,8 @@ struct SandboxesView: View {
         var pairs: [(String, String)] = [("Harness", row.harnessLabel)]
         if row.repoPolicy { pairs.append(("Repo policy", row.repoPolicyText)) }
         pairs += [
-            ("Project", row.project.isEmpty ? "—" : "\(row.project) → \(row.workdir) (\(row.workdirMode))"),
             ("Skip-permissions", row.yolo ? "on" : "off"),
+            ("Project", row.project.isEmpty ? "—" : "\(row.project) → \(row.workdir) (\(row.workdirMode))"),
             ("Sites", row.sitesText),
             ("Tool calls", "\(row.toolCalls) (\(row.toolBlocked) blocked" + (row.toolAsked > 0 ? ", \(row.toolAsked) asked)" : ")")),
         ]
@@ -309,7 +309,6 @@ struct SandboxesView: View {
         pairs += [
             ("Hook events", row.hookEventsLabel),
             ("Last tool block", row.lastBlocked.isEmpty ? "—" : row.lastBlocked),
-            ("Undo", row.undoLabel),
         ]
         if !row.image.isEmpty { pairs.append(("Image", row.image)) }
         if row.processTree {
@@ -321,6 +320,7 @@ struct SandboxesView: View {
                 ? SandboxProcessTree.placeholder(from: payload, running: row.running)
                 : tree.joined(separator: "\n")))
         }
+        pairs.append(("Undo", row.undoLabel))
         let raised = SandboxRaisedAlerts.detailText(raisedAlerts(row))
         if !raised.isEmpty { pairs.append(("Alerts", raised)) }
         return pairs

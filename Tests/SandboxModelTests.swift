@@ -192,8 +192,8 @@ struct SandboxModelTests {
         var raw = running
         raw["created_at"] = "2026-10-20T08:00:00Z"
         let row = SandboxDecoding.sandbox(raw)!
-        func alert(_ id: String, at: String, severity: Severity, sandbox: String, target: String = "") -> AlertRow {
-            .audit(AuditEvent(id: id, timestamp: DCDates.parse(at)!, action: "finding", eventType: "runtime-alert",
+        func alert(_ id: String, at: String, severity: Severity, sandbox: String, target: String = "", action: String = "sandbox-finding") -> AlertRow {
+            .audit(AuditEvent(id: id, timestamp: DCDates.parse(at)!, action: action, eventType: "runtime-alert",
                               connector: "claudecode", target: target, actor: "", details: "", structuredJSON: "",
                               severity: severity, runID: "",
                               runtimeFacts: sandbox.isEmpty ? [] : [InventoryField(label: "Sandbox", value: sandbox)]))
@@ -204,6 +204,8 @@ struct SandboxModelTests {
             alert("c", at: "2026-10-21T09:02:00Z", severity: .high, sandbox: "", target: row.name),
             alert("old", at: "2026-10-19T09:00:00Z", severity: .critical, sandbox: row.name),
             alert("other", at: "2026-10-21T09:03:00Z", severity: .critical, sandbox: "docs"),
+            // A skill named like the sandbox: not a sandbox finding, so its target does not name the sandbox.
+            alert("skill", at: "2026-10-21T09:04:00Z", severity: .critical, sandbox: "", target: row.name, action: "scan-finding"),
         ]
         let counts = SandboxRaisedAlerts.counts(for: row, alerts: alerts)
         expect(counts == [.high: 2, .medium: 1], "alerts since the sandbox was created, by sandbox fact or target: \(counts)")

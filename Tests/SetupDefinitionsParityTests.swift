@@ -489,8 +489,11 @@ struct SetupDefinitionsParityTests {
         }
 
         // A stock 1.0.3 install (no skill_scanner block): an untouched Run
-        // must not move the effective policy from quiet to anything else.
+        // must not move the effective policy from quiet to anything else,
+        // and the judge opens on the runtime default (on), so it can be turned off.
         let fresh = seed(wizard, .mapping([:]))
+        expect(fresh["use-llm"] == "yes", "the LLM judge opens on SkillScannerConfig.use_llm = true")
+        expect(argv(wizard, seeded: fresh, ["use-llm": "no"]).contains("--no-use-llm"), "the judge can be turned off from a fresh install")
         expect(argv(wizard, seeded: fresh) == ["setup", "skill-scanner", "--verify", "--non-interactive"],
                "an untouched form on a fresh install emits no policy or analyzer flags: \(argv(wizard, seeded: fresh))")
 
@@ -538,6 +541,8 @@ struct SetupDefinitionsParityTests {
         let seeded = seed(wizard, configured)
         expect(seeded["analyzers"] == "yara,llm" && seeded["scan-prompts"] == "yes", "opens on the configured analyzers and toggles")
         expect(argv(wizard, seeded: seeded) == ["setup", "mcp-scanner", "--verify", "--non-interactive"], "untouched MCP form emits nothing but verify")
+        expect(argv(wizard, seeded: seeded, ["analyzers": ""]).contains("--analyzers=auto"), "clearing the analyzers list means auto (GAP-2572)")
+        expect(!argv(wizard, seeded: seed(wizard, .mapping([:])), ["analyzers": " "]).contains(where: { $0.hasPrefix("--analyzers") }), "clearing an auto list sends nothing")
         let changed = argv(wizard, seeded: seeded, ["scan-prompts": "no", "scan-resources": "yes", "api-key-env": "AI_DEFENSE_API_KEY"])
         expect(changed.contains("--no-scan-prompts") && changed.contains("--scan-resources") && changed.contains("--api-key-env=AI_DEFENSE_API_KEY"),
                "MCP toggles turn off and on, text fields emit when set: \(changed)")

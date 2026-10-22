@@ -131,9 +131,15 @@ enum ConfigValidation {
     /// The banner for a `defenseclaw config validate` run that reports a
     /// parse error, or nil when the file loads (or the check could not run:
     /// no CLI, a usage error on an older runtime, a missing file).
+    /// Load failures the runtime reports (config.py _unreadable_config_message
+    /// and the 1.0.x validate line "X line N, column M: invalid YAML (…)");
+    /// a semantic issue the file still loads with is not one.
+    static let loadFailureMarkers = ["invalid yaml", "parse error", "cannot read the defenseclaw configuration", "not valid utf-8"]
+
     static func invalidConfigSummary(fileName: String, exitCode: Int32, output: String, cancelled: Bool = false) -> String? {
         guard !cancelled, exitCode == 1 else { return nil }
-        guard output.range(of: "parse error", options: .caseInsensitive) != nil else { return nil }
+        let lowered = output.lowercased()
+        guard loadFailureMarkers.contains(where: { lowered.contains($0) }) else { return nil }
         return summary(fileName: fileName, problem: output)
     }
 
