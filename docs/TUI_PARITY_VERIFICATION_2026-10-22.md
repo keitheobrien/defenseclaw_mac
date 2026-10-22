@@ -80,6 +80,10 @@ The focused extraction ran four cluster reviewers (setup, monitor/govern, discov
 
 Earlier in the same session (release 1.1.31 on 1.0.3): all 16 panels and all 4 Settings tabs rendered correctly, the in-app runtime updater was exercised (1.0.1 → 1.0.3 visible in Activity), catalog first loads took 10–15 s during app warm-up and about 1 s afterwards (the loading strip in `a4d4363` covers that), and Inventory requires Rescan by design.
 
-## Environment finding (not an app defect)
+## Environment findings (not app defects)
+
+**The runtime quarantined this repository's Codex skill.** At 11:38:53 the codex watcher auto-blocked `.codex/skills/defenseclaw-runtime-compat` (reason: `BYTECODE_ANALYSIS_UNAVAILABLE`, HIGH, scanner=skill-scanner) and moved it to `~/.defenseclaw/quarantine/skills/codex/defenseclaw-runtime-compat`; the working tree now shows those five tracked files as deleted, and that journal row is the "1 blocked skill" the Overview counts. The trigger was the compatibility audit test importing the skill's script, which wrote a `__pycache__` the scanner could not verify; `script/test_runtime_compat_audit.sh` now runs Python with `-B`. The quarantine was left as the runtime decided it; restoring the files (`git checkout -- .codex/skills`) will be re-quarantined while the block decision stands, so unblock first: `defenseclaw skill unblock defenseclaw-runtime-compat --connector codex`.
+
+**Process-table exhaustion from the Codex notify bridge.**
 
 While building, `swift-frontend` failed to spawn (EAGAIN): the user's process table held ~3,100 `~/.defenseclaw/notify-bridge.sh` and ~1,600 `SkyComputerUseClient` processes against the 4,000 per-user limit. The runtime's generated Codex notify bridge calls the previously configured notify hook, which is Codex Computer Use's `SkyComputerUseClient turn-ended --previous-notify ["bash", notify-bridge.sh]`, which calls the bridge again: a mutual recursion per Codex turn that only stops at the process limit and unwinds over a few minutes. Codex `config.toml` has `notify = ['bash', '~/.defenseclaw/notify-bridge.sh']`. This is a runtime bridge-generation bug (it captured a wrapper that already chains back to the bridge); nothing was changed, the storm was allowed to unwind, and the builds were retried.
