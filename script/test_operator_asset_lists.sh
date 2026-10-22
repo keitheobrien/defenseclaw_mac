@@ -33,6 +33,7 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE" xcrun swiftc \
   "$ROOT/DefenseClawMac/DataLayer/InstallationContext.swift" \
   "$ROOT/DefenseClawMac/DataLayer/ConfigStore.swift" \
   "$ROOT/DefenseClawMac/DataLayer/OperatorAssetLists.swift" \
+  "$ROOT/DefenseClawMac/DataLayer/OperatorAssetListsConfig.swift" \
   "$ROOT/Tests/OperatorAssetListsTests.swift" \
   -o "$BUILD_DIR/OperatorAssetListsTests"
 

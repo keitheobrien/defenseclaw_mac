@@ -10,6 +10,7 @@ mkdir -p "$MODULE_CACHE"
 CLANG_MODULE_CACHE_PATH="$MODULE_CACHE" xcrun swiftc \
   -module-cache-path "$MODULE_CACHE" \
   "$ROOT/DefenseClawMac/DataLayer/Models.swift" \
+  "$ROOT/DefenseClawMac/DataLayer/OperatorAssetLists.swift" \
   "$ROOT/DefenseClawMac/DataLayer/AuditStore.swift" \
   "$ROOT/Tests/AlertQueueProjectionTests.swift" \
   -lsqlite3 \
