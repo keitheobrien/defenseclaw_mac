@@ -225,7 +225,11 @@ struct InventoryView: View {
                 StatCard(title: "Connectors", value: "\(scopedSummaries.count)", tint: .secondary)
                 StatCard(title: "Errors", value: "\(scopedSummaries.reduce(0) { $0 + $1.errors })",
                          tint: scopedSummaries.contains { $0.errors > 0 } ? Cisco.red : .secondary)
-                StatCard(title: "IDE Plugins", value: RuntimeV1Inventory.ideCountSummary(scopedItems) + (idePluginsPartial ? " (partial)" : ""), tint: .secondary)
+                // inventory_state._ide_count_summary: "N (X AI, Y disabled, Z users)".
+                let ideSummary = RuntimeV1Inventory.ideCountSummary(scopedItems)
+                StatCard(title: "IDE Plugins" + (ideSummary.contains("(") ? " · " + ideSummary.drop(while: { $0 != "(" }).dropFirst().dropLast() : ""),
+                         value: "\(scopedItems.filter { $0.category == .idePlugins }.count)\(idePluginsPartial ? "+" : "")",
+                         tint: .secondary)
             }
             Text("Connector snapshots below; IDE extensions and observed agent identities are included in the total and their inventory tabs.")
                 .font(.caption).foregroundStyle(.secondary)
