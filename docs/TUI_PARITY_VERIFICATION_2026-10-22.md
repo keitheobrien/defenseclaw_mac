@@ -10,7 +10,7 @@ The branch `kobrien/fix/runtime-1.0.3-contracts` brings the Mac app back to pari
 | Installed runtime | `defenseclaw, version 1.0.3`; gateway commit `46f444a78`; `~/.defenseclaw/VERSION` still says 1.0.2 (informational drift, the CLI and gateway agree on 1.0.3) |
 | Previous Mac audit baseline | runtime `95159fdb` (1.0.0), `docs/TUI_PARITY_VERIFICATION_2026-10-07.md` |
 | Mac app starting point | `057b265` (release 1.1.31) |
-| Mac app result | `7841bbb`, 17 commits on the branch above, not pushed |
+| Mac app result | `4754512` plus this report, 22 commits on the branch above, merged to `main` for release 1.1.32 |
 | Installed app | `/Applications/DefenseClawMac.app` 1.1.31, relaunched after the walkthrough; not replaced |
 | Live installation read checks | `~/.defenseclaw/config.yaml`, `audit.db` (read-only), loopback port 18970, `defenseclaw status --json` |
 
@@ -65,6 +65,10 @@ The focused extraction ran four cluster reviewers (setup, monitor/govern, discov
 | Audit, alert, scan, activity and egress reads ordered by timestamp alone | `rowid DESC` tie-break on every ordered read, as db.py. |
 | Static fallback config catalog stale for the scanner section | Policy presets, Block At, Review From, Judge Source, Use OSV added. |
 
+### Pre-release review fixes
+
+Two adversarial review passes over the branch diff (five lenses, three refuters per finding) confirmed and led to these corrections before the release: the invalid-config banner now matches the wording 1.0.3's `config validate` prints ("line N, column M: invalid YAML (…)", the unreadable-config sentence, `deployment_mode` refusals) rather than "parse error"; the unscoped connector key stays "" as in `asset_lists._connector_key`; the Skill Scanner's LLM judge opens on `SkillScannerConfig.use_llm` (true) when config.yaml lacks the key, and the v8 `use_virustotal`/`use_aidefense` keys are honoured; clearing the MCP analyzers list sends `--analyzers=auto`; only a sandbox-finding row names its sandbox through the target; the sandbox detail rows follow `detail_pairs`; the first config read validates in the background and a later invalid file no longer skips that pulse's health and alert reads; the scanner and Observability wizards gate their 1.0.x additions on the installed runtime (bare flags, the 0.8.x choice lists and defaults on an older or unknown runtime); the Sandbox wizard reads `sandbox doctor --json` as it opens and pre-checks Install OpenShell only when OpenShell is missing; the off-catalog Picker entry comes from the opening value; a failed detached-run read is retried; README describes the editor, catalog routes and Sandbox wizard as shipped (commits `28473b3`, `4754512`).
+
 ### Remaining (minor, documented, not changed)
 
 - Overview guardrail tile, SCANNERS and SERVICES rows show config.yaml mode/pack rather than the resolved guardrail profile when `guardrail.profiles` assigns a different mode to the operator's account (the Effective policy card on the same page is correct).
@@ -74,7 +78,7 @@ The focused extraction ran four cluster reviewers (setup, monitor/govern, discov
 
 ## Verification performed
 
-**PASS:** 46 standalone test scripts (four new: operator asset lists, config editor contracts, plus extended setup, sandbox, inventory, discovery and connector suites), fresh Debug compile after every commit, `git diff --check`, and the native panel smoke runner with `--run-gui` (49 renders, 0 failures, 1 not-tested palette Run button as before).
+**PASS:** 46 standalone test scripts (two new: operator asset lists, config editor contracts; extended setup, sandbox, inventory, discovery and connector suites; the compatibility-audit script is blocked on this machine while the runtime holds its Codex skill in quarantine, see below), fresh Debug compile after every commit, `git diff --check`, and the native panel smoke runner with `--run-gui` (49 renders, 0 failures, 1 not-tested palette Run button as before).
 
 **Live walkthrough** of the Debug build against the running 1.0.3 install (computer-use, read-only; the installed app was quit for the duration and relaunched afterwards): Overview (counts cross-checked with `defenseclaw status --json`), Alerts (342 unacknowledged, no detection-only findings so no footnote), Setup > Skill Scanner (form opens on quiet; untouched Review emits only `--verify --non-interactive`), Sandboxes (off on this machine, ordinary off state), Inventory (47 items after the panel's scan; IDE Plugins card), AI Discovery (disabled state), Config Editor (draft of `quarantine_dir` → Review shows "Save"; Cancel and Revert restored the on-disk value; config.yaml untouched). Tools shows "No tool policy rows", matching the TUI's empty list on an install without `asset_policy.tool` rules.
 
