@@ -522,12 +522,23 @@ enum ConfigEditorCatalog {
         var scanners: [ConfigEditorField] = [
             .init(label: ".. Skill Scanner ..", key: "", kind: .header),
             .init(label: "Binary", key: "scanners.skill_scanner.binary", hint: "Path/name of skill-scanner executable."),
+            // scanner/settings.py POLICY_PRESETS (1.0.x): "none" is retired.
             .init(label: "Policy", key: "scanners.skill_scanner.policy", kind: .choice,
-                  options: ["strict", "balanced", "permissive", "none"], hint: "Skill scanner policy."),
+                  options: ["strict", "balanced", "permissive", "low-noise", "quiet"],
+                  hint: "Skill scanner policy (recommended: quiet with the LLM judge)."),
+            .init(label: "Block At", key: "scanners.skill_scanner.fail_on_severity", kind: .choice,
+                  options: ["", "CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"],
+                  hint: "Findings at or above this severity block (empty: HIGH)."),
+            .init(label: "Review From", key: "scanners.skill_scanner.review_queue_min", kind: .choice,
+                  options: ["", "CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"],
+                  hint: "Findings from here up to Block At go to review (empty: MEDIUM)."),
             .init(label: "Lenient", key: "scanners.skill_scanner.lenient", kind: .bool,
                   hint: "Tolerate malformed skills (off: fail them)."),
             .init(label: "Use LLM", key: "scanners.skill_scanner.use_llm", kind: .bool,
-                  hint: "Enable LLM-assisted classification."),
+                  hint: "Run the LLM judge (recommended)."),
+            .init(label: "Judge Source", key: "scanners.skill_scanner.judge_source", kind: .choice,
+                  options: ["", "inherit", "override"],
+                  hint: "inherit: the top-level llm block; override: the LLM override below."),
             .init(label: "LLM Consensus Runs", key: "scanners.skill_scanner.llm_consensus_runs", kind: .int,
                   hint: "Number of LLM votes."),
             .init(label: "Use Behavioral", key: "scanners.skill_scanner.use_behavioral", kind: .bool,
@@ -541,6 +552,8 @@ enum ConfigEditorCatalog {
                   hint: "Env var NAME for the VirusTotal key (store it with defenseclaw keys set)."),
             .init(label: "Use AI Defense", key: "scanners.skill_scanner.analyzers.aidefense.enabled", kind: .bool,
                   hint: "Chain Cisco AI Defense scan."),
+            .init(label: "Use OSV", key: "scanners.skill_scanner.analyzers.osv.enabled", kind: .bool,
+                  hint: "Optional: check dependencies on OSV.dev."),
         ]
         scanners += llmOverrideFields("Skill Scanner", "scanners.skill_scanner.llm")
         scanners += [

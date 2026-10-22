@@ -499,65 +499,141 @@ enum TUIWizards {
         ]
     )
 
+    /// `setup skill-scanner` / `setup mcp-scanner --llm-provider` choices
+    /// (cmd_setup.py _SCANNER_LLM_PROVIDERS = WIZARD_LLM_PROVIDERS +
+    /// "openai-compatible"; WIZARD_LLM_PROVIDERS has no "custom").
+    static let scannerLLMProviders = llmProviders.filter { $0 != "custom" } + ["openai-compatible"]
+    /// scanner/settings.py POLICY_PRESETS; "none" was retired in 1.0.0 and
+    /// click rejects it. Quiet is the recommended default.
+    static let skillScannerPolicies = ["strict", "balanced", "permissive", "low-noise", "quiet"]
+    static let scannerSeverities = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
+
+    /// A yes/no field that opens on the configured value and can turn it
+    /// off (tui/panels/setup.py _cfg_bool_field, GAP-2571): an unchanged
+    /// field emits no flag; a change emits --key or --no-key.
+    private static func configuredToggle(_ key: String, label: String, help: String = "") -> WizardField {
+        WizardField(key: key, label: label, kind: .bool, defaultValue: "no", help: help, emitsOnlyOnChange: true)
+    }
+
+    private static func configuredFlag(_ raw: YAMLNode, _ path: String) -> String? {
+        guard let node = raw[path] else { return nil }
+        if let flag = node.bool { return flag ? "yes" : "no" }
+        guard let text = node.string?.trimmingCharacters(in: .whitespaces).lowercased() else { return nil }
+        return ["1", "true", "yes", "on"].contains(text) ? "yes" : "no"
+    }
+
+    /// Skill-scanner judge/analyzer defaults the TUI form opens on
+    /// (setup.py _skill_scanner_policy_values, _cfg_bool_field): the
+    /// effective config, so an untouched Run keeps the current posture.
+    static func skillScannerLiveDefaults(_ raw: YAMLNode) -> [String: String] {
+        var out: [String: String] = [:]
+        if let policy = raw["scanners.skill_scanner.policy"]?.string?.trimmingCharacters(in: .whitespaces),
+           !policy.isEmpty {
+            out["policy"] = policy
+        }
+        if let provider = raw["scanners.skill_scanner.llm.provider"]?.string ?? raw["llm.provider"]?.string,
+           scannerLLMProviders.contains(provider) { out["llm-provider"] = provider }
+        if let runs = raw["scanners.skill_scanner.llm_consensus_runs"]?.int { out["llm-consensus-runs"] = String(runs) }
+        for (key, path) in [("fail-on-severity", "scanners.skill_scanner.fail_on_severity"),
+                            ("review-queue-min", "scanners.skill_scanner.review_queue_min")] {
+            if let severity = raw[path]?.string?.trimmingCharacters(in: .whitespaces).uppercased(),
+               scannerSeverities.contains(severity) { out[key] = severity }
+        }
+        for (key, path) in [("use-llm", "scanners.skill_scanner.use_llm"),
+                            ("use-behavioral", "scanners.skill_scanner.use_behavioral"),
+                            ("enable-meta", "scanners.skill_scanner.enable_meta"),
+                            ("use-trigger", "scanners.skill_scanner.use_trigger"),
+                            ("use-virustotal", "scanners.skill_scanner.analyzers.virustotal.enabled"),
+                            ("use-aidefense", "scanners.skill_scanner.analyzers.aidefense.enabled"),
+                            ("use-osv", "scanners.skill_scanner.analyzers.osv.enabled"),
+                            ("lenient", "scanners.skill_scanner.lenient")] {
+            if let flag = configuredFlag(raw, path) { out[key] = flag }
+        }
+        return out
+    }
+
     private static let skillScanner = WizardDefinition(
         id: "skill-scanner", title: "Skill Scanner", icon: "wand.and.rays.inverse",
-        blurb: "Configure skill analyzers, policy, and optional cloud checks.",
+        blurb: "Configure skill analyzers, policy, severity gates, and optional cloud checks.",
         baseArgs: ["setup", "skill-scanner"], appendNonInteractive: true,
-        liveDefaults: { raw in
-            var out: [String: String] = [:]
-            if let policy = raw["scanners.skill_scanner.policy"]?.string { out["policy"] = policy }
-            if let provider = raw["scanners.skill_scanner.llm.provider"]?.string ?? raw["llm.provider"]?.string,
-               ["anthropic", "openai"].contains(provider) { out["llm-provider"] = provider }
-            if let runs = raw["scanners.skill_scanner.llm_consensus_runs"]?.int { out["llm-consensus-runs"] = String(runs) }
-            return out
-        },
+        liveDefaults: skillScannerLiveDefaults,
         fields: [
-            WizardField(key: "use-behavioral", label: "Behavioral analyzer", kind: .flagOnly, defaultValue: "no",
-                        help: "Unchecked leaves the current setting unchanged (the CLI has no off switch)."),
-            WizardField(key: "use-llm", label: "LLM analyzer", kind: .flagOnly, defaultValue: "no",
-                        help: "Unchecked leaves the current setting unchanged (the CLI has no off switch)."),
-            WizardField(key: "llm-provider", label: "LLM provider", kind: .choice(options: ["anthropic", "openai"]), defaultValue: "anthropic"),
+            configuredToggle("use-llm", label: "LLM judge",
+                             help: "Have an LLM review each skill's instructions, with the LLM provider and model below."),
+            WizardField(key: "llm-provider", label: "LLM provider", kind: .choice(options: scannerLLMProviders),
+                        defaultValue: "anthropic", emitsOnlyOnChange: true),
             WizardField(key: "llm-model", label: "LLM model", kind: .text(placeholder: "optional model")),
-            WizardField(key: "llm-consensus-runs", label: "Consensus runs", kind: .text(placeholder: "0"), defaultValue: "0"),
-            WizardField(key: "enable-meta", label: "Meta analyzer", kind: .flagOnly, defaultValue: "no",
-                        help: "Unchecked leaves the current setting unchanged (the CLI has no off switch)."),
-            WizardField(key: "use-trigger", label: "Trigger analyzer", kind: .flagOnly, defaultValue: "no",
-                        help: "Unchecked leaves the current setting unchanged (the CLI has no off switch)."),
-            WizardField(key: "use-virustotal", label: "VirusTotal", kind: .flagOnly, defaultValue: "no",
-                        help: "Unchecked leaves the current setting unchanged (the CLI has no off switch)."),
-            WizardField(key: "use-aidefense", label: "Cisco AI Defense", kind: .flagOnly, defaultValue: "no",
-                        help: "Unchecked leaves the current setting unchanged (the CLI has no off switch)."),
-            WizardField(key: "policy", label: "Policy", kind: .choice(options: ["strict", "balanced", "permissive", "none"]), defaultValue: "balanced"),
-            WizardField(key: "lenient", label: "Lenient parsing", kind: .flagOnly, defaultValue: "no",
-                        help: "Unchecked leaves the current setting unchanged (the CLI has no off switch)."),
+            WizardField(key: "llm-base-url", label: "LLM base URL", kind: .text(placeholder: "http://127.0.0.1:8000/v1"),
+                        help: "Endpoint of an openai-compatible or vllm judge."),
+            WizardField(key: "llm-consensus-runs", label: "Consensus runs", kind: .text(placeholder: "0"), defaultValue: "0",
+                        help: "LLM reviews per skill; only findings most runs agree on are kept. 0 = one review.",
+                        emitsOnlyOnChange: true),
+            WizardField(key: "policy", label: "Scan policy", kind: .choice(options: skillScannerPolicies), defaultValue: "quiet",
+                        help: "quiet (recommended, with the LLM judge): fewest false positives; low-noise and balanced report more for review; strict: fewest exceptions; permissive: trusted skills.",
+                        emitsOnlyOnChange: true),
+            WizardField(key: "fail-on-severity", label: "Block at", kind: .choice(options: scannerSeverities), defaultValue: "HIGH",
+                        help: "Findings at or above this severity block the skill (recommended: HIGH).",
+                        emitsOnlyOnChange: true),
+            WizardField(key: "review-queue-min", label: "Review from", kind: .choice(options: scannerSeverities), defaultValue: "MEDIUM",
+                        help: "Findings from this severity up to the block level are flagged for review (MEDIUM).",
+                        emitsOnlyOnChange: true),
+            configuredToggle("use-behavioral", label: "Behavioral analyzer",
+                             help: "Follow data through the skill's scripts to catch behavior its description hides."),
+            configuredToggle("enable-meta", label: "Meta analyzer",
+                             help: "A second LLM pass over all findings that drops false positives and ranks the rest."),
+            configuredToggle("use-trigger", label: "Trigger analyzer",
+                             help: "Flag skill descriptions so broad that they would trigger on almost any request."),
+            configuredToggle("use-virustotal", label: "VirusTotal scanner",
+                             help: "Optional: look up the skill's files on VirusTotal; needs VIRUSTOTAL_API_KEY."),
+            configuredToggle("use-aidefense", label: "AI Defense analyzer",
+                             help: "Optional: send skill content to Cisco AI Defense; needs an AI Defense API key."),
+            configuredToggle("use-osv", label: "OSV dependency checks",
+                             help: "Optional: check the skill's declared dependencies against OSV.dev (needs network)."),
+            WizardField(key: "lenient", label: "Lenient parsing", kind: .bool, defaultValue: "yes",
+                        help: "yes (the default): scan skills with malformed front matter or missing fields; no: fail them.",
+                        emitsOnlyOnChange: true),
             WizardField(key: "verify", label: "Verify after setup", kind: .bool, defaultValue: "yes"),
         ]
     )
+
+    static func mcpScannerLiveDefaults(_ raw: YAMLNode) -> [String: String] {
+        var out: [String: String] = [:]
+        if let analyzers = raw["scanners.mcp_scanner.analyzers"]?.string { out["analyzers"] = analyzers }
+        if case .sequence(let items)? = raw["scanners.mcp_scanner.analyzers"] {
+            out["analyzers"] = items.compactMap(\.string).joined(separator: ",")
+        }
+        if let provider = raw["scanners.mcp_scanner.llm.provider"]?.string ?? raw["llm.provider"]?.string,
+           scannerLLMProviders.contains(provider) { out["llm-provider"] = provider }
+        for (key, path) in [("scan-prompts", "scanners.mcp_scanner.scan_prompts"),
+                            ("scan-resources", "scanners.mcp_scanner.scan_resources"),
+                            ("scan-instructions", "scanners.mcp_scanner.scan_instructions")] {
+            if let flag = configuredFlag(raw, path) { out[key] = flag }
+        }
+        return out
+    }
 
     private static let mcpScanner = WizardDefinition(
         id: "mcp-scanner", title: "MCP Scanner", icon: "server.rack",
         blurb: "Configure MCP analyzers and prompt, resource, and instruction scanning.",
         baseArgs: ["setup", "mcp-scanner"], appendNonInteractive: true,
-        liveDefaults: { raw in
-            var out: [String: String] = [:]
-            if let analyzers = raw["scanners.mcp_scanner.analyzers"]?.string { out["analyzers"] = analyzers }
-            if case .sequence(let items)? = raw["scanners.mcp_scanner.analyzers"] {
-                out["analyzers"] = items.compactMap(\.string).joined(separator: ",")
-            }
-            if let provider = raw["scanners.mcp_scanner.llm.provider"]?.string ?? raw["llm.provider"]?.string,
-               ["anthropic", "openai"].contains(provider) { out["llm-provider"] = provider }
-            return out
-        },
+        liveDefaults: mcpScannerLiveDefaults,
         fields: [
-            WizardField(key: "analyzers", label: "Analyzers", kind: .text(placeholder: "yara,api,llm,behavioral,readiness"), defaultValue: "yara,api,llm,behavioral,readiness"),
-            WizardField(key: "llm-provider", label: "LLM provider", kind: .choice(options: ["anthropic", "openai"]), defaultValue: "anthropic"),
+            WizardField(key: "analyzers", label: "Analyzers", kind: .text(placeholder: "auto"), defaultValue: "auto",
+                        help: "CSV of analyzer IDs (yara, api, llm, behavioral, readiness); auto: YARA plus a ready LLM.",
+                        emitsOnlyOnChange: true),
+            WizardField(key: "llm-provider", label: "LLM provider", kind: .choice(options: scannerLLMProviders),
+                        defaultValue: "anthropic", emitsOnlyOnChange: true),
             WizardField(key: "llm-model", label: "LLM model", kind: .text(placeholder: "optional model")),
-            WizardField(key: "scan-prompts", label: "Scan prompts", kind: .flagOnly, defaultValue: "no",
-                        help: "Unchecked leaves the current setting unchanged (the CLI has no off switch)."),
-            WizardField(key: "scan-resources", label: "Scan resources", kind: .flagOnly, defaultValue: "no",
-                        help: "Unchecked leaves the current setting unchanged (the CLI has no off switch)."),
-            WizardField(key: "scan-instructions", label: "Scan instructions", kind: .flagOnly, defaultValue: "no",
-                        help: "Unchecked leaves the current setting unchanged (the CLI has no off switch)."),
+            WizardField(key: "llm-base-url", label: "LLM base URL", kind: .text(placeholder: "http://127.0.0.1:8000/v1"),
+                        help: "Endpoint of an openai-compatible or vllm judge."),
+            WizardField(key: "api-endpoint", label: "API endpoint", kind: .text(placeholder: "Cisco AI Defense API URL"),
+                        help: "Cisco AI Defense API URL for the api analyzer."),
+            WizardField(key: "api-key-env", label: "API key env", kind: .text(placeholder: "AI_DEFENSE_API_KEY"),
+                        help: "Env var NAME holding the Cisco AI Defense API key; store it with Setup > Credentials."),
+            WizardField(key: "api-timeout-ms", label: "API timeout (ms)", kind: .text(placeholder: "optional")),
+            configuredToggle("scan-prompts", label: "Scan prompts"),
+            configuredToggle("scan-resources", label: "Scan resources"),
+            configuredToggle("scan-instructions", label: "Scan instructions"),
             WizardField(key: "verify", label: "Verify after setup", kind: .bool, defaultValue: "yes"),
         ]
     )
@@ -1681,6 +1757,44 @@ enum TUIWizards {
         connector(v, to: &args)
         if action != "status" && !yes(v, "restart") { args.append("--no-restart") }
         return [args]
+    }
+
+    /// The generic wizard argv (tui/panels/setup.py _wizard_args for the
+    /// wizards without an exact builder): base args, the commandField value as
+    /// the positional subcommand (mapped, e.g. claudecode → claude-code), then
+    /// every visible field — booleans click-style (--key / --no-key), bare
+    /// flags only when on, secrets never (stdin, child environment, or an
+    /// exact builder carry them), and `emitsOnlyOnChange` fields only when
+    /// they differ from the value the form opened on.
+    static func genericArguments(
+        for wizard: WizardDefinition,
+        values: [String: String],
+        seeded: [String: String],
+        visibleFields: [WizardField]
+    ) -> [String] {
+        var args = wizard.baseArgs
+        if let commandField = wizard.commandField {
+            let value = values[commandField] ?? ""
+            if !value.isEmpty { args.append(wizard.commandMap[value] ?? value) }
+        }
+        for field in visibleFields where field.key != wizard.commandField {
+            let value = values[field.key] ?? ""
+            if field.emitsOnlyOnChange, value == (seeded[field.key] ?? field.defaultValue) { continue }
+            switch field.kind {
+            case .bool:
+                args.append(value == "yes" ? "--\(field.key)" : "--no-\(field.key)")
+            case .flagOnly:
+                if value == "yes" { args.append("--\(field.key)") }
+            case .secure:
+                continue
+            default:
+                guard !value.isEmpty else { continue }
+                args.append("--\(field.key)=\(value)")
+            }
+        }
+        if wizard.appendYes { args.append("--yes") }
+        if wizard.appendNonInteractive { args.append("--non-interactive") }
+        return args
     }
 
     private static func value(_ values: [String: String], _ key: String, _ fallback: String = "") -> String {

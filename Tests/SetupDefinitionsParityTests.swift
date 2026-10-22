@@ -35,6 +35,7 @@ struct WizardField: Identifiable {
     var visibleWhen2: (key: String, equals: [String])? = nil
     var visibleWhen3: (key: String, equals: [String])? = nil
     var help: String = ""
+    var emitsOnlyOnChange: Bool = false
     var id: String { key }
 }
 
@@ -111,6 +112,9 @@ struct SetupDefinitionsParityTests {
         customProviderValidationCatchesUnsafeInputs()
         observabilityBuilderCoversPresetSpecificInputs()
         galileoTestEmitsOnlyTimeout()
+        skillScannerWizardMatchesRuntime103()
+        mcpScannerWizardMatchesRuntime103()
+        genericBuilderFollowsTheTUIFormRules()
         splunkHECDefaultsToVerifiedTLS()
         secureSetupSecretsUseChildEnvironment()
         webhookBuilderCoversCurrentNotifierOptions()
@@ -444,6 +448,117 @@ struct SetupDefinitionsParityTests {
         let longer = wizard.commandBuilder?(["action": "test", "timeout": "30", "direct": "yes"], false).flatMap { $0 } ?? []
         expect(value(after: "--timeout", in: longer) == "30", "galileo test forwards a custom timeout")
         expect(!longer.contains("--direct"), "a stale direct value never reaches argv")
+    }
+
+    /// The form's opening values: static defaults, then the live config
+    /// (SetupView.onAppear), the baseline for emit-on-change fields.
+    private static func seed(_ wizard: WizardDefinition, _ raw: YAMLNode) -> [String: String] {
+        var values: [String: String] = [:]
+        for field in wizard.fields { values[field.key] = field.defaultValue }
+        for (key, value) in wizard.liveDefaults?(raw) ?? [:] where !value.isEmpty { values[key] = value }
+        return values
+    }
+
+    private static func argv(_ wizard: WizardDefinition, seeded: [String: String], _ changes: [String: String] = [:]) -> [String] {
+        let values = seeded.merging(changes) { $1 }
+        return TUIWizards.genericArguments(for: wizard, values: values, seeded: seeded, visibleFields: wizard.fields)
+    }
+
+    private static func skillScannerWizardMatchesRuntime103() {
+        guard let wizard = TUIWizards.all.first(where: { $0.id == "skill-scanner" }) else {
+            expect(false, "skill-scanner wizard exists"); return
+        }
+        func field(_ key: String) -> WizardField? { wizard.fields.first { $0.key == key } }
+        guard case .choice(let policies)? = field("policy")?.kind else { expect(false, "policy is a choice"); return }
+        expect(policies == ["strict", "balanced", "permissive", "low-noise", "quiet"], "policy presets match scanner/settings.py POLICY_PRESETS: \(policies)")
+        expect(field("policy")?.defaultValue == "quiet", "quiet is the recommended default")
+        guard case .choice(let providers)? = field("llm-provider")?.kind else { expect(false, "provider is a choice"); return }
+        expect(providers.contains("openai-compatible") && providers.contains("ollama") && providers.contains("vllm") && !providers.contains("custom"),
+               "scanner providers are WIZARD_LLM_PROVIDERS + openai-compatible: \(providers)")
+        expect(field("fail-on-severity")?.defaultValue == "HIGH" && field("review-queue-min")?.defaultValue == "MEDIUM", "severity gate and review threshold open on the recommended values")
+        expect(field("use-osv") != nil && field("llm-base-url") != nil, "OSV checks and the judge base URL are offered")
+        for key in ["use-llm", "use-behavioral", "enable-meta", "use-trigger", "use-virustotal", "use-aidefense", "use-osv", "lenient"] {
+            guard let toggle = field(key), case .bool = toggle.kind, toggle.emitsOnlyOnChange else {
+                expect(false, "\(key) is a configured toggle that can turn the analyzer off"); continue
+            }
+        }
+
+        // A stock 1.0.3 install (no skill_scanner block): an untouched Run
+        // must not move the effective policy from quiet to anything else.
+        let fresh = seed(wizard, .mapping([:]))
+        expect(argv(wizard, seeded: fresh) == ["setup", "skill-scanner", "--verify", "--non-interactive"],
+               "an untouched form on a fresh install emits no policy or analyzer flags: \(argv(wizard, seeded: fresh))")
+
+        let configured: YAMLNode = .mapping(["scanners": .mapping(["skill_scanner": .mapping([
+            "policy": .scalar("custom"),
+            "use_llm": .scalar("true"),
+            "lenient": .scalar("false"),
+            "fail_on_severity": .scalar("medium"),
+            "review_queue_min": .scalar("bogus"),
+            "llm": .mapping(["provider": .scalar("ollama")]),
+            "analyzers": .mapping(["osv": .mapping(["enabled": .scalar("yes")])]),
+        ])])])
+        let live = wizard.liveDefaults?(configured) ?? [:]
+        expect(live["policy"] == "custom", "a custom policy opens as itself so an untouched Run keeps it")
+        expect(live["use-llm"] == "yes" && live["lenient"] == "no" && live["use-osv"] == "yes", "toggles open on the configured values: \(live)")
+        expect(live["fail-on-severity"] == "MEDIUM" && live["review-queue-min"] == nil, "severities are upper-cased and unknown values ignored")
+        expect(live["llm-provider"] == "ollama", "a local judge provider is kept, not reset to anthropic")
+        let seeded = seed(wizard, configured)
+        let untouched = argv(wizard, seeded: seeded)
+        expect(untouched == ["setup", "skill-scanner", "--verify", "--non-interactive"], "untouched: no flag rewrites the configured posture: \(untouched)")
+        let changed = argv(wizard, seeded: seeded, ["policy": "strict", "use-llm": "no", "use-osv": "no", "review-queue-min": "LOW", "lenient": "yes"])
+        expect(changed.contains("--policy=strict") && changed.contains("--no-use-llm") && changed.contains("--no-use-osv")
+               && changed.contains("--review-queue-min=LOW") && changed.contains("--lenient"),
+               "changes emit the click flags, including the off switches: \(changed)")
+        expect(!changed.contains(where: { $0.hasPrefix("--fail-on-severity") || $0.hasPrefix("--llm-provider") }), "unchanged fields stay silent")
+        expect(!wizard.fields.contains(where: { if case .choice(let options) = $0.kind { return options.contains("none") } else { return false } }),
+               "the retired policy \"none\" is never offered")
+    }
+
+    private static func mcpScannerWizardMatchesRuntime103() {
+        guard let wizard = TUIWizards.all.first(where: { $0.id == "mcp-scanner" }) else {
+            expect(false, "mcp-scanner wizard exists"); return
+        }
+        func field(_ key: String) -> WizardField? { wizard.fields.first { $0.key == key } }
+        expect(field("analyzers")?.defaultValue == "auto", "analyzers default to auto as MCPScannerConfig does")
+        for key in ["llm-base-url", "api-endpoint", "api-key-env", "api-timeout-ms"] {
+            expect(field(key) != nil, "\(key) is offered")
+        }
+        guard case .choice(let providers)? = field("llm-provider")?.kind else { expect(false, "provider is a choice"); return }
+        expect(providers == TUIWizards.scannerLLMProviders, "MCP judge providers match the skill scanner's")
+        let configured: YAMLNode = .mapping(["scanners": .mapping(["mcp_scanner": .mapping([
+            "analyzers": .sequence([.scalar("yara"), .scalar("llm")]),
+            "scan_prompts": .scalar("true"),
+        ])])])
+        let seeded = seed(wizard, configured)
+        expect(seeded["analyzers"] == "yara,llm" && seeded["scan-prompts"] == "yes", "opens on the configured analyzers and toggles")
+        expect(argv(wizard, seeded: seeded) == ["setup", "mcp-scanner", "--verify", "--non-interactive"], "untouched MCP form emits nothing but verify")
+        let changed = argv(wizard, seeded: seeded, ["scan-prompts": "no", "scan-resources": "yes", "api-key-env": "AI_DEFENSE_API_KEY"])
+        expect(changed.contains("--no-scan-prompts") && changed.contains("--scan-resources") && changed.contains("--api-key-env=AI_DEFENSE_API_KEY"),
+               "MCP toggles turn off and on, text fields emit when set: \(changed)")
+    }
+
+    private static func genericBuilderFollowsTheTUIFormRules() {
+        let wizard = WizardDefinition(
+            id: "probe", title: "Probe", icon: "", blurb: "", baseArgs: ["setup"],
+            commandField: "connector", commandMap: ["claudecode": "claude-code"], appendYes: true,
+            fields: [
+                WizardField(key: "connector", label: "Connector", kind: .choice(options: ["claudecode"]), defaultValue: "claudecode"),
+                WizardField(key: "mode", label: "Mode", kind: .choice(options: ["observe", "action"]), defaultValue: "observe"),
+                WizardField(key: "restart", label: "Restart", kind: .bool, defaultValue: "yes"),
+                WizardField(key: "force", label: "Force", kind: .flagOnly, defaultValue: "no"),
+                WizardField(key: "token", label: "Token", kind: .secure(placeholder: ""), defaultValue: "hunter2"),
+                WizardField(key: "quiet", label: "Quiet", kind: .bool, defaultValue: "no", emitsOnlyOnChange: true),
+            ]
+        )
+        var values: [String: String] = [:]
+        for field in wizard.fields { values[field.key] = field.defaultValue }
+        let args = TUIWizards.genericArguments(for: wizard, values: values, seeded: values, visibleFields: wizard.fields)
+        expect(args == ["setup", "claude-code", "--mode=observe", "--restart", "--yes"],
+               "command field maps, bools are click-style, bare flags only when on, secrets never, unchanged emit-on-change fields silent: \(args)")
+        values["quiet"] = "yes"; values["force"] = "yes"
+        let more = TUIWizards.genericArguments(for: wizard, values: values, seeded: [:], visibleFields: wizard.fields)
+        expect(more.contains("--quiet") && more.contains("--force") && !more.contains("hunter2"), "a change emits; a missing baseline compares against the default: \(more)")
     }
 
     private static func splunkHECDefaultsToVerifiedTLS() {

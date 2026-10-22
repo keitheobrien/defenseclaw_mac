@@ -45,6 +45,10 @@ struct WizardField: Identifiable {
     /// Optional third driver for provider-family auth subgroups.
     var visibleWhen3: (key: String, equals: [String])? = nil
     var help: String = ""
+    /// TUI form rule (tui/panels/setup.py _wizard_args): a field left at the
+    /// value it opened on emits no flag, a change always emits one — so an
+    /// untouched Run never rewrites a setting the CLI would otherwise keep.
+    var emitsOnlyOnChange: Bool = false
 
     var id: String { key }
 }
@@ -166,6 +170,9 @@ struct WizardSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var values: [String: String] = [:]
+    /// The values the form opened on (static defaults + live config), the
+    /// baseline for fields that emit only when changed.
+    @State private var seededValues: [String: String] = [:]
     @State private var revealedSecrets: Set<String> = []
     @State private var phase: Phase = .form
     @State private var output = ""
@@ -196,35 +203,10 @@ struct WizardSheet: View {
         return condition.equals.contains(current)
     }
 
-    /// The exact CLI invocation, shown verbatim in review (parity requirement).
-    /// Booleans render click-style (--flag / --no-flag); the commandField value
-    /// becomes a positional subcommand (mapped, e.g. claudecode → claude-code).
+    /// The exact CLI invocation, shown verbatim in review (parity requirement);
+    /// the rules live in TUIWizards.genericArguments so they are unit-tested.
     private func buildArguments(maskSecrets: Bool) -> [String] {
-        var args = wizard.baseArgs
-        if let commandField = wizard.commandField {
-            let value = values[commandField] ?? ""
-            if !value.isEmpty { args.append(wizard.commandMap[value] ?? value) }
-        }
-        for field in visibleFields where field.key != wizard.commandField {
-            let value = values[field.key] ?? ""
-            switch field.kind {
-            case .bool:
-                args.append(value == "yes" ? "--\(field.key)" : "--no-\(field.key)")
-            case .flagOnly:
-                if value == "yes" { args.append("--\(field.key)") }
-            case .secure:
-                // Secrets are transported only via stdin, a child-only
-                // environment variable, or an explicit command builder.
-                // Never let the generic argument builder place one in argv.
-                continue
-            default:
-                guard !value.isEmpty else { continue }
-                args.append("--\(field.key)=\(value)")
-            }
-        }
-        if wizard.appendYes { args.append("--yes") }
-        if wizard.appendNonInteractive { args.append("--non-interactive") }
-        return args
+        TUIWizards.genericArguments(for: wizard, values: values, seeded: seededValues, visibleFields: visibleFields)
     }
 
     private func buildCommands(maskSecrets: Bool) -> [[String]] {
@@ -308,6 +290,7 @@ struct WizardSheet: View {
                TUIWizards.connectors.contains(configured) {
                 values["connector"] = configured
             }
+            seededValues = values
             if wizard.interactiveOnly { phase = .review } // nothing to fill in
         }
         .alert("Replace the connector roster?", isPresented: $confirmConnectorReplacement) {
@@ -373,8 +356,13 @@ struct WizardSheet: View {
                 .help("Toggle secret visibility")
             }
         case .choice(let options):
+            // A configured value outside the catalog (a custom scanner
+            // policy, a retired provider) stays selectable so an untouched
+            // Run keeps it, as the TUI prepends it to the choices.
+            let current = values[field.key] ?? ""
+            let choices = current.isEmpty || options.contains(current) ? options : [current] + options
             Picker(field.label, selection: binding) {
-                ForEach(options, id: \.self) { Text($0).tag($0) }
+                ForEach(choices, id: \.self) { Text($0).tag($0) }
             }
         case .bool, .flagOnly:
             Toggle(field.label, isOn: Binding(
