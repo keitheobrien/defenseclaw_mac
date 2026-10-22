@@ -213,6 +213,13 @@ final class AppState {
     }
 
     var alertLoadError: String?
+    /// Bumped each time config.yaml is re-read from disk (a rotation, a
+    /// setup command, the TUI editing it): open editors rebase on it.
+    var configDiskGeneration = 0
+    /// Detection-only findings of the last 24 hours (a rule matched but could
+    /// not decide the call): not alerts, so the Alerts panel says how many
+    /// there are and where to read them (GAP-0314).
+    var detectionOnlyFindings24h = 0
     @ObservationIgnored private var alertRefreshInProgress = false
 
     var updateOperationInProgress: Bool {
@@ -725,12 +732,26 @@ final class AppState {
                 await bindSelectedInstallation(resolved: rebound)
                 return
             }
+            // tui/app.py _poll_config_once: a config.yaml the runtime cannot
+            // load keeps the last valid snapshot and raises a banner naming
+            // the line, rather than rendering a lenient parser's guesses.
+            let validation = await cli.run(arguments: ["config", "validate"], mutation: false)
+            guard installationSnapshotIsCurrent(generation) else { return }
+            if let problem = ConfigValidation.invalidConfigSummary(
+                fileName: installationContext.configURL.lastPathComponent,
+                exitCode: validation.exitCode, output: validation.output, cancelled: validation.cancelled
+            ) {
+                if config.loadError != problem { config.loadError = problem }
+                lastConfigSignature = signature
+                return
+            }
             let cfg = await configStore.reload()
             guard installationSnapshotIsCurrent(generation) else { return }
             await gateway.update(config: cfg)
             guard installationSnapshotIsCurrent(generation) else { return }
             config = cfg
             lastConfigSignature = signature
+            configDiskGeneration += 1
         }
         await resolveProbePaths(generation: generation) // no-op after the first pulse
         guard installationSnapshotIsCurrent(generation) else { return }
@@ -859,6 +880,8 @@ final class AppState {
         guard installationSnapshotIsCurrent(generation) else { return }
         let blockCount = await activeAudit.overviewBlockCount()
         guard installationSnapshotIsCurrent(generation) else { return }
+        let detectionOnly = await activeAudit.countDetectionOnlyFindings(since: Date().addingTimeInterval(-24 * 3600))
+        guard installationSnapshotIsCurrent(generation) else { return }
 
         // count_recent_silent_bypass: allow-decision LLM-shaped bypasses in
         // the last 300s (passthrough+looks_like_llm, or the shape branch).
@@ -927,6 +950,7 @@ final class AppState {
         if fresh != unackedAlerts {
             unackedAlerts = fresh
         }
+        if detectionOnly != detectionOnlyFindings24h { detectionOnlyFindings24h = detectionOnly }
         overviewEnforcementMetrics = nextMetrics
     }
 

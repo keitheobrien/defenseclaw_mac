@@ -423,6 +423,39 @@ actor AuditStore {
         )
     }
 
+    /// db.py::count_detection_only_findings: the findings tagged
+    /// detection-only (a rule matched but could not decide the call) recorded
+    /// at or after `since`. Alerts leave them out, so the Alerts panel says
+    /// how many there are and where to read them (GAP-0176, GAP-0314).
+    /// Needs the payload_json column; 0 on older schemas.
+    func countDetectionOnlyFindings(since: Date) -> Int {
+        guard tableExists("audit_events"), columnNames(in: "audit_events").contains("payload_json") else { return 0 }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        let tags = "$.\"defenseclaw.finding.tags\""
+        let safeTextTags = "CASE WHEN json_valid(COALESCE(payload_json, '')) THEN json_extract(payload_json, '\(tags)') END"
+        let rows = query("""
+            SELECT COUNT(*) AS n FROM audit_events
+            WHERE timestamp >= ?
+              AND COALESCE(payload_json, '') LIKE '%detection-only%'
+              AND (
+                EXISTS (
+                    SELECT 1 FROM json_each(
+                        CASE WHEN json_valid(COALESCE(payload_json, ''))
+                              AND json_type(payload_json, '\(tags)') = 'array'
+                             THEN json_extract(payload_json, '\(tags)')
+                             ELSE '[]' END
+                    ) AS finding_tag
+                    WHERE LOWER(TRIM(CAST(finding_tag.value AS TEXT), CHAR(9, 10, 11, 12, 13, 32))) = 'detection-only'
+                )
+                OR LOWER(TRIM(COALESCE(\(safeTextTags), ''), CHAR(9, 10, 11, 12, 13, 32))) = 'detection-only'
+              )
+            """, binds: [formatter.string(from: since)])
+        return (rows.first?["n"] as? Int) ?? 0
+    }
+
     /// db.py::list_actions_by_type reduced to the install decision: every
     /// `actions` row of one target type with its connector ("" = global on
     /// schemas before the connector column) and `actions_json.install`.
