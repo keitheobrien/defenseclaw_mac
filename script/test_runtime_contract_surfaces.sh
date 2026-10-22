@@ -36,7 +36,7 @@ if ! grep -Fq 'DEFENSECLAW_SETUP_OBSERVABILITY_TOKEN' "$ROOT/DefenseClawMac/Feat
   exit 1
 fi
 
-if ! sed -n '/case \.secure:/,/default:/p' "$ROOT/DefenseClawMac/Features/SetupView.swift" \
+if ! sed -n '/case \.secure:/,/default:/p' "$ROOT/DefenseClawMac/Features/SetupDefinitions.swift" \
     | grep -Fq 'continue'; then
   echo "Generic setup fields no longer fail closed for secure values" >&2
   exit 1

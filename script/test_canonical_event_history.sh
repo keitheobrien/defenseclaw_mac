@@ -5,6 +5,7 @@ BUILD_DIR="$(mktemp -d /private/tmp/defenseclaw-canonical-tests.XXXXXX)"
 trap 'rm -rf "$BUILD_DIR"' EXIT
 xcrun swiftc -module-cache-path "$BUILD_DIR/ModuleCache" \
   "$ROOT/DefenseClawMac/DataLayer/Models.swift" \
+  "$ROOT/DefenseClawMac/DataLayer/OperatorAssetLists.swift" \
   "$ROOT/DefenseClawMac/DataLayer/AuditStore.swift" \
   "$ROOT/DefenseClawMac/DataLayer/EventStreamReader.swift" \
   "$ROOT/Tests/CanonicalEventHistoryTests.swift" \
