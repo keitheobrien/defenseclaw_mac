@@ -10,6 +10,8 @@ There is one automatic attempt per app launch. Reopening the main window or refr
 
 The startup check preserves a running gateway. A timeout, authentication failure, or malformed health response produces no duplicate start. Setup initialization is checked using its structured report, because some runtime versions return exit code zero even when their report says setup needs attention. Setup commands defer gateway lifecycle until the final recorded start so administrator mode applies consistently.
 
+Before trusting health or sending a gateway token, the app checks that the configured loopback listener belongs to the current account or root and that its process is `defenseclaw-gateway`. A listener it cannot verify is treated as unavailable, without sending a request or starting a duplicate gateway. The token is omitted from unauthenticated `/health` requests, and gateway API redirects are not followed. This process check closes the ordinary port-takeover case; a race between checking the listener and connecting remains possible until the runtime offers a peer-authenticated local transport.
+
 App updates continue to preserve the existing runtime. This change does not install, replace, downgrade, or upgrade a runtime, and does not enable macOS Launch at Login. A fresh installation starts its gateway after the user completes configuration in the app.
 
 ## Verification

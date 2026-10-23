@@ -12,7 +12,7 @@ struct PanelNativeSmokeTests {
         if ProcessInfo.processInfo.environment["PARITY_UPGRADE_ONLY"] == "1" {
             precondition(FileManager.default.homeDirectoryForCurrentUser.path == ProcessInfo.processInfo.environment["HOME"], "upgrade test must use only the disposable home")
         }
-        let state = AppState()
+        let state = AppState(gatewayListenerTrust: { _ in true })
         let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 1180, height: 800),
                               styleMask: [.titled, .resizable, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -197,7 +197,7 @@ struct PanelNativeSmokeTests {
                     }
                     if scenario == "source-switch" {
                         precondition(!state.sourceDevelopmentRuntimeDetected && state.installedRuntimeVersion == "1.0.1", "release selected after switch despite old source marker")
-                        let reopened = AppState()
+                        let reopened = AppState(gatewayListenerTrust: { _ in true })
                         await reopened.refreshInstalledRuntimeVersion()
                         precondition(!reopened.sourceDevelopmentRuntimeDetected && reopened.installedRuntimeVersion == "1.0.1", "source marker must not block future app launches")
                         await show("source-runtime-switch-complete", AnyView(AppSettingsView()))

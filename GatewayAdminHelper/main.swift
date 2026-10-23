@@ -707,9 +707,9 @@ private final class GatewayAdminLifetime {
 /// when it cannot read it. After every administrator gateway action the
 /// helper repairs such folders: an unreadable, root-owned folder tree that
 /// holds nothing but empty folders is removed (`rmdir` only, deepest first);
-/// one with content is made traversable (0755). Readable folders, files,
-/// symlinks and folders owned by anyone else are never touched. Only this
-/// fixed list is inspected; no client path is ever used.
+/// one with content is left private for an administrator to review. Readable
+/// folders, files, symlinks and folders owned by anyone else are never touched.
+/// Only this fixed list is inspected; no client path is ever used.
 enum GatewayAdminVendorPolicyGuard {
     static let vendorPolicyDirectories = [
         "/etc/codex",
@@ -727,7 +727,7 @@ enum GatewayAdminVendorPolicyGuard {
 
     struct Outcome {
         var removed: [String] = []
-        var repaired: [String] = []
+        var preserved: [String] = []
         var notes: [String] = []
     }
 
@@ -737,18 +737,21 @@ enum GatewayAdminVendorPolicyGuard {
                        directories: [String] = vendorPolicyDirectories,
                        window: Duration = settleWindow) -> String {
         var notes: [String] = []
+        var seen = Set<String>()
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: action == .stop ? .zero : window)
         while true {
-            notes += sweep(directories: directories, owner: owner).notes
+            for note in sweep(directories: directories, owner: owner).notes where seen.insert(note).inserted {
+                notes.append(note)
+            }
             if clock.now >= deadline { break }
             usleep(UInt32(settleInterval.components.attoseconds / 1_000_000_000_000) + UInt32(settleInterval.components.seconds * 1_000_000))
         }
         return notes.isEmpty ? "" : "\n" + notes.joined(separator: "\n") + "\n"
     }
 
-    /// One pass over `directories`: repairs every real directory owned by
-    /// `owner` that others cannot traverse.
+    /// One pass over `directories`: removes empty watcher artifacts and leaves
+    /// populated private policy directories unchanged.
     static func sweep(directories: [String], owner: uid_t) -> Outcome {
         var outcome = Outcome()
         for directory in directories {
@@ -769,12 +772,8 @@ enum GatewayAdminVendorPolicyGuard {
                     continue
                 }
             }
-            var repaired: [String] = []
-            makeTraversable(directory, owner: owner, depth: 0, repaired: &repaired)
-            if !repaired.isEmpty {
-                outcome.repaired.append(directory)
-                outcome.notes.append("Made \(directory) readable (0755): it was root-owned and unreadable, so agents could not load the administrator policy it holds. Review its contents.")
-            }
+            outcome.preserved.append(directory)
+            outcome.notes.append("Left \(directory) private: it contains policy content or could not be safely inspected. An administrator must review its permissions; no access was broadened.")
         }
         return outcome
     }
@@ -818,19 +817,6 @@ enum GatewayAdminVendorPolicyGuard {
             count = subcount
         }
         return (tree, count)
-    }
-
-    private static func makeTraversable(_ directory: String, owner: uid_t, depth: Int, repaired: inout [String]) {
-        guard depth <= maximumTreeDepth, let status = lstatStatus(directory), isRealDirectory(status),
-              status.st_uid == owner
-        else { return }
-        if status.st_mode & S_IXOTH == 0, chmod(directory, 0o755) == 0 {
-            repaired.append(directory)
-        }
-        guard let entries = try? FileManager.default.contentsOfDirectory(atPath: directory) else { return }
-        for entry in entries.prefix(maximumTreeEntries) {
-            makeTraversable((directory as NSString).appendingPathComponent(entry), owner: owner, depth: depth + 1, repaired: &repaired)
-        }
     }
 }
 
@@ -878,7 +864,7 @@ private final class GatewayAdminSession: NSObject, GatewayAdminProtocol {
                 }
                 // Repair vendor policy folders a root gateway may have left
                 // unreadable, after the action and outside the authorization
-                // scope: a fixed list, root-only, rmdir/chmod on directories.
+                // scope: only empty watcher-created trees may be removed.
                 let repair = GatewayAdminVendorPolicyGuard.settle(after: operation)
                 reply(outcome.0, outcome.1 + repair)
             } catch let error as GatewayAdminFailure {
