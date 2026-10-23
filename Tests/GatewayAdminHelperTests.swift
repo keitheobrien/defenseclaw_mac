@@ -311,8 +311,8 @@ private enum GatewayAdminHelperTests {
 
     /// The vendor policy repair only ever touches the fixed list, only real
     /// directory chains, only folders owned by the expected account that others
-    /// cannot traverse; it removes empty trees with rmdir and otherwise opens
-    /// the folder to 0755. Fixtures stand in for /etc/codex and friends, with
+    /// cannot traverse; it removes empty trees with rmdir and leaves populated
+    /// folders private. Fixtures stand in for /etc/codex and friends, with
     /// this account standing in for root.
     private static func testVendorPolicyGuard(root: URL) throws {
         let fm = FileManager.default
@@ -330,10 +330,14 @@ private enum GatewayAdminHelperTests {
         let codex = etc.appendingPathComponent("codex", isDirectory: true)
         try make(codex.appendingPathComponent("skills", isDirectory: true), mode: 0o700)
         _ = chmod(codex.path, 0o700)
-        // An unreadable folder with real content is opened to 0755, content untouched.
+        // A private folder with real content stays private, including nested folders.
         let cursor = etc.appendingPathComponent("cursor", isDirectory: true)
-        try make(cursor, mode: 0o700)
-        try Data("{}".utf8).write(to: cursor.appendingPathComponent("hooks.json"))
+        let nested = cursor.appendingPathComponent("policy.d", isDirectory: true)
+        try make(nested, mode: 0o700)
+        let policy = nested.appendingPathComponent("hooks.json")
+        try Data("{}".utf8).write(to: policy)
+        _ = chmod(policy.path, 0o644)
+        _ = chmod(nested.path, 0o700)
         _ = chmod(cursor.path, 0o700)
         // A readable folder is left alone.
         let copilot = etc.appendingPathComponent("github-copilot", isDirectory: true)
@@ -356,21 +360,26 @@ private enum GatewayAdminHelperTests {
             owner: owner)
         check(outcome.removed == [codex.path], "Only the empty unreadable tree is removed: \(outcome.removed)")
         check(!fm.fileExists(atPath: codex.path), "The empty unreadable vendor folder must be gone")
-        check(outcome.repaired == [cursor.path], "Only the unreadable folder with content is opened: \(outcome.repaired)")
-        check(mode(cursor) == 0o755, "An unreadable folder with content becomes 0755, got \(mode(cursor))")
-        check(fm.fileExists(atPath: cursor.appendingPathComponent("hooks.json").path), "Policy content must survive the repair")
+        check(outcome.preserved == [cursor.path], "Only the populated private folder is preserved: \(outcome.preserved)")
+        check(mode(cursor) == 0o700 && mode(nested) == 0o700 && mode(policy) == 0o644,
+              "Private policy directory permissions must not be broadened")
+        check(fm.fileExists(atPath: policy.path), "Policy content must survive the repair")
         check(mode(copilot) == 0o755 && mode(copilot.appendingPathComponent("policy.d")) == 0o700,
               "A readable folder and what is below it stay untouched")
         check(mode(elsewhere) == 0o700, "A symlinked vendor folder must never be followed")
-        check(outcome.notes.count == 2, "One note per repair, got \(outcome.notes)")
+        check(outcome.notes.count == 2, "One note per outcome, got \(outcome.notes)")
 
         let foreign = GatewayAdminVendorPolicyGuard.sweep(directories: [claude.path], owner: owner &+ 1)
-        check(foreign.removed.isEmpty && foreign.repaired.isEmpty && mode(claude) == 0o700,
+        check(foreign.removed.isEmpty && foreign.preserved.isEmpty && mode(claude) == 0o700,
               "A folder owned by another account must be left alone")
 
         // settle reports nothing when nothing needs repair, and a stop action does a single pass.
         check(GatewayAdminVendorPolicyGuard.settle(after: .stop, owner: owner, directories: [copilot.path]).isEmpty,
               "A clean sweep must add nothing to the activity record")
+        let preservedNote = GatewayAdminVendorPolicyGuard.settle(
+            after: .start, owner: owner, directories: [cursor.path], window: .milliseconds(600))
+        check(preservedNote.components(separatedBy: "Left \(cursor.path) private:").count == 2,
+              "Repeated sweeps must report a preserved private policy only once")
         _ = chmod(claude.path, 0o700)
         let settled = GatewayAdminVendorPolicyGuard.settle(after: .start, owner: owner, directories: [claude.path], window: .zero)
         check(settled.contains("Removed " + claude.path), "A start settle must report the repair: \(settled)")

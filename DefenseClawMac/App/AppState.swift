@@ -339,12 +339,16 @@ final class AppState {
     private var wasReachable: Bool?
     @ObservationIgnored private var lastConfigSignature = ""
 
-    init(installationContext: InstallationContext = .resolve()) {
+    init(
+        installationContext: InstallationContext = .resolve(),
+        gatewayListenerTrust: @escaping @Sendable (URL) -> Bool = { GatewayListenerTrust.isTrusted($0) }
+    ) {
         self.installationContext = installationContext
         configStore = ConfigStore(context: installationContext)
         gateway = GatewayClient(
             mutationsAllowed: installationContext.permitsMutation,
-            mutationDenialReason: installationContext.accessMode.reason ?? "This installation is read only."
+            mutationDenialReason: installationContext.accessMode.reason ?? "This installation is read only.",
+            listenerTrust: gatewayListenerTrust
         )
         audit = AuditStore(url: installationContext.auditDBURL)
         stream = EventStreamReader(
