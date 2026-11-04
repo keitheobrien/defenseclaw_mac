@@ -48,11 +48,14 @@ enum SandboxStopOutcome {
     static func keptRunning(name: String, output: String) -> String {
         let normalized = output.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         if normalized.contains("disk could not be synced first") {
-            return "\(name) keeps running: its MicroVM disk could not be synced first. "
-                + "Pull the work you need, then try stopping it again. See Activity for the runtime's recovery instructions."
+            // GAP-1595: the CLI's own question was not answered on a terminal.
+            return "\(name) keeps running: its MicroVM's disk could not be synced first, so a stop now would lose what it wrote "
+                + "since its last sync. Save the work you need (Pull to branch, or defenseclaw sandbox pull \(name) --apply), "
+                + "confirm the result, then stop it again; defenseclaw sandbox stop \(name) --discard-unsynced stops it anyway, losing that."
         }
-        return "\(name) keeps running: its MicroVM disk is full and holds unpulled work. "
-            + "Free space in the sandbox, pull its work, then try stopping it again. See Activity for details."
+        return "\(name) keeps running: its MicroVM disk is full and holds unpulled work. Free space in the sandbox "
+            + "(defenseclaw sandbox exec \(name) -- df -h /), save its work (Pull to branch, or sandbox pull \(name) --apply), "
+            + "confirm the result, then stop it; delete it to give that work up. See Activity for details."
     }
 }
 
@@ -131,6 +134,14 @@ struct SandboxRow: Identifiable, Sendable, Hashable {
     /// next start takes a new undo point, whoever starts the sandbox.
     var undoAccepted = false
     var nestedRepos: [String] = []
+    /// The daemon's warnings and policy clamps for the detail (the TUI's
+    /// "Warning" and "Policy clamp" rows): a legacy-supervisor session that
+    /// runs unprotected names the command that ends it here.
+    var warnings: [String] = []
+    var violations: [String] = []
+    /// The session runs the supervisor of an OpenShell release older than
+    /// the oldest supported one; the daemon never stops it on its own.
+    var oldSupervisor = false
     /// The harness image, tagged as `sandbox image list` shows it. Not the
     /// run image a MicroVM boots (defenseclaw.invalid/sandbox-run:...), a
     /// name no other view shows (GAP-0188).
@@ -422,7 +433,8 @@ struct SandboxSnapshot: Sendable {
     /// what asks depends on each sandbox's pack.
     static let noAsksText = "No asks are waiting. An ask appears when a program connects around DefenseClaw's proxy: "
         + "to a private-network address with any pack, to a host off the allowlist with balanced, "
-        + "and to every new destination with strict. A port on this machine asks only if the run named it with --host-port PORT."
+        + "and to every new destination with strict. A port on this machine asks only if the run named it with --host-port PORT; "
+        + "approve that ask to open the port."
 
     var status = SandboxStatus()
     var sandboxes: [SandboxRow] = []
@@ -1006,6 +1018,9 @@ enum SandboxDecoding {
         row.hookFailurePlaceholder = str(hooks["last_hook_failure_cause"]) == "credential_placeholder_refused"
         row.hooksAnsweredAt = DCDates.parse(hooks["hooks_answered_at"])
         row.orphaned = (d["orphaned"] as? Bool) ?? false
+        row.oldSupervisor = (d["old_supervisor"] as? Bool) ?? false
+        row.warnings = list(d["warnings"]).map { str($0) }.filter { !$0.isEmpty }
+        row.violations = list(d["violations"]).map { str($0) }.filter { !$0.isEmpty }
         row.image = str(d["image"])
         row.createdAt = DCDates.parse(d["created_at"])
         row.modelProviders = int(egress["model_providers"])

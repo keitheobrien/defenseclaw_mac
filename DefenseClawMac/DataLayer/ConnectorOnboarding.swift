@@ -167,7 +167,8 @@ enum ConnectorOnboarding {
         // FirstRunPanelModel.args): an observe connector keeps failing open
         // and the CLI preserves any saved setting.
         if profile == "action" {
-            head += ["--fail-mode", failMode]
+            // "policy" saves nothing: the policy tier decides a gateway outage.
+            if ["open", "closed"].contains(failMode) { head += ["--fail-mode", failMode] }
             head.append(humanApproval ? "--human-approval" : "--no-human-approval")
             if humanApproval { head += ["--hilt-min-severity", hiltSeverity] }
         }

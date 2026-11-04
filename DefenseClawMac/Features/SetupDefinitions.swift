@@ -129,8 +129,10 @@ enum TUIWizards {
             WizardField(key: "action", label: "Action", kind: .choice(options: ["setup", "batch", "remove"]),
                         defaultValue: "setup",
                         help: "Set up/add one connector, choose the active connector set, or remove one."),
+            // 1.0.7: no connector is preselected; an empty or unsupported
+            // choice runs nothing (the configured claw.mode still seeds it).
             WizardField(key: "connector", label: "Framework", kind: .choice(options: connectors),
-                        defaultValue: "claudecode",
+                        defaultValue: "",
                         visibleWhen: (key: "action", equals: ["setup", "remove"])),
             WizardField(key: "connectors-csv", label: "Connectors (CSV)",
                         kind: .text(placeholder: "codex,hermes,antigravity"),
@@ -182,7 +184,8 @@ enum TUIWizards {
             return [args]
         }
 
-        let connector = value(v, "connector", "openclaw")
+        let connector = value(v, "connector")
+        guard connectors.contains(connector) else { return [] }
         if action == "remove" {
             var args = ["setup", "remove", connector, "--yes"]
             if restartOff { args.append("--no-restart") }
@@ -208,7 +211,9 @@ enum TUIWizards {
     /// Batch requires a target set: CSV names, detected, or all (TUI
     /// missing_required_fields connector branch).
     private static func connectorValidation(_ v: [String: String]) -> String? {
-        guard value(v, "action", "setup") == "batch" else { return nil }
+        guard value(v, "action", "setup") == "batch" else {
+            return connectors.contains(value(v, "connector")) ? nil : "Choose a connector."
+        }
         let csv = value(v, "connectors-csv")
         if csv.isEmpty, !yes(v, "detected"), !yes(v, "all") {
             return "Missing required field(s): Connectors (CSV) or Detected/All"
@@ -889,7 +894,7 @@ enum TUIWizards {
         blurb: "Set up OpenShell, build your selected agent images, and check sandbox readiness. "
             + "Requires running Docker and Homebrew. On Apple silicon, OpenShell uses experimental "
             + "MicroVMs with their own kernel. Sessions work on a project copy; use "
-            + "`defenseclaw sandbox pull` to bring changes back. Downloads require several GB "
+            + "`defenseclaw sandbox pull NAME --apply` (or --branch) to bring changes back. Downloads require several GB "
             + "and may take many minutes. The first session also prepares its MicroVM disk.",
         baseArgs: ["sandbox", "setup"],
         commandBuilder: sandboxCommands,

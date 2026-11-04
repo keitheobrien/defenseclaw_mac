@@ -71,7 +71,15 @@ def snapshot(config, sandbox_json="", sandbox_error=""):
                 # Reuse the selected runtime's actual consequence preview: an
                 # unscoped hilt command can change every connector override.
                 from defenseclaw.tui.policy_panel import hilt_change_modal
-                preview = hilt_change_modal(model, row, level)
+                try:
+                    from defenseclaw.enforce import asset_lists as _asset_lists
+                    secure = bool(_asset_lists.is_secure_client(config))
+                except Exception:  # noqa: BLE001 - older runtimes have no secure-client notion here
+                    secure = False
+                try:
+                    preview = hilt_change_modal(model, row, level, secure_client=secure)
+                except TypeError:  # runtime before 1.0.7: no secure_client keyword
+                    preview = hilt_change_modal(model, row, level)
                 targets = (model.approval_targets(row) if hasattr(model, "approval_targets") else
                            ((row,) if connector else tuple(model.postures)))
                 weakened = any(p.hilt_weakens(str(target.hilt or "off"), level) for target in targets)

@@ -54,11 +54,13 @@ struct OperatorAssetLists: Sendable, Hashable {
     var denied: [String: [OperatorAssetRule]]
 
     /// admission.asset_name_key: skill, MCP and plugin names compare trimmed,
-    /// Unicode NFC and lower-cased; tool names compare exactly.
+    /// Unicode NFC and case-folded the way Go `strings.EqualFold` folds
+    /// (runtime 1.0.4+: final sigma, capital sigma and sigma are one letter,
+    /// the Kelvin sign is a k); tool names compare exactly.
     static func assetNameKey(_ name: String, targetType: String) -> String {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if targetType == "tool" { return trimmed }
-        return trimmed.precomposedStringWithCanonicalMapping.lowercased()
+        return trimmed.precomposedStringWithCanonicalMapping.folding(options: .caseInsensitive, locale: nil)
     }
 
     /// asset_lists._connector_key: "" for an unscoped rule or row, otherwise

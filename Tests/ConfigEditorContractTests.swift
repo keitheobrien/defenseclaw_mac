@@ -25,10 +25,26 @@ struct ConfigEditorContractTests {
     static func main() {
         expect(ConfigEditorCatalog.connectors == ["openclaw", "zeptoclaw", "codex", "claudecode", "hermes", "cursor", "devin", "copilot", "antigravity", "opencode", "amp", "kiro"],
                "offline connector choices match runtime 1.0.5")
+        decisionModelFieldsValidateLikeTheRuntime()
         restartIsQueuedOnlyForKeysTheGatewayReadsAtStart()
         anOpenDraftSurvivesADiskGeneration()
         invalidConfigIsNamedWithItsLine()
         print("Config editor contract tests passed")
+    }
+
+    private static func decisionModelFieldsValidateLikeTheRuntime() {
+        expect(ConfigRestartPolicy.restartRequired(["guardrail.protected_files"]) == ["guardrail.protected_files"], "1.0.7 adds guardrail.protected_files to RESTART_KEYS")
+        let section = ConfigEditorCatalog.sections(activeConnectors: ["codex"], config: .mapping([:])).first { $0.name == "Decision Model" }
+        expect(section?.fields.map(\.key).contains("decision_model.base_url") == true, "the offline catalog offers the Decision Model section")
+        func check(_ key: String, _ value: String) -> String? {
+            let field = ConfigEditorField(label: key, key: key, kind: .string)
+            let result = ConfigFieldValidation.validate(field, value: value)
+            return result.isError ? result.message : nil
+        }
+        expect(check("decision_model.allow_threshold", "0.3") == nil && check("decision_model.allow_threshold", "1.5") != nil && check("decision_model.timeout", "12") == nil
+               && check("decision_model.timeout", "31") != nil && check("decision_model.block_threshold", "x") != nil, "fractions and seconds are range-checked like setup_state")
+        expect(check("decision_model.base_url", "https://model.example/v1") == nil && check("decision_model.base_url", "http://127.0.0.1:8000/v1") == nil
+               && check("decision_model.base_url", "http://model.example/v1") != nil, "http is loopback-only for the decision model endpoint")
     }
 
     private static func restartIsQueuedOnlyForKeysTheGatewayReadsAtStart() {

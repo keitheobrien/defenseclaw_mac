@@ -1850,6 +1850,13 @@ final class AppState {
             guard config.guardrailEnabled else { return "" }
             var parts: [String] = []
             if let m = config.guardrailMode, !m.isEmpty { parts.append(m) }
+            // Hook checks the rules decided without a judge verdict, then the
+            // judge's state, right after the mode (TUI guardrail_detail).
+            let judge = sub("guardrail")?.details ?? [:]
+            if let fallbacks = judge["judge_fallbacks"].flatMap({ Int($0) }), fallbacks > 0 { parts.append("fallbacks \(fallbacks)") }
+            if let judgeState = judge["judge_state"], ["failing", "degraded"].contains(judgeState) {
+                parts.append("judge \(judgeState): \(judge["judge_failed_calls"] ?? "0")/\(judge["judge_recent_calls"] ?? "0") calls failed")
+            }
             if let p = config.guardrailPort { parts.append("port \(p)") }
             if !config.guardrailRulePack.isEmpty { parts.append(config.guardrailRulePack) }
             return parts.joined(separator: ", ")

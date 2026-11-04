@@ -102,6 +102,10 @@ struct OperatorAssetListsTests {
         expect(merged.first { $0.name == "PENTEST" }?.install == "block", "claude-code and claudecode are the same connector")
         expect(OperatorAssetLists.assetNameKey("Caf\u{0065}\u{0301}", targetType: "skill") == "café", "NFC folding")
         expect(OperatorAssetLists.assetNameKey("Bash", targetType: "tool") == "Bash", "tool names compare exactly")
+        // 1.0.4+ folds like Go strings.EqualFold: ς, σ and Σ are one letter; the Kelvin sign is a k.
+        let sigma = Set(["ς", "σ", "Σ"].map { OperatorAssetLists.assetNameKey($0, targetType: "skill") })
+        expect(sigma.count == 1, "sigma forms fold together: \(sigma)")
+        expect(OperatorAssetLists.assetNameKey("\u{212A}", targetType: "skill") == OperatorAssetLists.assetNameKey("k", targetType: "skill"), "Kelvin sign folds to k")
         expect(OperatorAssetLists.connectorKey("") == "", "an unscoped rule or row keys as empty (asset_lists._connector_key)")
         let unscoped = lists.mergedInstalls(
             journal: [InstallJournalRow(name: "trusted", connector: "openclaw", install: "block")], targetType: "skill")

@@ -309,6 +309,12 @@ struct ConnectorOnboardingTests {
         }
         expect(action[0][index + 1] == "closed", "the chosen fail mode is forwarded in action")
         expect(action[0].contains("--no-human-approval"), "action first run carries the HITL choice")
+        // 1.0.7: "policy" (the TUI default) saves nothing; the policy tier decides a gateway outage.
+        let policy = ConnectorOnboarding.initializationPlan(
+            detectedConnectors: ["codex"], registeredConnectors: [], fallbackConnector: "codex",
+            actionConnectors: ["codex"], profile: "action", scannerMode: "local", llmJudge: false,
+            failMode: "policy", humanApproval: false, hiltSeverity: "HIGH", startGateway: true, verify: true)
+        expect(!policy[0].contains("--fail-mode"), "the policy fail mode sends no --fail-mode: \(policy[0])")
     }
 
     private static func makePlan(

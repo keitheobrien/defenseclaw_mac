@@ -37,7 +37,7 @@ struct DefenseClawConfig: Sendable {
     var connectorDisabled: Set<String> = []
     /// claw.mode with the runtime loader's "openclaw" default — the drift
     /// notice's "configured" side (distinct from connectorMode's chain).
-    var clawMode = "openclaw"
+    var clawMode = ""                         // claw.mode ("" = none configured; 1.0.7 dropped the openclaw default)
     /// Non-empty when guardrail.connectors exists but failed to parse — the
     /// TUI's roster-degraded error notice.
     var rosterError = ""
@@ -1021,7 +1021,7 @@ actor ConfigStore {
         c.llmProvider = root["llm.provider"]?.string ?? root["inspect_llm.provider"]?.string
         c.llmModel = root["llm.model"]?.string ?? root["inspect_llm.model"]?.string
         c.aiDefenseEndpoint = root["cisco_ai_defense.endpoint"]?.string
-        c.clawMode = root["claw.mode"]?.string ?? "openclaw"
+        c.clawMode = root["claw.mode"]?.string ?? ""
         // Multi-connector roster (guardrail.connectors: {codex: {...}, ...}),
         // plus each connector's mode and rule pack for the Overview table.
         if root["guardrail.connectors"] != nil, root["guardrail.connectors"]?.mapping == nil {

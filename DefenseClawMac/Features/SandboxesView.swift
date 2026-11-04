@@ -330,6 +330,8 @@ struct SandboxesView: View {
         pairs.append(("Undo", row.undoLabel))
         let raised = SandboxRaisedAlerts.detailText(raisedAlerts(row))
         if !raised.isEmpty { pairs.append(("Alerts", raised)) }
+        for violation in row.violations { pairs.append(("Policy clamp", violation)) }
+        for warning in row.warnings { pairs.append(("Warning", warning)) }
         return pairs
     }
 

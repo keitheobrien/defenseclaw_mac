@@ -592,7 +592,15 @@ actor GatewayClient {
             throw GatewayError.badResponse("The gateway returned no effective profile settings.")
         }
         fields["Account"] = user
-        fields["Profile"] = (profile["profile"] as? String)?.nonEmpty ?? "Global configuration"
+        // A failed identity lookup names a fallback profile, which read as
+        // the one chosen for the account (overview_state GAP-1271).
+        let lookupError = ((profile["lookup_error"] as? String) ?? "").split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        if !lookupError.isEmpty {
+            fields["Profile"] = "unknown (user lookup failed)"
+            fields["Lookup error"] = "Couldn't look up your account, so your guardrail profile is unknown (\(lookupError)) - check it with: defenseclaw guardrail profile explain"
+        } else {
+            fields["Profile"] = (profile["profile"] as? String)?.nonEmpty ?? "Global configuration"
+        }
         for (key, label) in [("mode", "Mode"), ("rule_pack", "Rule pack"), ("rule_pack_dir", "Rule pack path"), ("block_at", "Block at"), ("alert_at", "Alert at")] {
             if let value = effective[key] as? String, !value.isEmpty { fields[label] = value }
         }

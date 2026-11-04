@@ -284,6 +284,10 @@ struct ResourceBoundaryTests {
         StubGatewayURLProtocol.body = Data(#"{"policy":{"effective_digest":"digest-v9","generation":120}}"#.utf8)
         let unknown = try await client.appliedPolicy(user: "fixture", connector: "codex", resolveProfile: false)
         expect(unknown["Generation"] == nil, "a restart-local counter must not stand in for missing config generation")
+        StubGatewayURLProtocol.body = Data(#"{"policy":{"effective_digest":"digest-v9"},"profile":"default","lookup_error":"directory  unreachable","effective":{"mode":"observe"}}"#.utf8)
+        let fallback = try await client.appliedPolicy(user: "fixture", connector: "codex", resolveProfile: true)
+        expect(fallback["Profile"] == "unknown (user lookup failed)" && fallback["Lookup error"]?.contains("directory unreachable") == true,
+               "a failed account lookup is not shown as the chosen profile (GAP-1271)")
         StubGatewayURLProtocol.body = Data("{}".utf8)
         do { _ = try await client.appliedPolicy(user: "fixture", connector: "codex", resolveProfile: true); fail("missing profile must not look healthy") }
         catch GatewayError.badResponse { }
