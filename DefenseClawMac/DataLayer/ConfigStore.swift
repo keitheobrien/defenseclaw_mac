@@ -64,6 +64,40 @@ struct DefenseClawConfig: Sendable {
     var registryRequiredByType: [String: Bool] = [:]
     var raw: YAMLNode = .mapping([:])
 
+    /// config.active_connector() (runtime 1.0.7): guardrail.connector →
+    /// the roster (claw.mode when it is listed, else the first sorted name)
+    /// → claw.mode, each trimmed and lowercased (connector_paths.normalize).
+    /// "" when nothing selects a connector, so callers never invent one.
+    var activeConnector: String {
+        let explicit = Self.normalizeConnector(raw["guardrail.connector"]?.string)
+        if !explicit.isEmpty { return explicit }
+        let roster = Set(connectors.map(Self.normalizeConnector).filter { !$0.isEmpty }).sorted()
+        if let first = roster.first {
+            let mode = Self.normalizeConnector(clawMode)
+            return roster.contains(mode) ? mode : first
+        }
+        return Self.normalizeConnector(clawMode)
+    }
+
+    /// connector_paths.normalize: trimmed, lowercased, claude-code aliases folded.
+    static func normalizeConnector(_ value: String?) -> String {
+        let name = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return ["claude-code", "claude_code"].contains(name) ? "claudecode" : name
+    }
+
+    /// GuardrailConfig.effective_mode(connector): the roster entry's own mode,
+    /// else guardrail.mode, else "observe". The connector wizard seeds its
+    /// Guardrail mode from this (TUI setup.py), so an untouched apply keeps
+    /// the connector's live posture instead of downgrading it to observe.
+    func effectiveGuardrailMode(for connector: String) -> String {
+        let key = Self.normalizeConnector(connector)
+        let override = connectorModes.first { Self.normalizeConnector($0.key) == key }?.value
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !override.isEmpty { return override }
+        let global = (guardrailMode ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return global.isEmpty ? "observe" : global
+    }
+
     struct RegistrySourceConfig: Sendable {
         var id: String
         var kind: String
@@ -966,16 +1000,17 @@ actor ConfigStore {
     /// Upstream precedence ladder (config.py::resolved_token):
     /// 1. env var named by gateway.token_env  2. DEFENSECLAW_GATEWAY_TOKEN
     /// 3. OPENCLAW_GATEWAY_TOKEN              4. literal gateway.token
+    /// Every rung skips SecretRef text (runtime 1.0.7, GatewayTokenLadder).
     private func resolveToken(root: YAMLNode, dotenv: [String: String]) -> String? {
-        func env(_ key: String) -> String? {
-            if let v = ProcessInfo.processInfo.environment[key], !v.isEmpty { return v }
+        let processEnvironment = ProcessInfo.processInfo.environment
+        return GatewayTokenLadder.resolve(
+            tokenEnvName: root["gateway.token_env"]?.string,
+            literal: root["gateway.token"]?.string
+        ) { key in
+            if let v = processEnvironment[key], !v.isEmpty { return v }
             if let v = dotenv[key], !v.isEmpty { return v }
             return nil
         }
-        if let name = root["gateway.token_env"]?.string, let v = env(name) { return v }
-        if let v = env("DEFENSECLAW_GATEWAY_TOKEN") { return v }
-        if let v = env("OPENCLAW_GATEWAY_TOKEN") { return v }
-        return root["gateway.token"]?.string
     }
 
     @discardableResult
@@ -1072,5 +1107,33 @@ actor ConfigStore {
         }
         config = c
         return c
+    }
+}
+
+/// The gateway token precedence ladder (runtime config.py::resolved_token),
+/// pure so the SecretRef rule is testable without a filesystem.
+enum GatewayTokenLadder {
+    /// True for the text of a SecretRef object saved as if it were a token:
+    /// a quoted "source" key followed by a colon inside braces — the Python
+    /// repr and the JSON form, any key order (connector_paths.is_secret_ref_text,
+    /// envvars.IsSecretRefText in Go). DefenseClaw 1.0.5 and 1.0.6 wrote
+    /// `OPENCLAW_GATEWAY_TOKEN={'source': ...}` to ~/.defenseclaw/.env before
+    /// init failed on a SecretRef (runtime issue 1404); that text is never a
+    /// token, and every gateway token reader ignores it.
+    static func isSecretRefText(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("{"), trimmed.hasSuffix("}"),
+              let pattern = try? NSRegularExpression(pattern: #"^\{.*["']source["']\s*:.*\}$"#) else { return false }
+        return pattern.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)) != nil
+    }
+
+    /// `lookup` answers one environment name (process environment, then
+    /// .env). Returns nil when no usable token is reachable.
+    static func resolve(tokenEnvName: String?, literal: String?, lookup: (String) -> String?) -> String? {
+        for name in [tokenEnvName ?? "", "DEFENSECLAW_GATEWAY_TOKEN", "OPENCLAW_GATEWAY_TOKEN"] where !name.isEmpty {
+            if let value = lookup(name), !value.isEmpty, !isSecretRefText(value) { return value }
+        }
+        guard let literal, !literal.isEmpty, !isSecretRefText(literal) else { return nil }
+        return literal
     }
 }

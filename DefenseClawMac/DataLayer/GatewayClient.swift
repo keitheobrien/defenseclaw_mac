@@ -360,7 +360,29 @@ actor GatewayClient {
             config: observabilityConfig
         )
         snap.telemetryDetail = Self.telemetrySummary(telemetryDetails)
+        (snap.retentionState, snap.retentionFailure) = Self.retentionHealth(telemetryDetails)
         return snap
+    }
+
+    /// v8_status.retention_health_from_gateway: only a known controller state
+    /// is shown, and both tokens are bounded like _safe_health_token so a
+    /// hostile payload can't put arbitrary text on the Overview.
+    static func retentionHealth(_ details: [String: Any]?) -> (state: String, failure: String) {
+        guard let details else { return ("", "") }
+        let state = safeHealthToken(details["retention_state"])
+        guard ["waiting_for_readiness", "healthy", "warning", "degraded", "disabled", "stopped"].contains(state) else {
+            return ("", "")
+        }
+        return (state, safeHealthToken(details["retention_failure"] ?? details["failure"]))
+    }
+
+    /// _safe_health_token: lowercase, `^[a-z0-9][a-z0-9_.:-]{0,127}$`, else "".
+    static func safeHealthToken(_ value: Any?) -> String {
+        guard let text = value as? String else { return "" }
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard let pattern = try? NSRegularExpression(pattern: "^[a-z0-9][a-z0-9_.:-]{0,127}$") else { return "" }
+        let range = NSRange(normalized.startIndex..., in: normalized)
+        return pattern.firstMatch(in: normalized, range: range) != nil ? normalized : ""
     }
 
     // MARK: - Observability destinations (TUI overview_state parity)

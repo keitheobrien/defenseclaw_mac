@@ -2064,7 +2064,11 @@ final class AppState {
         let gatewayBroken = !gatewayReachable || !["running", "disabled"].contains(gatewayState)
         let gatewayStandalone = gatewayReachable && gatewayState == "disabled"
         let guardrailOff = !config.guardrailEnabled
-        let skillScannerAvailable = ScannerProbe.binaryInstalled("skill-scanner")
+        // 1.0.7 runs the venv copy of skill-scanner even when it is not
+        // linked into PATH, so an unlinked install is not "unavailable".
+        let skillScannerAvailable = ScannerProbe.available(
+            "skill-scanner", cliPath: probeCLIPath, shellFound: shellResolvedScanners
+        )
 
         if gatewayBroken && guardrailOff && !skillScannerAvailable {
             notices.append(.init(level: .info, message: "First time? Head to the Setup panel to configure DefenseClaw."))

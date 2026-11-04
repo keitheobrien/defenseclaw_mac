@@ -57,11 +57,25 @@ struct SandboxModelTests {
         detachedRunTextMirrorsTheTUI()
         branchNamesAreValidated()
         raisedAlertsAreCountedPerSandbox()
+        stopAnywayAndDeleteMatchTheCLI()
         if failureCount > 0 {
             FileHandle.standardError.write("\(failureCount) failure(s)\n".data(using: .utf8)!)
             exit(1)
         }
         print("SandboxModelTests: all checks passed")
+    }
+
+    /// 1.0.7: a stop refused for an unsynced disk names `--discard-unsynced`;
+    /// the TUI's d key runs `sandbox delete`, which asks (`--yes` answers).
+    private static func stopAnywayAndDeleteMatchTheCLI() {
+        expect(SandboxStopOutcome.refusedForUnsyncedDisk(output: "fixture keeps running: its disk could not be\n  synced first"),
+               "the unsynced refusal is recognised across line breaks")
+        expect(!SandboxStopOutcome.refusedForUnsyncedDisk(output: "disk is full"), "a full disk has no stop-anyway path")
+        expect(SandboxCommands.stopDiscardingUnsynced("fixture") == ["sandbox", "stop", "fixture", "--yes", "--discard-unsynced"],
+               "stop anyway is the command the refusal names")
+        expect(SandboxCommands.delete("fixture") == ["sandbox", "delete", "fixture", "--yes"], "delete answers the CLI's question")
+        expect(SandboxCommands.discardUnsyncedWarning(name: "fixture").contains("--discard-unsynced"), "the stop-anyway dialog names the command")
+        expect(SandboxCommands.deleteWarning(name: "fixture", copyMode: true).contains("never pulled"), "deleting a copy says what work is discarded")
     }
 
     private static func anotherAccountsGatewayIsNotASetupProblem() {

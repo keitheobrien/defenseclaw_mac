@@ -45,9 +45,14 @@ struct SandboxDriver: Sendable, Hashable {
 }
 
 enum SandboxStopOutcome {
+    /// Whether exit 5 was the unsynced-disk refusal rather than the full-disk
+    /// one: only the former has a stop-anyway path (`--discard-unsynced`).
+    static func refusedForUnsyncedDisk(output: String) -> Bool {
+        output.split(whereSeparator: \.isWhitespace).joined(separator: " ").contains("disk could not be synced first")
+    }
+
     static func keptRunning(name: String, output: String) -> String {
-        let normalized = output.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        if normalized.contains("disk could not be synced first") {
+        if refusedForUnsyncedDisk(output: output) {
             // GAP-1595: the CLI's own question was not answered on a terminal.
             return "\(name) keeps running: its MicroVM's disk could not be synced first, so a stop now would lose what it wrote "
                 + "since its last sync. Save the work you need (Pull to branch, or defenseclaw sandbox pull \(name) --apply), "
@@ -56,6 +61,37 @@ enum SandboxStopOutcome {
         return "\(name) keeps running: its MicroVM disk is full and holds unpulled work. Free space in the sandbox "
             + "(defenseclaw sandbox exec \(name) -- df -h /), save its work (Pull to branch, or sandbox pull \(name) --apply), "
             + "confirm the result, then stop it; delete it to give that work up. See Activity for details."
+    }
+}
+
+/// The sandbox commands the Sandboxes panel runs beyond stop/pull/undo, kept
+/// here so their argv shape is unit-tested against `defenseclaw sandbox --help`.
+enum SandboxCommands {
+    /// `sandbox stop NAME --yes --discard-unsynced` (runtime 1.0.7): stops a
+    /// sandbox whose MicroVM disk could not be synced, losing what it wrote
+    /// since its last sync — the command the refusal text names.
+    static func stopDiscardingUnsynced(_ name: String) -> [String] {
+        ["sandbox", "stop", name, "--yes", "--discard-unsynced"]
+    }
+
+    /// `sandbox delete NAME --yes`: the TUI's d key runs the asking command on
+    /// a terminal; the Mac asks in a dialog, then answers yes.
+    static func delete(_ name: String) -> [String] {
+        ["sandbox", "delete", name, "--yes"]
+    }
+
+    static func discardUnsyncedWarning(name: String) -> String {
+        "Stops \(name) without syncing its MicroVM disk first (sandbox stop --discard-unsynced), so what it wrote "
+            + "since its last sync is lost. Save the work you need first: Pull to branch, or defenseclaw sandbox pull "
+            + "\(name) --apply."
+    }
+
+    static func deleteWarning(name: String, copyMode: Bool) -> String {
+        var text = "Deletes \(name) with its providers, credentials and snapshots (sandbox delete). "
+        text += copyMode
+            ? "Work on its copy that never came back to the folder (never pulled, or pulled and not applied) is discarded."
+            : "Its last snapshot goes with it, so Undo is no longer possible afterwards."
+        return text
     }
 }
 

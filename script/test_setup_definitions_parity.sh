@@ -32,7 +32,8 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE" xcrun swiftc \
 
 "$BUILD_DIR/SetupDefinitionsParityTests"
 
-for required in SPLUNK_ACCESS_TOKEN DEFENSECLAW_SPLUNK_HEC_TOKEN \
+for required in DEFENSECLAW_SETUP_SPLUNK_ACCESS_TOKEN DEFENSECLAW_SETUP_SPLUNK_HEC_TOKEN \
+  SPLUNK_ACCESS_TOKEN DEFENSECLAW_SPLUNK_HEC_TOKEN \
   DEFENSECLAW_SETUP_OBSERVABILITY_TOKEN SFX_AUTH_TOKEN; do
   if ! grep -Fq "$required" "$ROOT/DefenseClawMac/Features/SetupDefinitions.swift"; then
     echo "setup secret is missing its runtime-defined child environment: $required" >&2

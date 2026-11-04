@@ -297,7 +297,7 @@ struct ResourceBoundaryTests {
         StubGatewayURLProtocol.statusCode = 200
         StubGatewayURLProtocol.headers = [:]
         StubGatewayURLProtocol.body = Data(#"""
-        {"telemetry":{"state":"degraded","details":{"destination_count":2,"destinations":[
+        {"telemetry":{"state":"degraded","details":{"destination_count":2,"retention_state":"Warning","retention_failure":"cap_shortfall","destinations":[
           {"name":"local-sqlite","kind":"sqlite","enabled":true,"state":"healthy","reason":"activated","signals":["logs"],
            "counters":{"accepted":12,"delivered":12}},
           {"name":"local-observability","kind":"otlp","enabled":true,"state":"degraded",
@@ -326,10 +326,12 @@ struct ResourceBoundaryTests {
         expect(exporter.detail.contains("delivery_failed"), "destination health reason reaches the detail")
         expect(!exporter.endpoint.contains("private-value") && exporter.endpoint.contains("collector.example"), "config endpoints are redacted")
         expect(snapshot.telemetryDetail.contains("local-observability (degraded)"), "service summary reflects live destination health")
+        expect(snapshot.retentionState == "warning" && snapshot.retentionFailure == "cap_shortfall", "the retention controller state is read and normalized")
 
-        StubGatewayURLProtocol.body = Data(#"{"telemetry":{"details":{"destinations":[{"name":"old","enabled":true,"signals":"traces","preset":"legacy"}]}}}"#.utf8)
+        StubGatewayURLProtocol.body = Data(#"{"telemetry":{"details":{"retention_state":"<b>bogus</b>","destinations":[{"name":"old","enabled":true,"signals":"traces","preset":"legacy"}]}}}"#.utf8)
         let legacy = try await gatewayClient(maximumResponseBytes: 4096).health()
         expect(legacy.observabilityRows.first?.signals == "traces" && legacy.observabilityRows.first?.kind == "legacy", "legacy destination shape remains readable")
+        expect(legacy.retentionState.isEmpty && legacy.retentionFailure.isEmpty, "an unknown controller state is not shown")
     }
 
     private static func gatewayAcceptsLegitimateResponse() async throws {

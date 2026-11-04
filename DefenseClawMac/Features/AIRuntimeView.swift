@@ -29,6 +29,9 @@ struct AIRuntimeView: View {
     @State private var unsupported = false
     @State private var activeLoadID: UUID?
     @State private var activeEnableID: UUID?
+    /// `agent discovery runtime permissions` output (the TUI's Permissions
+    /// button, shown while coverage is degraded or partial).
+    @State private var permissionsOutput: String?
 
     private var loading: Bool { activeLoadID != nil }
     private var enabling: Bool { activeEnableID != nil }
@@ -74,6 +77,21 @@ struct AIRuntimeView: View {
             content
         }
         .padding(16)
+        .sheet(isPresented: Binding(get: { permissionsOutput != nil }, set: { if !$0 { permissionsOutput = nil } })) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("defenseclaw agent discovery runtime permissions").font(.headline)
+                ScrollView {
+                    Text(permissionsOutput ?? "")
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                .frame(minHeight: 260)
+                Button("Close") { permissionsOutput = nil }
+            }
+            .padding(16)
+            .frame(width: 620, height: 400)
+        }
         .task(id: appState.installationGeneration) {
             snapshot = AIRuntimeSnapshot()
             selection = nil
@@ -131,6 +149,18 @@ struct AIRuntimeView: View {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
             .disabled(!appState.gatewayReachable || enabling)
+            // TUI #runtime-permissions: visible while health is degraded or
+            // partial, when a plane may lack a host grant.
+            if loaded, ["degraded", "partial"].contains(snapshot.healthState),
+               appState.runtimeDiscoveryCommands?.contains("permissions") == true {
+                Button {
+                    showPermissions()
+                } label: {
+                    Label("Permissions", systemImage: "lock.shield")
+                }
+                .disabled(enabling || permissionsOutput != nil)
+                .help("Show the host grants each plane needs (runtime permissions)")
+            }
             Button {
                 scan()
             } label: {
@@ -432,6 +462,22 @@ struct AIRuntimeView: View {
                 return
             }
             await load()
+        }
+    }
+
+    /// Read-only: prints what each plane needs; nothing changes on the host.
+    private func showPermissions() {
+        guard appState.runtimeDiscoveryCommands?.contains("permissions") == true else { return }
+        let generation = appState.installationGeneration
+        Task {
+            let result = await appState.activity.run(
+                title: "Runtime permissions", arguments: ["agent", "discovery", "runtime", "permissions"],
+                mutation: false, category: "runtime", origin: "AI Runtime"
+            )
+            guard generation == appState.installationGeneration else { return }
+            permissionsOutput = result.output.isEmpty
+                ? "The command printed nothing (exit \(result.exitCode)). See Activity for details."
+                : result.output
         }
     }
 

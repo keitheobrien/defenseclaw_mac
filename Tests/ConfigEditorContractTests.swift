@@ -26,6 +26,10 @@ struct ConfigEditorContractTests {
         expect(ConfigEditorCatalog.connectors == ["openclaw", "zeptoclaw", "codex", "claudecode", "hermes", "cursor", "devin", "copilot", "antigravity", "opencode", "amp", "kiro"],
                "offline connector choices match runtime 1.0.5")
         decisionModelFieldsValidateLikeTheRuntime()
+        gatewayTokenLadderSkipsSecretRefText()
+        activeConnectorFollowsTheRuntimeRule()
+        unlinkedScannersCountAsInstalled()
+        runtimeOverviewSummaryParsesBoundedOutput()
         restartIsQueuedOnlyForKeysTheGatewayReadsAtStart()
         anOpenDraftSurvivesADiskGeneration()
         invalidConfigIsNamedWithItsLine()
@@ -45,6 +49,85 @@ struct ConfigEditorContractTests {
                && check("decision_model.timeout", "31") != nil && check("decision_model.block_threshold", "x") != nil, "fractions and seconds are range-checked like setup_state")
         expect(check("decision_model.base_url", "https://model.example/v1") == nil && check("decision_model.base_url", "http://127.0.0.1:8000/v1") == nil
                && check("decision_model.base_url", "http://model.example/v1") != nil, "http is loopback-only for the decision model endpoint")
+    }
+
+    /// config.py::resolved_token (1.0.7): SecretRef text a 1.0.5/1.0.6 build
+    /// saved as a token is never one, at any rung of the ladder.
+    private static func gatewayTokenLadderSkipsSecretRefText() {
+        let secretRef = "{'source': 'env', 'name': 'TOKEN'}"
+        expect(GatewayTokenLadder.isSecretRefText(secretRef), "the Python repr of a SecretRef is never a token")
+        expect(GatewayTokenLadder.isSecretRefText(#"{"name": "X", "source" : "keychain"}"#), "the JSON form in any key order, spaces before the colon")
+        expect(!GatewayTokenLadder.isSecretRefText("dc_live_source:abc"), "a token that mentions source is a token")
+        expect(!GatewayTokenLadder.isSecretRefText("{abc}"), "braces alone are not a SecretRef")
+        var env = ["OPENCLAW_GATEWAY_TOKEN": secretRef]
+        expect(GatewayTokenLadder.resolve(tokenEnvName: nil, literal: "literal-token") { env[$0] } == "literal-token",
+               "SecretRef text in .env falls through to the next rung")
+        env["DEFENSECLAW_GATEWAY_TOKEN"] = "real-token"
+        expect(GatewayTokenLadder.resolve(tokenEnvName: "MY_TOKEN", literal: nil) { env[$0] } == "real-token",
+               "an unset gateway.token_env name falls through to the canonical name")
+        env["MY_TOKEN"] = "pinned"
+        expect(GatewayTokenLadder.resolve(tokenEnvName: "MY_TOKEN", literal: nil) { env[$0] } == "pinned", "gateway.token_env always wins")
+        expect(GatewayTokenLadder.resolve(tokenEnvName: nil, literal: secretRef) { _ in nil } == nil,
+               "a SecretRef saved as gateway.token is unauthenticated, not a token")
+        expect(GatewayTokenLadder.resolve(tokenEnvName: nil, literal: "") { _ in nil } == nil, "an empty literal is no token")
+    }
+
+    /// config.active_connector() (1.0.7): guardrail.connector → roster → claw.mode.
+    private static func activeConnectorFollowsTheRuntimeRule() {
+        var config = DefenseClawConfig()
+        expect(config.activeConnector == "", "an unconfigured install selects no connector")
+        config.clawMode = " Claude-Code "
+        expect(config.activeConnector == "claudecode", "claw.mode is normalized like connector_paths.normalize")
+        config.connectors = ["kiro", "codex"]
+        expect(config.activeConnector == "codex", "a roster that does not list claw.mode picks its first sorted name")
+        config.clawMode = "kiro"
+        expect(config.activeConnector == "kiro", "claw.mode wins when the roster lists it")
+        config.raw = MiniYAML.parse("guardrail:\n  connector: Cursor\n")
+        expect(config.activeConnector == "cursor", "guardrail.connector outranks the roster")
+        config.connectorModes = ["kiro": "action"]
+        config.guardrailMode = "observe"
+        expect(config.effectiveGuardrailMode(for: "kiro") == "action" && config.effectiveGuardrailMode(for: "codex") == "observe",
+               "the connector wizard seeds a connector's effective mode (override, else global)")
+        config.guardrailMode = nil
+        expect(config.effectiveGuardrailMode(for: "codex") == "observe", "no mode anywhere means observe")
+    }
+
+    /// 1.0.7 resolve_scanner_binary: the runtime runs the venv copy next to its
+    /// own entry point even when nothing linked it into PATH.
+    private static func unlinkedScannersCountAsInstalled() {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("dc-scanner-\(getpid())")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let name = "dc-test-scanner-\(getpid())"
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            for file in ["defenseclaw", name] {
+                let url = dir.appendingPathComponent(file)
+                try "#!/bin/sh\n".write(to: url, atomically: true, encoding: .utf8)
+                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+            }
+        } catch {
+            expect(false, "scanner fixture is writable: \(error)")
+            return
+        }
+        let cli = dir.appendingPathComponent("defenseclaw").path
+        expect(ScannerProbe.locate(name, cliPath: cli) == .unlinked(dir.appendingPathComponent(name).path), "the venv sibling is found next to the CLI")
+        expect(ScannerProbe.available(name, cliPath: cli, shellFound: []), "the runtime runs its venv copy, so it is available")
+        expect(!ScannerProbe.available(name, cliPath: nil, shellFound: []), "no CLI, no venv copy")
+        expect(ScannerProbe.available(name, cliPath: nil, shellFound: [name]), "a shell-resolved copy is available")
+    }
+
+    private static func runtimeOverviewSummaryParsesBoundedOutput() {
+        let output = "warning: noise\nDCOVERVIEW:{\"admission_overrides\":\"secrets: HIGH file=block\","
+            + "\"storage\":{\"retention\":\"7 days\",\"judge_capture\":\"enabled\",\"local_path\":\"/tmp/x.db\","
+            + "\"judge_bodies_path\":\"built-in data directory\"}}\n"
+        let parsed = RuntimeOverviewSummary.parse(output)
+        expect(parsed?.admissionOverrides == "secrets: HIGH file=block", "the overrides line is the runtime's")
+        expect(parsed?.storage?.retention == "7 days" && parsed?.storage?.judgeCapture == "enabled", "storage policy fields are read")
+        expect(parsed?.storage?.judgeBodiesPath == "built-in data directory" && parsed?.storageError.isEmpty == true, "paths and the absent error are read")
+        expect(RuntimeOverviewSummary.parse("no sentinel") == nil, "no sentinel, no summary")
+        let degraded = RuntimeOverviewSummary.parse("DCOVERVIEW:{\"admission_overrides\":\"\",\"storage_error\":\"invalid configuration at $.observability (type)\"}")
+        expect(degraded?.storage == nil && degraded?.storageError.hasPrefix("invalid configuration") == true, "a validator error is bounded text")
+        expect(RuntimeOverviewSummary.parse("DCOVERVIEW:{\"admission_overrides\":\"a\\nb\"}")?.admissionOverrides == "a b", "line breaks are folded")
     }
 
     private static func restartIsQueuedOnlyForKeysTheGatewayReadsAtStart() {

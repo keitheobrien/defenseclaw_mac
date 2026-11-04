@@ -89,6 +89,12 @@ struct HealthSnapshot: Sendable {
     /// The SERVICES Telemetry row detail (TUI telemetry_detail()), e.g.
     /// "1 destination: splunk-o11y (99.9% delivered)".
     var telemetryDetail: String = ""
+    /// telemetry.details.retention_state / retention_failure — the bounded
+    /// audit-store retention controller state the Overview storage line shows
+    /// as "controller=…" (v8_status.retention_health_from_gateway). Empty when
+    /// the gateway publishes no known state.
+    var retentionState: String = ""
+    var retentionFailure: String = ""
     /// The singular primary "connector" object from /health — drives the
     /// connector-drift and zero-requests notices (distinct from connectors[]).
     var primaryConnector: PrimaryConnectorHealth?
