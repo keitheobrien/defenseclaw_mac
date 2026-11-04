@@ -32,6 +32,7 @@ struct AIRuntimeView: View {
     /// `agent discovery runtime permissions` output (the TUI's Permissions
     /// button, shown while coverage is degraded or partial).
     @State private var permissionsOutput: String?
+    @State private var permissionsRunning = false
 
     private var loading: Bool { activeLoadID != nil }
     private var enabling: Bool { activeEnableID != nil }
@@ -102,6 +103,8 @@ struct AIRuntimeView: View {
             error = nil
             setupError = nil
             awaitingEnableCoverage = false
+            permissionsOutput = nil
+            permissionsRunning = false
             await load()
         }
         .onChange(of: appState.gatewayReachable) { _, reachable in
@@ -158,7 +161,7 @@ struct AIRuntimeView: View {
                 } label: {
                     Label("Permissions", systemImage: "lock.shield")
                 }
-                .disabled(enabling || permissionsOutput != nil)
+                .disabled(enabling || permissionsRunning || permissionsOutput != nil)
                 .help("Show the host grants each plane needs (runtime permissions)")
             }
             Button {
@@ -467,13 +470,15 @@ struct AIRuntimeView: View {
 
     /// Read-only: prints what each plane needs; nothing changes on the host.
     private func showPermissions() {
-        guard appState.runtimeDiscoveryCommands?.contains("permissions") == true else { return }
+        guard !permissionsRunning, appState.runtimeDiscoveryCommands?.contains("permissions") == true else { return }
         let generation = appState.installationGeneration
+        permissionsRunning = true
         Task {
             let result = await appState.activity.run(
                 title: "Runtime permissions", arguments: ["agent", "discovery", "runtime", "permissions"],
                 mutation: false, category: "runtime", origin: "AI Runtime"
             )
+            permissionsRunning = false
             guard generation == appState.installationGeneration else { return }
             permissionsOutput = result.output.isEmpty
                 ? "The command printed nothing (exit \(result.exitCode)). See Activity for details."

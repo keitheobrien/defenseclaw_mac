@@ -30,6 +30,7 @@ struct ConfigEditorContractTests {
         activeConnectorFollowsTheRuntimeRule()
         unlinkedScannersCountAsInstalled()
         runtimeOverviewSummaryParsesBoundedOutput()
+        clawModeNamesOpenClawOnlyWhenItIsInstalled()
         restartIsQueuedOnlyForKeysTheGatewayReadsAtStart()
         anOpenDraftSurvivesADiskGeneration()
         invalidConfigIsNamedWithItsLine()
@@ -114,6 +115,60 @@ struct ConfigEditorContractTests {
         expect(ScannerProbe.available(name, cliPath: cli, shellFound: []), "the runtime runs its venv copy, so it is available")
         expect(!ScannerProbe.available(name, cliPath: nil, shellFound: []), "no CLI, no venv copy")
         expect(ScannerProbe.available(name, cliPath: nil, shellFound: [name]), "a shell-resolved copy is available")
+    }
+
+    /// Config.has_connector_configured / _mark_openclaw_not_installed (GAP-0568):
+    /// the loader's "openclaw" default names a connector only while OpenClaw is
+    /// on the machine; the roster, guardrail.connector or any other mode always do.
+    private static func clawModeNamesOpenClawOnlyWhenItIsInstalled() {
+        var config = DefenseClawConfig()
+        config.clawMode = "openclaw"
+        expect(config.hasConnectorConfigured && config.activeConnector == "openclaw" && config.displayClawMode == "openclaw",
+               "the loader default names OpenClaw while OpenClaw is installed")
+        config.openclawNotInstalled = true
+        expect(!config.hasConnectorConfigured && config.activeConnector == "" && config.displayClawMode == "",
+               "a claw.mode that only implies an absent OpenClaw configures nothing")
+        config.raw = MiniYAML.parse("guardrail:\n  connector: openclaw\n")
+        expect(config.hasConnectorConfigured && config.activeConnector == "openclaw",
+               "setup openclaw pins guardrail.connector, which keeps the connector")
+        config.raw = .mapping([:])
+        config.connectors = ["codex"]
+        expect(config.activeConnector == "codex" && config.displayClawMode == "openclaw", "a roster keeps the connector")
+        config.connectors = []
+        config.clawMode = "codex"
+        expect(config.hasConnectorConfigured && config.activeConnector == "codex", "an explicit non-OpenClaw mode is never gated")
+        config.clawMode = ""
+        expect(!config.hasConnectorConfigured && config.activeConnector == "", "setup remove leaves claw.mode empty: no connector")
+
+        expect(!OpenClawPresence.fleetLinkConfigured(fleetMode: nil, host: "127.0.0.1"), "auto + loopback is no fleet link")
+        expect(OpenClawPresence.fleetLinkConfigured(fleetMode: "auto", host: "10.0.0.5"), "a remote gateway host keeps OpenClaw")
+        expect(OpenClawPresence.fleetLinkConfigured(fleetMode: "enabled", host: "127.0.0.1"), "an explicit fleet mode keeps OpenClaw")
+        expect(!OpenClawPresence.fleetLinkConfigured(fleetMode: "Disabled", host: "10.0.0.5"), "disabled never links")
+        for host in ["", "LocalHost", "[::1]", "::1", "0:0:0:0:0:0:0:1", "127.9.9.9"] {
+            expect(OpenClawPresence.isLoopbackHost(host), "\(host) is a loopback gateway host")
+        }
+        for host in ["192.168.1.2", "gateway.local", "::2", "127.0.0", "[::1"] {
+            expect(!OpenClawPresence.isLoopbackHost(host), "\(host) is not a loopback gateway host")
+        }
+        expect(OpenClawPresence.isManagedEnterprise(" Managed_Enterprise ") && !OpenClawPresence.isManagedEnterprise("unmanaged_byod"),
+               "managed enterprise leaves the connector as it was")
+        let home = "/Users/x"
+        expect(OpenClawPresence.configCandidates(configFile: nil, homeDir: nil, home: home) == ["/Users/x/.openclaw/openclaw.json"],
+               "the default openclaw.json candidate")
+        expect(OpenClawPresence.configCandidates(configFile: "~/custom.json", homeDir: "~/oc", home: home)
+               == ["/Users/x/custom.json", "/Users/x/oc/openclaw.json"], "claw.config_file and <home_dir>/openclaw.json")
+        expect(OpenClawPresence.configCandidates(configFile: "~/oc/openclaw.json", homeDir: "~/oc", home: home)
+               == ["/Users/x/oc/openclaw.json"], "candidates are deduplicated")
+        expect(OpenClawPresence.binaryInstalled(path: "/nowhere", home: home, executable: { $0 == "/Users/x/.npm-global/bin/openclaw" }),
+               "an npm global install counts")
+        expect(OpenClawPresence.binaryInstalled(path: "/opt/x/bin:/nowhere", home: home, executable: { $0 == "/opt/x/bin/openclaw" }),
+               "PATH is searched first")
+        expect(!OpenClawPresence.binaryInstalled(path: nil, home: home, executable: { _ in false }), "nothing on the machine")
+        expect(OpenClawPresence.installed(configFile: nil, homeDir: nil, home: home, path: nil,
+                                          present: { $0 == "/Users/x/.openclaw/openclaw.json" }, executable: { _ in false }),
+               "an openclaw.json marks OpenClaw as set up")
+        expect(!OpenClawPresence.installed(configFile: nil, homeDir: nil, home: home, path: nil,
+                                           present: { _ in false }, executable: { _ in false }), "neither config nor binary")
     }
 
     private static func runtimeOverviewSummaryParsesBoundedOutput() {

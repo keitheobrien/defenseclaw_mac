@@ -106,6 +106,16 @@ struct OperatorAssetListsTests {
         let sigma = Set(["ς", "σ", "Σ"].map { OperatorAssetLists.assetNameKey($0, targetType: "skill") })
         expect(sigma.count == 1, "sigma forms fold together: \(sigma)")
         expect(OperatorAssetLists.assetNameKey("\u{212A}", targetType: "skill") == OperatorAssetLists.assetNameKey("k", targetType: "skill"), "Kelvin sign folds to k")
+        // Go's table is a simple fold: ß, ﬁ and İ never expand (Foundation's
+        // full fold would make "strasse" govern a "straße" row the gateway
+        // keeps apart). Expected values come from the 1.0.7 asset_name_key.
+        expect(OperatorAssetLists.assetNameKey("straße", targetType: "skill") == "straße", "ß does not fold to ss")
+        expect(OperatorAssetLists.assetNameKey("STRAẞE", targetType: "skill") == "straße", "capital ẞ folds to ß, not ss")
+        expect(OperatorAssetLists.assetNameKey("ﬁle", targetType: "skill") == "ﬁle", "the ﬁ ligature stays a ligature")
+        expect(OperatorAssetLists.assetNameKey("İstanbul", targetType: "skill") == "İstanbul", "İ has no simple fold")
+        expect(OperatorAssetLists.assetNameKey("ſ", targetType: "skill") == "s", "long s folds to s")
+        expect(OperatorAssetLists.assetNameKey("MiXeD-Case_Tool", targetType: "skill") == "mixed-case_tool", "ASCII folds to lowercase")
+        expect(GoCaseFold.table.count > 1_000 && GoCaseFold.table[0x41] == 0x61 && GoCaseFold.table[0x1E9E] == 0xDF, "the fold table is parsed from the runtime's runs")
         expect(OperatorAssetLists.connectorKey("") == "", "an unscoped rule or row keys as empty (asset_lists._connector_key)")
         let unscoped = lists.mergedInstalls(
             journal: [InstallJournalRow(name: "trusted", connector: "openclaw", install: "block")], targetType: "skill")

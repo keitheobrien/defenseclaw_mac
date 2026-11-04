@@ -58,6 +58,7 @@ struct SandboxModelTests {
         branchNamesAreValidated()
         raisedAlertsAreCountedPerSandbox()
         stopAnywayAndDeleteMatchTheCLI()
+        policyClampRowsReadTheDaemonsViolationObjects()
         if failureCount > 0 {
             FileHandle.standardError.write("\(failureCount) failure(s)\n".data(using: .utf8)!)
             exit(1)
@@ -67,6 +68,26 @@ struct SandboxModelTests {
 
     /// 1.0.7: a stop refused for an unsynced disk names `--discard-unsynced`;
     /// the TUI's d key runs `sandbox delete`, which asks (`--yes` answers).
+    /// sandboxapi.Violation objects: the TUI shows each one's message, else
+    /// its detail (sandbox_state.py), so a clamped sandbox gets its Policy
+    /// clamp rows instead of an empty list.
+    private static func policyClampRowsReadTheDaemonsViolationObjects() {
+        var raw = running
+        raw["violations"] = [
+            ["key": "network_mode", "source": "openshell.admin", "attempted": "open",
+             "message": "network_mode: open is not allowed by openshell.admin", "detail": "clamped to egress"],
+            ["key": "approvals", "detail": "approvals lowered to policy"],
+            ["key": "empty"],
+            "not-an-object",
+        ]
+        raw["warnings"] = ["supervisor is old"]
+        let row = SandboxDecoding.sandbox(raw)!
+        expect(row.violations == ["network_mode: open is not allowed by openshell.admin", "approvals lowered to policy"],
+               "message, else detail, per violation object: \(row.violations)")
+        expect(row.warnings == ["supervisor is old"], "warnings stay plain strings")
+        expect(SandboxDecoding.sandbox(running)!.violations.isEmpty, "no violations key, no rows")
+    }
+
     private static func stopAnywayAndDeleteMatchTheCLI() {
         expect(SandboxStopOutcome.refusedForUnsyncedDisk(output: "fixture keeps running: its disk could not be\n  synced first"),
                "the unsynced refusal is recognised across line breaks")

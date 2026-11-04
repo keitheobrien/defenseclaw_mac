@@ -82,6 +82,8 @@ enum RuntimeOverviewSummary {
             safe_path = re.sub(r"[^A-Za-z0-9_.$\\[\\]-]", "?", path)[:256]
             safe_keyword = re.sub(r"[^A-Za-z0-9_.-]", "?", keyword)[:64]
             out["storage_error"] = "invalid configuration at %s (%s)" % (safe_path, safe_keyword)
+        else:
+            out["storage_error"] = "telemetry status could not be loaded; run defenseclaw observability validate"
     print("DCOVERVIEW:" + json.dumps(out))
     """
 

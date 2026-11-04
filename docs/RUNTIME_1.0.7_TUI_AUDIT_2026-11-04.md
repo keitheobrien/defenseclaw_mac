@@ -68,6 +68,21 @@ Refuted by the verifiers (no change): registry sync partial-sync reporting; AI D
 
 The live gateway runs as root from `/Library/PrivilegedHelperTools/DefenseClawMacGatewayAdmin/uid-501/defenseclaw-gateway` (administrator mode was used earlier; the toggle is now off but that process is still the listener). `GatewayListenerTrust.isTrusted` (v1.1.33) verifies the loopback listener with an unprivileged `lsof`, which on macOS lists only the login user's sockets, so the root-owned listener is invisible, the client refuses it as untrusted, and every panel reports "Gateway unreachable on port 18970" although `curl http://127.0.0.1:18970/health` returns 200. Control check: the installed 1.1.34 app launched against the same gateway shows the identical "Gateway unreachable on port 18,970" Overview (its config editor does load the 1.0.7 catalog: 28 sections). `netstat -anv -p tcp` does expose the listener's pid (`defenseclaw-gate:36347`), so the check can be repaired by resolving the pid there and verifying owner and executable from it. A follow-up task was filed; nothing about the gateway was changed.
 
+## Pre-release review (4 November 2026)
+
+Before the branch was merged for release 1.1.35 an adversarial review ran over its source diff (four dimensions — correctness, 1.0.7 contract, security, state/concurrency — times two file groups; every finding re-checked by a tracing verifier and a skeptic). 19 raw findings, 13 confirmed by both verifiers, 6 refuted. The confirmed ones collapse into eight defects, all fixed in the review commit with tests:
+
+1. Sandbox **Policy clamp** rows never rendered: the daemon's `violations` are `sandboxapi.Violation` objects and the decoder kept only strings. The row now shows each violation's `message`, else `detail`, as `sandbox_state.py` does (major).
+2. `assetNameKey` used Foundation's full case folding (ß → ss, ﬁ → fi); the runtime's `asset_name_key` is Go's simple `EqualFold` table. The runtime's `FOLD_RUNS` is embedded (`GoCaseFold`) and the expected values were checked against the installed 1.0.7 interpreter.
+3. `claw.mode` had lost the loader's `openclaw` default on the false premise that 1.0.7 dropped it; 1.0.7 keeps the default and gates it with `has_connector_configured()` / `_mark_openclaw_not_installed` (loopback gateway, no fleet link, no openclaw.json or binary). The app now mirrors both (`hasConnectorConfigured`, `displayClawMode`, `OpenClawPresence`); an explicitly empty mode (what `setup remove` persists) stays empty.
+4. The Overview dump dropped the TUI's generic "telemetry status could not be loaded; run defenseclaw observability validate" line for non-validator failures.
+5. A summary dump SwiftUI cancelled (task id changed) blanked the storage and overrides rows.
+6. The skill-scanner notice read the probe paths before the first pulse resolved them, so a venv-only install could flash "unavailable" at launch.
+7. The Runtime Permissions button had no in-flight guard and the sheet was not reset on installation change.
+8. The sandbox "Stop anyway…" offer was keyed on the name alone, so a later sandbox created under the same `--name` inherited it; it is keyed on name and creation time and pruned with every snapshot.
+
+Refuted (no change): destination `enabled` fallback, positional sandbox name shape, applied-policy `lookup_error` bounds, the Decision Model URL validator (two findings), and the Overview dump's temp config copy.
+
 ## Remaining known gaps
 
 - Setup panel status/summary column (off connectors, last check passed/failed, redaction profile) is a 1.0.7 TUI addition that was never ported (minor).

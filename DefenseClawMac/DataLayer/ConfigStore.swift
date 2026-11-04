@@ -37,7 +37,11 @@ struct DefenseClawConfig: Sendable {
     var connectorDisabled: Set<String> = []
     /// claw.mode with the runtime loader's "openclaw" default — the drift
     /// notice's "configured" side (distinct from connectorMode's chain).
-    var clawMode = ""                         // claw.mode ("" = none configured; 1.0.7 dropped the openclaw default)
+    var clawMode = ""                         // claw.mode (config.load defaults it to "openclaw")
+    /// `_mark_openclaw_not_installed` (runtime 1.0.7, GAP-0568): the loader
+    /// records that a claw.mode which only implies OpenClaw has no OpenClaw
+    /// behind it, so `hasConnectorConfigured` names no connector for it.
+    var openclawNotInstalled = false
     /// Non-empty when guardrail.connectors exists but failed to parse — the
     /// TUI's roster-degraded error notice.
     var rosterError = ""
@@ -64,11 +68,36 @@ struct DefenseClawConfig: Sendable {
     var registryRequiredByType: [String: Bool] = [:]
     var raw: YAMLNode = .mapping([:])
 
+    /// openclaw_presence.openclaw_only_implied: nothing but claw.mode (its
+    /// loader default, or a leftover of it) names OpenClaw.
+    var openclawOnlyImplied: Bool {
+        if !Self.normalizeConnector(raw["guardrail.connector"]?.string).isEmpty { return false }
+        if connectors.contains(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) { return false }
+        return clawMode.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "openclaw"
+    }
+
+    /// Config.has_connector_configured(): the roster or guardrail.connector
+    /// selects one; a claw.mode that only implies an OpenClaw this machine
+    /// does not have selects none; otherwise any claw.mode does.
+    var hasConnectorConfigured: Bool {
+        if connectors.contains(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+            || !Self.normalizeConnector(raw["guardrail.connector"]?.string).isEmpty {
+            return true
+        }
+        if openclawNotInstalled && openclawOnlyImplied { return false }
+        return !clawMode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// The TUI's claw_mode: "" when the config names no connector, else
+    /// claw.mode with the loader default — the drift notice's "configured" side.
+    var displayClawMode: String { hasConnectorConfigured ? clawMode : "" }
+
     /// config.active_connector() (runtime 1.0.7): guardrail.connector →
     /// the roster (claw.mode when it is listed, else the first sorted name)
     /// → claw.mode, each trimmed and lowercased (connector_paths.normalize).
     /// "" when nothing selects a connector, so callers never invent one.
     var activeConnector: String {
+        guard hasConnectorConfigured else { return "" }
         let explicit = Self.normalizeConnector(raw["guardrail.connector"]?.string)
         if !explicit.isEmpty { return explicit }
         let roster = Set(connectors.map(Self.normalizeConnector).filter { !$0.isEmpty }).sorted()
@@ -1056,7 +1085,9 @@ actor ConfigStore {
         c.llmProvider = root["llm.provider"]?.string ?? root["inspect_llm.provider"]?.string
         c.llmModel = root["llm.model"]?.string ?? root["inspect_llm.model"]?.string
         c.aiDefenseEndpoint = root["cisco_ai_defense.endpoint"]?.string
-        c.clawMode = root["claw.mode"]?.string ?? ""
+        // config.load: a missing claw.mode is "openclaw"; an explicitly empty one
+        // (what setup remove persists) stays empty and names no connector.
+        c.clawMode = root["claw.mode"] == nil ? "openclaw" : (root["claw.mode"]?.string ?? "")
         // Multi-connector roster (guardrail.connectors: {codex: {...}, ...}),
         // plus each connector's mode and rule pack for the Overview table.
         if root["guardrail.connectors"] != nil, root["guardrail.connectors"]?.mapping == nil {
@@ -1077,6 +1108,16 @@ actor ConfigStore {
                     c.connectorDisabled.insert(name)
                 }
             }
+        }
+        // config.load → _mark_openclaw_not_installed (GAP-0568): with a loopback
+        // gateway and no fleet link, a claw.mode that only implies OpenClaw
+        // configures nothing when OpenClaw is not on this machine.
+        if !OpenClawPresence.isManagedEnterprise(root["deployment_mode"]?.string),
+           !OpenClawPresence.fleetLinkConfigured(fleetMode: root["gateway.fleet_mode"]?.string, host: root["gateway.host"]?.string),
+           c.openclawOnlyImplied {
+            c.openclawNotInstalled = !OpenClawPresence.installed(
+                configFile: root["claw.config_file"]?.string, homeDir: root["claw.home_dir"]?.string
+            )
         }
         if let sources = root["registries.sources"]?.sequence ?? root["registries"]?.sequence {
             var parsedSources: [DefenseClawConfig.RegistrySourceConfig] = []
@@ -1135,5 +1176,92 @@ enum GatewayTokenLadder {
         }
         guard let literal, !literal.isEmpty, !isSecretRefText(literal) else { return nil }
         return literal
+    }
+}
+
+/// openclaw_presence.py (runtime 1.0.7): whether an OpenClaw connector implied
+/// by claw.mode has an OpenClaw behind it. The gateway reports the fleet
+/// uplink off ("OpenClaw is not installed") for a loopback install whose only
+/// OpenClaw marker is the claw.mode default; the CLI and TUI then name no
+/// connector. Keep the checks, the openclaw.json candidates and the binary
+/// locations identical to that module.
+enum OpenClawPresence {
+    static func isManagedEnterprise(_ deploymentMode: String?) -> Bool {
+        (deploymentMode ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "managed_enterprise"
+    }
+
+    /// isLoopbackGatewayHost (internal/gateway/sidecar.go): empty, localhost,
+    /// or a loopback IP (optionally bracketed).
+    static func isLoopbackHost(_ host: String?) -> Bool {
+        var h = (host ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if h.isEmpty || h == "localhost" { return true }
+        if h.count >= 2, h.hasPrefix("["), h.hasSuffix("]") { h = String(h.dropFirst().dropLast()) }
+        if h.contains(":") {
+            // IPv6 loopback in its short and expanded spellings.
+            let groups = h.split(separator: ":", omittingEmptySubsequences: false)
+            if groups.count > 8 { return false }
+            let expanded = h == "::1" ? "0:0:0:0:0:0:0:1" : h
+            return expanded.split(separator: ":").allSatisfy { UInt16($0, radix: 16) != nil }
+                && expanded.split(separator: ":").count == 8
+                && expanded.split(separator: ":").dropLast().allSatisfy { UInt16($0, radix: 16) == 0 }
+                && UInt16(expanded.split(separator: ":").last ?? "", radix: 16) == 1
+        }
+        let octets = h.split(separator: ".", omittingEmptySubsequences: false).map { UInt8($0) }
+        guard octets.count == 4, octets.allSatisfy({ $0 != nil }) else { return false }
+        return octets[0] == 127
+    }
+
+    /// openclaw_fleet_link_configured: a remote gateway host or an enabled
+    /// fleet mode keeps OpenClaw; "disabled"/"off"/"false"/"0" never links.
+    static func fleetLinkConfigured(fleetMode: String?, host: String?) -> Bool {
+        let mode = (fleetMode ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if ["disabled", "off", "false", "0"].contains(mode) { return false }
+        return !["", "auto"].contains(mode) || !isLoopbackHost(host)
+    }
+
+    /// Config.OpenClawConfigCandidates: claw.config_file and
+    /// <claw.home_dir>/openclaw.json (a leading "~/" expanded), deduplicated,
+    /// with ~/.openclaw/openclaw.json when both are empty.
+    static func configCandidates(configFile: String?, homeDir: String?, home: String) -> [String] {
+        func expand(_ path: String) -> String {
+            path.hasPrefix("~/") ? home + String(path.dropFirst(1)) : path
+        }
+        var configFile = (configFile ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let homeDir = (homeDir ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if configFile.isEmpty && homeDir.isEmpty { configFile = "~/.openclaw/openclaw.json" }
+        var raw = [configFile]
+        if !homeDir.isEmpty { raw.append((expand(homeDir) as NSString).appendingPathComponent("openclaw.json")) }
+        var out: [String] = []
+        for candidate in raw where !candidate.isEmpty {
+            let normalized = URL(fileURLWithPath: expand(candidate)).standardizedFileURL.path
+            if !out.contains(normalized) { out.append(normalized) }
+        }
+        return out
+    }
+
+    /// openclaw_binary_installed: PATH, then the npm / Homebrew / ~/.local
+    /// locations the gateway also checks.
+    static func binaryInstalled(path: String?, home: String, executable: (String) -> Bool) -> Bool {
+        var candidates = (path ?? "").split(separator: ":").map { String($0) + "/openclaw" }
+        candidates += ["/usr/local/bin/openclaw", "/opt/homebrew/bin/openclaw",
+                       home + "/.npm-global/bin/openclaw", home + "/.local/bin/openclaw"]
+        return candidates.contains(where: executable)
+    }
+
+    /// openclaw_installed: an openclaw.json candidate exists (one that cannot
+    /// be inspected counts as present, as in Go) or an openclaw binary is found.
+    static func installed(
+        configFile: String?, homeDir: String?,
+        home: String = NSHomeDirectory(),
+        path: String? = ProcessInfo.processInfo.environment["PATH"],
+        present: (String) -> Bool = { candidate in
+            var info = stat()
+            if stat(candidate, &info) == 0 { return true }
+            return errno != ENOENT && errno != ENOTDIR
+        },
+        executable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
+    ) -> Bool {
+        configCandidates(configFile: configFile, homeDir: homeDir, home: home).contains(where: present)
+            || binaryInstalled(path: path, home: home, executable: executable)
     }
 }

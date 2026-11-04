@@ -1056,7 +1056,13 @@ enum SandboxDecoding {
         row.orphaned = (d["orphaned"] as? Bool) ?? false
         row.oldSupervisor = (d["old_supervisor"] as? Bool) ?? false
         row.warnings = list(d["warnings"]).map { str($0) }.filter { !$0.isEmpty }
-        row.violations = list(d["violations"]).map { str($0) }.filter { !$0.isEmpty }
+        // The daemon's violations are objects (sandboxapi.Violation); the TUI
+        // shows each one's message, else its detail (sandbox_state.py).
+        row.violations = list(d["violations"]).map { raw -> String in
+            let violation = dict(raw)
+            let message = str(violation["message"])
+            return message.isEmpty ? str(violation["detail"]) : message
+        }.filter { !$0.isEmpty }
         row.image = str(d["image"])
         row.createdAt = DCDates.parse(d["created_at"])
         row.modelProviders = int(egress["model_providers"])

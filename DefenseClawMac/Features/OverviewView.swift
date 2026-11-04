@@ -1141,7 +1141,9 @@ struct OverviewView: View {
         let result = await appState.cli.run(
             binary: runtimePython, arguments: ["-c", RuntimeOverviewSummary.dumpScript], mutation: false
         )
-        guard generation == appState.installationGeneration else { return }
+        // A run SwiftUI cancelled (the task id changed or the view left) must
+        // not blank the rows its successor is about to fill.
+        guard !Task.isCancelled, !result.cancelled, generation == appState.installationGeneration else { return }
         runtimeSummary = result.succeeded ? RuntimeOverviewSummary.parse(result.output) : nil
     }
 

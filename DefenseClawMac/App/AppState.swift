@@ -2065,8 +2065,10 @@ final class AppState {
         let gatewayStandalone = gatewayReachable && gatewayState == "disabled"
         let guardrailOff = !config.guardrailEnabled
         // 1.0.7 runs the venv copy of skill-scanner even when it is not
-        // linked into PATH, so an unlinked install is not "unavailable".
-        let skillScannerAvailable = ScannerProbe.available(
+        // linked into PATH, so an unlinked install is not "unavailable". Until
+        // the first pulse resolves the probe paths the answer is unknown, not
+        // "unavailable": a venv-only install must not flash the notice at launch.
+        let skillScannerAvailable = !probeResolved || ScannerProbe.available(
             "skill-scanner", cliPath: probeCLIPath, shellFound: shellResolvedScanners
         )
 
@@ -2130,9 +2132,10 @@ final class AppState {
         // "Gateway is offline" error.
         if gatewayReachable, let primary = health.primaryConnector, installDetected {
             let live = primary.name.trimmingCharacters(in: .whitespaces)
-            // The drift check compares against claw.mode with the runtime
-            // loader's "openclaw" default (NOT connectorMode's fallback chain).
-            let configured = config.clawMode.trimmingCharacters(in: .whitespaces)
+            // The drift check compares against the TUI's claw_mode: claw.mode
+            // with the loader's "openclaw" default, blank when the config names
+            // no connector (NOT connectorMode's fallback chain).
+            let configured = config.displayClawMode.trimmingCharacters(in: .whitespaces)
             if ConnectorOnboarding.hasConnectorDrift(configured: configured, live: live,
                                                        registered: Array(config.connectorModes.keys)) {
                 notices.append(.init(level: .warn, message: "Connector drift: configured \(friendlyConnectorName(configured)) but gateway is routing for \(friendlyConnectorName(live)) - restart the sidecar after editing claw.mode"))

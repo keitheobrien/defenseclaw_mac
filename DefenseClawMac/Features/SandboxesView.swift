@@ -85,6 +85,11 @@ struct SandboxesView: View {
         .task { await appState.refreshSandboxes() }
         .task(id: processKey) { await loadProcesses() }
         .task(id: runLogKey) { await loadDetachedRun() }
+        .onChange(of: snapshot.sandboxes) { _, rows in
+            // A sandbox stopped or deleted outside the app drops its refusal.
+            let live = Set(rows.filter(\.running).map(Self.unsyncedKey))
+            unsyncedStops = unsyncedStops.intersection(live)
+        }
         .alert(
             "Pull \(pullToNamedBranch?.name ?? "") to a branch you name",
             isPresented: Binding(get: { pullToNamedBranch != nil }, set: { if !$0 { pullToNamedBranch = nil } }),
@@ -373,7 +378,7 @@ struct SandboxesView: View {
             HStack {
                 Button("Stop…") { confirmStop = row }
                     .disabled(!row.running)
-                if row.running, unsyncedStops.contains(row.name) {
+                if row.running, unsyncedStops.contains(Self.unsyncedKey(row)) {
                     Button("Stop anyway…") { confirmDiscardStop = row }
                         .help("defenseclaw sandbox stop \(row.name) --discard-unsynced: stops it without syncing its disk, losing what it wrote since its last sync.")
                 }
@@ -452,6 +457,12 @@ struct SandboxesView: View {
         }
     }
 
+    /// The refusal belongs to one sandbox, not to its name: a later sandbox
+    /// created under the same --name must not inherit "Stop anyway…".
+    static func unsyncedKey(_ row: SandboxRow) -> String {
+        "\(row.name)|\(row.createdAt?.timeIntervalSince1970 ?? 0)"
+    }
+
     private func runCLI(_ title: String, _ arguments: [String], mutation: Bool = true) {
         guard !mutation || appState.sandboxActionsAvailable else { return }
         Task {
@@ -464,11 +475,14 @@ struct SandboxesView: View {
             if arguments.prefix(2) == ["sandbox", "stop"], arguments.count > 2, result.exitCode == 5 {
                 let name = arguments[2]
                 appState.sandboxActionMessage = SandboxStopOutcome.keptRunning(name: name, output: result.output)
-                if SandboxStopOutcome.refusedForUnsyncedDisk(output: result.output) { unsyncedStops.insert(name) }
+                if SandboxStopOutcome.refusedForUnsyncedDisk(output: result.output),
+                   let row = snapshot.sandboxes.first(where: { $0.name == name }) {
+                    unsyncedStops.insert(Self.unsyncedKey(row))
+                }
             } else {
                 appState.sandboxActionMessage = result.output
                 if result.succeeded, arguments.count > 2, ["stop", "delete"].contains(arguments[1]) {
-                    unsyncedStops.remove(arguments[2])
+                    unsyncedStops = unsyncedStops.filter { !$0.hasPrefix(arguments[2] + "|") }
                 }
             }
             appState.sandboxActionFailed = !result.succeeded
