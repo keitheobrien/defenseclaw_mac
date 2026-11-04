@@ -421,9 +421,17 @@ struct SandboxesView: View {
         guard !mutation || appState.sandboxActionsAvailable else { return }
         Task {
             guard !mutation || appState.sandboxActionsAvailable else { return }
-            _ = await appState.runCommand(
+            let generation = appState.installationGeneration
+            let result = await appState.runCommand(
                 title: title, arguments: arguments, mutation: mutation, category: "sandbox", origin: "Sandboxes"
             )
+            guard generation == appState.installationGeneration else { return }
+            if arguments.prefix(2) == ["sandbox", "stop"], arguments.count > 2, result.exitCode == 5 {
+                appState.sandboxActionMessage = SandboxStopOutcome.keptRunning(name: arguments[2], output: result.output)
+            } else {
+                appState.sandboxActionMessage = result.output
+            }
+            appState.sandboxActionFailed = !result.succeeded
             await appState.refreshSandboxes()
         }
     }

@@ -158,7 +158,7 @@ struct AIRuntimeView: View {
         if let scannedAt = snapshot.scannedAt {
             parts.append("polled \(scannedAt.formatted(date: .omitted, time: .standard))")
         }
-        if snapshot.degraded { parts.append("DEGRADED") }
+        parts.append(snapshot.healthLabel)
         return parts.joined(separator: " · ")
     }
 
@@ -187,10 +187,13 @@ struct AIRuntimeView: View {
             // Every non-running plane states why, in full, rather than only in
             // a tooltip. A blind plane rendering as a grey dot is the failure
             // mode this whole subsystem exists to prevent.
-            ForEach(snapshot.planesNotRunning) { plane in
+            ForEach(snapshot.planes.filter { !$0.running || !$0.reason.isEmpty }) { plane in
                 Text(plane.summary)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+            }
+            ForEach(Array(snapshot.degradedReasons.enumerated()), id: \.offset) { _, reason in
+                Text(reason).font(.caption2).foregroundStyle(.secondary)
             }
             if snapshot.connectionsObserved > 0, snapshot.unattributedShare >= 0.5 {
                 Text("\(Int(snapshot.unattributedShare * 100))% of connections could not be attributed to a process. "
@@ -202,6 +205,8 @@ struct AIRuntimeView: View {
     }
 
     private func planeColor(_ plane: AIRuntimePlane) -> Color {
+        if plane.badge == "off" { return .gray }
+        if plane.badge == "partial" { return .cyan }
         if plane.running { return .green }
         return plane.available ? .yellow : .red
     }

@@ -1,0 +1,102 @@
+Window: "Activity", App: DefenseClawMac.
+0 standard window Activity, ID: main, Secondary Actions: Raise
+	1 split group main, SidebarNavigationSplitView
+		2 scroll area
+			3 list Sidebar
+				4 row (selectable) Monitor
+				5 row (selectable) Overview
+				6 row (selectable) Alerts
+1
+				7 row (selectable) Logs
+				8 row (selectable) Audit
+				9 row (selected) Activity
+				10 row (selectable) Govern
+				11 row (selectable) Skills
+				12 row (selectable) MCPs
+				13 row (selectable) Plugins
+				14 row (selectable) Tools
+				15 row (selectable) Policies
+				16 row (selectable) Sandboxes
+				17 row (selectable) Discover
+				18 row (selectable) Inventory
+				19 row (selectable) AI Discovery
+				20 row (selectable) Runtime
+				21 row (selectable) Registries
+				22 row (selectable) Configure
+				23 row (selectable) Setup
+		24 splitter (disabled, settable, float) 209
+		25 container
+			26 Activity
+				27 radio button Description: Commands, Value: 1
+				28 radio button Description: Mutations, Value: 0
+			29 scroll area
+				30 outline
+					31 row (selected) Oct 30 at 6:54:41 PM
+version
+defenseclaw version
+Exit 0
+108 ms
+—
+					32 row (selectable) Oct 30 at 6:49:52 PM
+setup redaction status
+defenseclaw setup redaction status
+Exit 0
+82 ms
+Configuration updated
+					33 row (selectable) Oct 30 at 6:49:08 PM
+Sandbox machine check
+defenseclaw sandbox doctor --json
+Exit 0
+2.3 s
+—
+					34 row (selectable) Oct 30 at 6:47:41 PM
+Load agent identities
+defenseclaw agent identities --json --limit 1000
+Exit 0
+110 ms
+—
+					35 row (selectable) Oct 30 at 6:47:41 PM
+Scan inventory
+defenseclaw aibom scan --json
+Exit 0
+83 ms
+Inventory snapshot refreshed
+					36 container
+						37 sort button Started
+						38 sort button Command
+						39 sort button Status
+						40 sort button Duration
+						41 sort button Side Effects
+			42 scroll area Details
+				43 list Secondary Actions: AXScrollToTop, AXScrollToBottom
+					44 text version
+					45 button Close command details
+					46 text Status Exit 0 Started 10/30/2026, 6:54 PM Duration 108 ms Origin Command Palette Category info defenseclaw version Output
+					47 button Description: Copy command output, Help: Copy Output
+					48 text defenseclaw, version 1.0.5
+
+						49 text defenseclaw, version 1.0.5
+
+	50 toolbar
+		51 button Description: Hide Sidebar, Secondary Actions: Increment, Decrement, Delete, Cancel
+		52 button Description: Command Palette, Secondary Actions: Increment, Decrement, Delete, Cancel, Move previous, Move next, Remove from toolbar
+		53 button Description: Run Command, Secondary Actions: Increment, Decrement, Delete, Cancel, Move previous, Move next, Remove from toolbar
+		54 button Description: Clear Completed, Secondary Actions: Increment, Decrement, Delete, Cancel, Move previous, Move next, Remove from toolbar
+		55 search text field (settable) Search activity
+			56 button Search
+	57 text Activity
+	58 menu button Window sharing
+59 menu bar
+	60 DefenseClawMac
+	61 Edit
+	62 View
+	63 Monitor
+	64 Commands
+	65 Go
+	66 Window
+	67 Help
+
+Selected:
+	9 row (selected)
+
+Note: Pay special attention to the content selected by the user. If the user asks a question or refers to the content they are looking at on-screen, they might be referring to the selected content (but they might be referring to something else that's visible, too).

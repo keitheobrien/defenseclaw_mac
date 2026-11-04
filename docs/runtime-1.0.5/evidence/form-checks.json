@@ -1,0 +1,139 @@
+[
+  {
+    "form": "Connector Setup",
+    "opened": true,
+    "reviewed": true,
+    "inputs": 8
+  },
+  {
+    "form": "Credentials",
+    "opened": true,
+    "reviewed": true,
+    "inputs": 1
+  },
+  {
+    "form": "Cisco AI Defense",
+    "opened": true,
+    "reviewed": true,
+    "inputs": 7
+  },
+  {
+    "form": "LLM",
+    "opened": true,
+    "reviewed": false,
+    "inputs": 9
+  },
+  {
+    "form": "Local OTel",
+    "opened": true,
+    "reviewed": true,
+    "inputs": 1
+  },
+  {
+    "form": "Galileo",
+    "opened": true,
+    "reviewed": true,
+    "inputs": 7
+  },
+  {
+    "form": "Token Rotation",
+    "opened": true,
+    "reviewed": true,
+    "inputs": 1
+  },
+  {
+    "form": "Custom Providers",
+    "opened": true,
+    "reviewed": true,
+    "inputs": 1
+  },
+  {
+    "form": "Skill Scanner",
+    "opened": true,
+    "reviewed": true,
+    "inputs": 17
+  },
+  {
+    "form": "MCP Scanner",
+    "opened": true,
+    "reviewed": true,
+    "inputs": 11
+  },
+  {
+    "form": "Gateway",
+    "opened": true,
+    "reviewed": true,
+    "inputs": 9
+  },
+  {
+    "form": "Guardrail",
+    "opened": true,
+    "reviewed": true,
+    "inputs": 7
+  },
+  {
+    "form": "Splunk",
+    "opened": true,
+    "reviewed": true,
+    "inputs": 7
+  },
+  {
+    "form": "Observability",
+    "opened": true,
+    "reviewed": true,
+    "inputs": 8
+  },
+  {
+    "form": "Webhooks",
+    "opened": true,
+    "reviewed": false,
+    "inputs": 13
+  },
+  {
+    "form": "Sandbox",
+    "opened": true,
+    "reviewed": true,
+    "inputs": 7
+  },
+  {
+    "form": "Registries",
+    "opened": true,
+    "reviewed": false,
+    "inputs": 8
+  },
+  {
+    "form": "Notifications Routing",
+    "opened": true,
+    "reviewed": true,
+    "inputs": 7
+  },
+  {
+    "form": "AI Discovery",
+    "opened": true,
+    "reviewed": true,
+    "inputs": 15
+  },
+  {
+    "form": "Splunk Dashboards",
+    "opened": true,
+    "reviewed": true,
+    "inputs": 6
+  },
+  {
+    "form": "Guardrail Actions",
+    "opened": true,
+    "reviewed": true,
+    "inputs": 2
+  },
+  {
+    "form": "ACP Guard",
+    "opened": true,
+    "reviewed": true,
+    "inputs": 5
+  },
+  {
+    "form": "Trusted Paths",
+    "opened": true,
+    "reviewed": true
+  }
+]

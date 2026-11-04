@@ -176,8 +176,15 @@ enum ConnectorOnboarding {
         return [head] + followUps
     }
 
+    static func hasConnectorDrift(configured: String, live: String, registered: [String]) -> Bool {
+        let configured = normalizedConnector(configured)
+        let live = normalizedConnector(live)
+        return !configured.isEmpty && !live.isEmpty && configured != live
+            && !Set(registered.map(normalizedConnector)).contains(live)
+    }
+
     static func normalizedConnector(_ connector: String) -> String {
         let normalized = connector.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return normalized == "claude-code" ? "claudecode" : normalized
+        return ["claude-code", "claude_code"].contains(normalized) ? "claudecode" : normalized
     }
 }

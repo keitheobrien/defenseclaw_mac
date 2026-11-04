@@ -19,6 +19,9 @@ import Foundation
 @main
 struct ConnectorOnboardingTests {
     static func main() {
+        expect(!ConnectorOnboarding.hasConnectorDrift(configured: "Claude-Code", live: "claudecode", registered: []), "connector aliases do not create false drift")
+        expect(!ConnectorOnboarding.hasConnectorDrift(configured: "codex", live: "kiro", registered: ["codex", "Kiro"]), "a rostered primary is not drift on a multi-connector install")
+        expect(ConnectorOnboarding.hasConnectorDrift(configured: "codex", live: "kiro", registered: ["codex"]), "a genuinely different unregistered connector still warns")
         validatesInitializationCompletionBeforeGatewayStart()
         parsesInstalledConnectorsInSupportedOrder()
         excludesProxyConnectorsFromDiscoveryAndInitialization()

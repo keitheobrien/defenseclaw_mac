@@ -1,0 +1,24 @@
+[
+  {
+    "source": "Gateway",
+    "counts": "36 text 2 shown · 2 matching · 2 total"
+  },
+  {
+    "source": "Verdicts",
+    "counts": "36 text 2 shown · 2 matching · 2 total"
+  },
+  {
+    "source": "Otel",
+    "counts": "36 text 4 shown · 4 matching · 4 total"
+  },
+  {
+    "source": "Watchdog",
+    "counts": "36 text 1 shown · 1 matching · 1 total"
+  },
+  {
+    "noMatch": true
+  },
+  {
+    "restored": true
+  }
+]

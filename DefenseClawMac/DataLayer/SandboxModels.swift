@@ -44,6 +44,18 @@ struct SandboxDriver: Sendable, Hashable {
     }
 }
 
+enum SandboxStopOutcome {
+    static func keptRunning(name: String, output: String) -> String {
+        let normalized = output.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        if normalized.contains("disk could not be synced first") {
+            return "\(name) keeps running: its MicroVM disk could not be synced first. "
+                + "Pull the work you need, then try stopping it again. See Activity for the runtime's recovery instructions."
+        }
+        return "\(name) keeps running: its MicroVM disk is full and holds unpulled work. "
+            + "Free space in the sandbox, pull its work, then try stopping it again. See Activity for details."
+    }
+}
+
 struct SandboxStatus: Sendable, Hashable {
     var loaded = false
     var enabled = false

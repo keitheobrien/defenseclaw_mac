@@ -2122,7 +2122,8 @@ final class AppState {
             // The drift check compares against claw.mode with the runtime
             // loader's "openclaw" default (NOT connectorMode's fallback chain).
             let configured = config.clawMode.trimmingCharacters(in: .whitespaces)
-            if !live.isEmpty, !configured.isEmpty, live != configured {
+            if ConnectorOnboarding.hasConnectorDrift(configured: configured, live: live,
+                                                       registered: Array(config.connectorModes.keys)) {
                 notices.append(.init(level: .warn, message: "Connector drift: configured \(friendlyConnectorName(configured)) but gateway is routing for \(friendlyConnectorName(live)) - restart the sidecar after editing claw.mode"))
             }
             if primary.requests == 0, health.uptimeMs > 60_000 {
@@ -2601,8 +2602,8 @@ final class AppState {
     /// Every agent DefenseClaw knows how to hook — the catalog-scan and
     /// Connectors-table fallback roster.
     static let knownConnectors = ["openclaw", "zeptoclaw", "codex", "claudecode", "hermes",
-                                  "cursor", "devin", "copilot", "openhands",
-                                  "antigravity", "opencode", "amp", "omnigent"]
+                                  "cursor", "devin", "copilot",
+                                  "antigravity", "opencode", "amp", "kiro"]
 
     func configuredConnectors() -> [String] {
         let fromHealth = health.connectors.map(\.name)

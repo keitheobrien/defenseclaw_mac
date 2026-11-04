@@ -1,0 +1,278 @@
+[
+  {
+    "script": "test_ai_discovery_actions.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 3.4
+  },
+  {
+    "script": "test_ai_model_discovery.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 3.0
+  },
+  {
+    "script": "test_alert_queue_projection.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 3.5
+  },
+  {
+    "script": "test_app_state_signal_safety.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 3.5
+  },
+  {
+    "script": "test_canonical_event_history.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 9.2
+  },
+  {
+    "script": "test_catalog_action_safety.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 16.9
+  },
+  {
+    "script": "test_cli_cancellation.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 25.5
+  },
+  {
+    "script": "test_config_editor_contracts.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 6.5
+  },
+  {
+    "script": "test_connector_inventory_compatibility.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 4.2
+  },
+  {
+    "script": "test_connector_onboarding.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 2.8
+  },
+  {
+    "script": "test_dependency_lock_validator.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 0.5
+  },
+  {
+    "script": "test_first_run_connector_selection.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 2.0
+  },
+  {
+    "script": "test_flat_runtime_packaging.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 0.3
+  },
+  {
+    "script": "test_gateway_admin_helper.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 2.5
+  },
+  {
+    "script": "test_gateway_admin_packaging.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 0.4
+  },
+  {
+    "script": "test_gateway_administrator.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 11.8
+  },
+  {
+    "script": "test_gateway_auto_start.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 2.1
+  },
+  {
+    "script": "test_gateway_signing_contract.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 0.4
+  },
+  {
+    "script": "test_inspector_layout_policy.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 11.7
+  },
+  {
+    "script": "test_inspector_native_layout.sh",
+    "status": "SKIP",
+    "exit_code": 0,
+    "seconds": 0.0
+  },
+  {
+    "script": "test_installation_context.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 14.6
+  },
+  {
+    "script": "test_inventory_capability_warnings.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 2.3
+  },
+  {
+    "script": "test_local_model_discovery.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 3.0
+  },
+  {
+    "script": "test_main_window_lifecycle.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 2.0
+  },
+  {
+    "script": "test_numeric_safety.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 3.6
+  },
+  {
+    "script": "test_operator_asset_lists.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 4.5
+  },
+  {
+    "script": "test_output_safety.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 11.8
+  },
+  {
+    "script": "test_overview_read_only_guidance.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 1.7
+  },
+  {
+    "script": "test_policy_catalog.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 0.9
+  },
+  {
+    "script": "test_policy_models.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 2.0
+  },
+  {
+    "script": "test_redaction_commands.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 2.2
+  },
+  {
+    "script": "test_resource_boundaries.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 7.2
+  },
+  {
+    "script": "test_runtime_compat_audit.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 0.2
+  },
+  {
+    "script": "test_runtime_contract_surfaces.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 3.4
+  },
+  {
+    "script": "test_runtime_install_filesystem.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 3.7
+  },
+  {
+    "script": "test_runtime_protected_artifact.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 2.8
+  },
+  {
+    "script": "test_runtime_ui_compatibility.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 1.8
+  },
+  {
+    "script": "test_sandbox_inspection.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 16.5
+  },
+  {
+    "script": "test_sandbox_models.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 5.4
+  },
+  {
+    "script": "test_secret_file_safety.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 3.6
+  },
+  {
+    "script": "test_setup_definitions_parity.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 2.8
+  },
+  {
+    "script": "test_structured_detail_parser.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 2.0
+  },
+  {
+    "script": "test_supply_chain_safety.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 0.0
+  },
+  {
+    "script": "test_toolbar_help.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 1.9
+  },
+  {
+    "script": "test_update_checker_safety.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 9.9
+  },
+  {
+    "script": "test_update_checker_verification.sh",
+    "status": "PASS",
+    "exit_code": 0,
+    "seconds": 9.5
+  }
+]

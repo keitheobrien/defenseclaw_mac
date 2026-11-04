@@ -1,0 +1,106 @@
+[
+  {
+    "panel": "Alerts",
+    "window": "Alerts",
+    "rows": 53,
+    "loading": false,
+    "error": false,
+    "hasTable": true
+  },
+  {
+    "panel": "Logs",
+    "window": "Logs",
+    "rows": 43,
+    "loading": false,
+    "error": false,
+    "hasTable": true
+  },
+  {
+    "panel": "Audit",
+    "window": "Audit",
+    "rows": 57,
+    "loading": false,
+    "error": false,
+    "hasTable": true
+  },
+  {
+    "panel": "Activity",
+    "window": "Activity",
+    "rows": 21,
+    "loading": false,
+    "error": false,
+    "hasTable": true
+  },
+  {
+    "panel": "Skills",
+    "window": "Skills",
+    "rows": 34,
+    "loading": false,
+    "error": false,
+    "hasTable": true
+  },
+  {
+    "panel": "MCPs",
+    "window": "MCPs",
+    "rows": 23,
+    "loading": false,
+    "error": false,
+    "hasTable": true
+  },
+  {
+    "panel": "Plugins",
+    "window": "Plugins",
+    "rows": 21,
+    "loading": true,
+    "error": false,
+    "hasTable": true
+  },
+  {
+    "panel": "Tools",
+    "window": "Tools",
+    "rows": 21,
+    "loading": false,
+    "error": false,
+    "hasTable": true
+  },
+  {
+    "panel": "Policies",
+    "window": "Policies",
+    "rows": 21,
+    "loading": false,
+    "error": false,
+    "hasTable": true
+  },
+  {
+    "panel": "Sandboxes",
+    "window": "Sandboxes",
+    "rows": 21,
+    "loading": false,
+    "error": false,
+    "hasTable": true
+  },
+  {
+    "panel": "AI Discovery",
+    "window": "AI Discovery",
+    "rows": 36,
+    "loading": false,
+    "error": false,
+    "hasTable": true
+  },
+  {
+    "panel": "Registries",
+    "window": "Registries",
+    "rows": 21,
+    "loading": false,
+    "error": false,
+    "hasTable": true
+  },
+  {
+    "panel": "Setup",
+    "window": "Setup",
+    "rows": 43,
+    "loading": false,
+    "error": false,
+    "hasTable": true
+  }
+]

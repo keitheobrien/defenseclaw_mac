@@ -111,6 +111,9 @@ struct SetupDefinitionsParityTests {
         disabledDiscoveryDropsTuningOptions()
         seedsDiscoveryFromTheSelectedConfig()
         validatesDiscoveryCLIRanges()
+        let currentConnectors = ["openclaw", "zeptoclaw", "codex", "claudecode", "hermes", "cursor", "devin", "copilot", "antigravity", "opencode", "amp", "kiro"]
+        expect(TUIWizards.connectors == currentConnectors, "native setup choices match runtime 1.0.5")
+        expect(TUIWizards.all.first { $0.id == "connector" }!.commandBuilder!(["connector": "kiro"], false).first?.prefix(2) == ["setup", "kiro"], "Kiro setup builds native CLI arguments")
         observabilityNeverEmitsAnUnsupportedConnectorOption()
         guardrailDefaultsNeverGuessTheWrongConnector()
         llmDefaultsPreserveTheSelectedProvider()

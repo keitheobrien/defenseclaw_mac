@@ -780,16 +780,25 @@ struct OverviewView: View {
     /// runtime-loaded OTel destination and audit sink from /health, with
     /// delivery/eligibility routing labels and redacted endpoints (TUI
     /// _overview_observability_panel).
+    private func destinationColor(_ state: String) -> Color {
+        switch EntityState.classify(state) {
+        case .active: return Cisco.green
+        case .blocked, .quarantined: return Cisco.red
+        case .warn: return Cisco.orange
+        default: return .secondary
+        }
+    }
+
     private var observabilityCard: some View {
         DCCard("Observability Destinations · Runtime", systemImage: "antenna.radiowaves.left.and.right") {
             if appState.health.observabilityRows.isEmpty {
-                Text("No runtime-loaded destinations. Configure one in Setup → Observability / Galileo, then restart the gateway.")
+                Text("No runtime-loaded destinations. Configure one in Setup → Observability / Galileo, then refresh after the gateway applies it.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
                 Table(appState.health.observabilityRows) {
                     TableColumn("Name") { row in
-                        Text(row.name).fontWeight(.medium)
+                        Text(row.name).fontWeight(.medium).help(row.detail)
                     }
                     TableColumn("Target", value: \.target).width(78)
                     TableColumn("Scope") { row in
@@ -802,20 +811,21 @@ struct OverviewView: View {
                     .width(90)
                     TableColumn("State") { row in
                         Text(row.state)
-                            .foregroundStyle(row.state == "enabled" ? Cisco.green : Color.secondary)
+                            .foregroundStyle(destinationColor(row.state))
+                            .help(row.detail)
                     }
-                    .width(64)
+                    .width(88)
                     TableColumn("Signals") { row in
                         Text(row.signals).foregroundStyle(.secondary)
                     }
                     .width(130)
-                    TableColumn("Routing") { row in
+                    TableColumn("Delivery") { row in
                         Text(row.routing.nonEmpty ?? "—")
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(Cisco.sky)
                             .lineLimit(1)
                             .truncationMode(.tail)
-                            .help(row.routing.nonEmpty ?? "No routing data yet")
+                            .help(row.detail)
                     }
                     TableColumn("Endpoint") { row in
                         Text(row.endpoint)
@@ -827,6 +837,11 @@ struct OverviewView: View {
                 }
                 .frame(height: CGFloat(appState.health.observabilityRows.count) * 28 + 32)
                 .scrollDisabled(true)
+                ForEach(appState.health.observabilityRows.filter { !$0.queue.isEmpty || !$0.healthReason.isEmpty }) { row in
+                    Text("\(row.name): \(row.state) · \(row.healthReason) · \(row.queue)")
+                        .font(.caption).foregroundStyle(destinationColor(row.state))
+                        .textSelection(.enabled).help(row.detail)
+                }
                 Text("Names are identities: a new name adds a route; the same name updates it. Manage in Setup → Observability / Galileo.")
                     .font(.caption2)
                     .italic()

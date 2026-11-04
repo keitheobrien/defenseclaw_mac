@@ -3,14 +3,14 @@ import Foundation
 @main
 enum RuntimeContractSurfaceTests {
     static func main() {
-        precondition(CommandRegistry.sourceCount == 251, "unexpected upstream command count")
+        precondition(CommandRegistry.sourceCount == 249, "unexpected upstream command count")
         precondition(CommandRegistry.all.count == CommandRegistry.sourceCount, "registry count mismatch")
 
         let titles = CommandRegistry.all.map(\.title)
         precondition(Set(titles).count == titles.count, "command titles must be unique")
         precondition(titles.contains("setup amp"), "Amp setup command is missing")
         precondition(titles.contains("setup kiro"), "Kiro setup command is missing")
-        precondition(titles.contains("setup omnigent"), "OmniGent setup command is missing")
+        precondition(!titles.contains("setup omnigent") && !titles.contains("setup openhands"), "retired connector setup commands remain")
         precondition(titles.contains("setup galileo"), "Galileo setup command is missing")
         // `keys set` secret transport (runtime 1.0.0+ documents --value-stdin).
         let keysSetArgv = ["keys", "set", "OPENAI_API_KEY"]

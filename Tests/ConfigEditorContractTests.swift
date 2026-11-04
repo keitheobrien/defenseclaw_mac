@@ -23,6 +23,8 @@ import Foundation
 @main
 struct ConfigEditorContractTests {
     static func main() {
+        expect(ConfigEditorCatalog.connectors == ["openclaw", "zeptoclaw", "codex", "claudecode", "hermes", "cursor", "devin", "copilot", "antigravity", "opencode", "amp", "kiro"],
+               "offline connector choices match runtime 1.0.5")
         restartIsQueuedOnlyForKeysTheGatewayReadsAtStart()
         anOpenDraftSurvivesADiskGeneration()
         invalidConfigIsNamedWithItsLine()

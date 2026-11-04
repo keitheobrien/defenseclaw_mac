@@ -61,9 +61,9 @@ enum EntityState: String {
         switch raw.lowercased() {
         case "active", "running", "enabled", "clean", "pass", "ok", "healthy", "allow", "allowed", "connected":
             return .active
-        case "blocked", "error", "rejected", "stopped", "fail", "failed", "block", "offline":
+        case "blocked", "error", "rejected", "stopped", "fail", "failed", "failing", "block", "offline":
             return .blocked
-        case "warn", "warning", "reconnecting", "starting", "stale", "degraded", "observe", "not configured", "unconfigured":
+        case "warn", "warning", "reconnecting", "starting", "stale", "degraded", "observe", "not configured", "unconfigured", "unavailable":
             return .warn
         case "quarantined":
             return .quarantined
@@ -142,7 +142,18 @@ struct ObservabilityDestinationRow: Identifiable, Sendable {
     var signals: String
     var routing: String     // "" renders as "—"
     var endpoint: String    // pre-redacted for display
+    var policyState: String = ""
+    var queue: String = ""
+    var healthReason: String = ""
+    var circuit: String = ""
     var id: String { "\(target)/\(name)" }
+
+    var detail: String {
+        ["Policy: \(policyState)", "Health: \(state)", healthReason,
+         "Signals: \(signals)", routing, queue.isEmpty ? "" : "Queue: \(queue)",
+         circuit.isEmpty ? "" : "Circuit: \(circuit)", "Endpoint: \(endpoint)"]
+            .filter { !$0.isEmpty }.joined(separator: "\n")
+    }
 }
 
 struct ConnectorHealth: Identifiable, Sendable {

@@ -14,6 +14,9 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE" xcrun swiftc \
   "$ROOT/DefenseClawMac/DataLayer/CLIRunner.swift" \
   "$ROOT/DefenseClawMac/DataLayer/GatewayAdminProtocol.swift" \
   "$ROOT/DefenseClawMac/DataLayer/GatewayAdministratorClient.swift" \
+  "$ROOT/DefenseClawMac/DataLayer/AlertDispositionCommand.swift" \
+  "$ROOT/DefenseClawMac/DataLayer/CommandRegistry.swift" \
+  "$ROOT/DefenseClawMac/DataLayer/CommandActivityStore.swift" \
   "$ROOT/Tests/CLICancellationTests.swift" \
   -o "$BUILD_DIR/CLICancellationTests"
 

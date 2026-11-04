@@ -22,6 +22,10 @@ struct SandboxModelTests {
     private static var failureCount = 0
 
     static func main() {
+        let unsynced = SandboxStopOutcome.keptRunning(name: "fixture", output: "disk could not be\nsynced first")
+        expect(unsynced.contains("keeps running") && unsynced.contains("could not be synced"), "unsynced stop preserves the running sandbox")
+        let full = SandboxStopOutcome.keptRunning(name: "fixture", output: "disk is full")
+        expect(full.contains("full") && full.contains("pull"), "full disk stop explains how to recover work")
         decodesTheStatusAndSandboxes()
         sortsRunningSandboxesFirstAndKeepsPendingAsks()
         mergesEventsBySequenceAndNotifiesOnce()
