@@ -1,0 +1,44 @@
+[
+  {
+    "view": "Posture",
+    "selected": true,
+    "hasRows": true,
+    "hasError": false
+  },
+  {
+    "view": "Opt-in packs",
+    "selected": true,
+    "hasRows": true,
+    "hasError": false
+  },
+  {
+    "view": "Chains",
+    "selected": true,
+    "hasRows": true,
+    "hasError": false
+  },
+  {
+    "view": "Rule families",
+    "selected": true,
+    "hasRows": true,
+    "hasError": false
+  },
+  {
+    "view": "Policies",
+    "selected": true,
+    "hasRows": true,
+    "hasError": false
+  },
+  {
+    "view": "Rule packs",
+    "selected": true,
+    "hasRows": true,
+    "hasError": false
+  },
+  {
+    "view": "Sandbox packs",
+    "selected": true,
+    "hasRows": true,
+    "hasError": false
+  }
+]

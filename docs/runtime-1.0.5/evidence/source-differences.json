@@ -1,0 +1,307 @@
+{
+  "release_commit": "ede59bd77ff633f5014dff7964631e42088697e7",
+  "historical_baseline_commit": "00ef714b8a47f3ba90dad69b91dc8aa40c735057",
+  "baseline_rewritten": false,
+  "differences": [
+    {
+      "path": "App/AppState.swift",
+      "local_sha256": "95da4bbc64d54c42fc9098f874873105cc58f871f153b4669c6ed8a208be8ce4",
+      "upstream_sha256": "aa598669bae600e10c23036fffad738dea44b17bbafc8a650ea1659122a29427",
+      "local_matches_historical_baseline": false
+    },
+    {
+      "path": "App/DefenseClawApp.swift",
+      "local_sha256": "bd905801a60475f28ae0050ea13d7d542d1c87df839dde0bce78dd579a324816",
+      "upstream_sha256": "8609a998a005c85b65450e7c1d432408c884694a3be9b7203b3663c2252f3f8f",
+      "local_matches_historical_baseline": true
+    },
+    {
+      "path": "DataLayer/AIDiscoveryActionPolicy.swift",
+      "local_sha256": "d44fdacb5eb796828da0979126de1d708cc705e515525795ad20e14ae5b2584e",
+      "upstream_sha256": "6d625b828e70fef1c31962b5ab79f9454a4d6441e32ae65922ef3dbe8227a93b",
+      "local_matches_historical_baseline": true
+    },
+    {
+      "path": "DataLayer/AIRuntimeModels.swift",
+      "local_sha256": "c00532db0c6c7fd8e42f826e505bee96b2d2c2c2397350691d846e20b23c0e69",
+      "upstream_sha256": "311b051a33374c91262ab085ada941e58688947a2363784b32e878f5b61fc129",
+      "local_matches_historical_baseline": false
+    },
+    {
+      "path": "DataLayer/AlertDispositionCommand.swift",
+      "local_sha256": "f4347ba51e727c6c01aedab9473d4bf701dcc3d1679ad9835aaacc23eee12472",
+      "upstream_sha256": "a68b927ff7f57c7d81a819ea2bdfe6c050ab0bd38342a8161e9253e694fd5b7b",
+      "local_matches_historical_baseline": true
+    },
+    {
+      "path": "DataLayer/AuditStore.swift",
+      "local_sha256": "124dabdcd7d8bd39a7ceb63a231f45c55fb7f64f62157f6645d58685ff2eec3e",
+      "upstream_sha256": "8cc947e482ba745afd34780557c24721bb1a7dce5e6155072e929a1f5d8ae542",
+      "local_matches_historical_baseline": false
+    },
+    {
+      "path": "DataLayer/CatalogCLI.swift",
+      "local_sha256": "61d69e4e897a97f85796792fd375ee935359349f5bca2c4c1b3ddcc1e31f35dc",
+      "upstream_sha256": "897e2f534910468c53d8384c83a85161e57cf10feacbe033f89e5c79bc7a3fe1",
+      "local_matches_historical_baseline": true
+    },
+    {
+      "path": "DataLayer/CommandActivityStore.swift",
+      "local_sha256": "af47cb22da7124a0f821391176f02453a04c137bde8d3bc07c0af7f4e391a2f0",
+      "upstream_sha256": "0023973544bc13c93e7eb89cb28e4adf308f5ec4f298872de128d6a13d7445b2",
+      "local_matches_historical_baseline": false
+    },
+    {
+      "path": "DataLayer/CommandRegistry.swift",
+      "local_sha256": "475c57331a82df5ac917900516e9bd183d0b9bfe63b53709839cdb227b4bc8d8",
+      "upstream_sha256": "7def081d874c185cce283377ec3b402e10df1898a8688682b6d984cf92a6706b",
+      "local_matches_historical_baseline": false
+    },
+    {
+      "path": "DataLayer/ConfigStore.swift",
+      "local_sha256": "5eb317cbcab0a96e513e3dafe68f86678667ee15299a86518903fc2c69718690",
+      "upstream_sha256": "471406d1ccda67ad83d9706002856ecece38f3190941b3ec45474093a112f08b",
+      "local_matches_historical_baseline": false
+    },
+    {
+      "path": "DataLayer/ConnectorOnboarding.swift",
+      "local_sha256": "46325f322d7e75973a0d350e56010ca7c903f588457afbe6c4d5c85aead6558e",
+      "upstream_sha256": "4c2d35192646a779e17eb8f50ae1b8fa31c5b26e4f0e67d83b2b4f2f768b2311",
+      "local_matches_historical_baseline": false
+    },
+    {
+      "path": "DataLayer/GatewayAdminProtocol.swift",
+      "local_sha256": "13e94d5c984441028ca4cbf0d3d5bc3fafcbd544ed9accddcb5a90ed421c8cc6",
+      "upstream_sha256": "96a698c47ff59fea05b16c320e8a3570edb65aed1870da3813893d5779997159",
+      "local_matches_historical_baseline": true
+    },
+    {
+      "path": "DataLayer/GatewayAdministratorClient.swift",
+      "local_sha256": "3e86c47ab6323184e619b72d199c186410932cf42e70d014b62c5944108c75c0",
+      "upstream_sha256": "f6c2e079398faf539ba8a03c56bfcd81d2553b64b355009d66309d8c5d6c4112",
+      "local_matches_historical_baseline": true
+    },
+    {
+      "path": "DataLayer/GatewayAutoStartCoordinator.swift",
+      "local_sha256": "7974b7b319cdb2b79d184753a560d714a2c10f58cc7d5ebc32c4ef9fdb5bdeac",
+      "upstream_sha256": "a313917dfd5167559eb127434d754fff279d5dd2b1fc62004311aba3fe98baf2",
+      "local_matches_historical_baseline": true
+    },
+    {
+      "path": "DataLayer/GatewayClient.swift",
+      "local_sha256": "b8c118262a386e3f128d66afc515e994e436ecd264b56ebffd96058c58c1db51",
+      "upstream_sha256": "322929617480d69d1eacae314941a2b02dca2ae77c435d8ff9a0d620d71939de",
+      "local_matches_historical_baseline": false
+    },
+    {
+      "path": "DataLayer/Models.swift",
+      "local_sha256": "cbcfe6758818af44d5ceddf7626b3eab73ac36bfbabef511efe7c9dbcc971207",
+      "upstream_sha256": "2ead7025dad98cd03b11e107e267fe9a9e56ea1d8f19f09345f57f8f816ad74d",
+      "local_matches_historical_baseline": false
+    },
+    {
+      "path": "DataLayer/OperatorAssetLists.swift",
+      "local_sha256": "ec08676071c8844d43d197ac05e5c681ec12c11ce62674d53821b7dbe0adb848",
+      "upstream_sha256": "missing",
+      "local_matches_historical_baseline": false
+    },
+    {
+      "path": "DataLayer/OperatorAssetListsConfig.swift",
+      "local_sha256": "bd2ab820020c7925b0e260e0995dfc3769dbcadb8d96154bd7de16c6570509e8",
+      "upstream_sha256": "missing",
+      "local_matches_historical_baseline": false
+    },
+    {
+      "path": "DataLayer/PolicyCatalog.swift",
+      "local_sha256": "4afcf77910c073031a612dac734aaf501b7af2de8b9ab3291e660f963a094591",
+      "upstream_sha256": "fbd682d4d13f26bb520fa88563b3b715b490aea11092c3d21bd45adf4f20b8c1",
+      "local_matches_historical_baseline": true
+    },
+    {
+      "path": "DataLayer/RedactionCommands.swift",
+      "local_sha256": "17a54de96c92524bd8580fd11e12c17b5417827abd6dc4a9ab645281b21a42af",
+      "upstream_sha256": "e97b020c85875fc2beefd2ddaafe53fb6d509dd4403e11c545965db797395763",
+      "local_matches_historical_baseline": true
+    },
+    {
+      "path": "DataLayer/RuntimeInstallFilesystem.swift",
+      "local_sha256": "6260bc7f2f9171979c25891746d1ff1ceb760daaef4c0211782809cc3fbe9ecf",
+      "upstream_sha256": "missing",
+      "local_matches_historical_baseline": true
+    },
+    {
+      "path": "DataLayer/RuntimeInstaller.swift",
+      "local_sha256": "11b60e0de999f2d962740d9b878a40c8166fafc5ff48a1039118f1e69617ba5f",
+      "upstream_sha256": "missing",
+      "local_matches_historical_baseline": true
+    },
+    {
+      "path": "DataLayer/RuntimeV1Alerts.swift",
+      "local_sha256": "b99ea9a014ebcb20ec6f36f94897561cd06010f6a2a5a8c54b3d5b2081daaf01",
+      "upstream_sha256": "78ce7d3eb6bfab0baf83d39f0e7a34daef276f51a5e55c4626730eac4ee0b1f1",
+      "local_matches_historical_baseline": true
+    },
+    {
+      "path": "DataLayer/RuntimeV1Inventory.swift",
+      "local_sha256": "ca8937e3443f5051e8765109e7db620cfbdfa6d45834819b9b4b0a6ef56ce7e5",
+      "upstream_sha256": "5e69f2fed1557f147e2c2e1fe700d7125759c2005e1468861d2a0a58e43371f9",
+      "local_matches_historical_baseline": false
+    },
+    {
+      "path": "DataLayer/SandboxInspection.swift",
+      "local_sha256": "a8e1c11a66103eafc95a2b7444e3f1a52be3ec8a7ca4ae77884ece2d2fa885f9",
+      "upstream_sha256": "396d1003f96cbffd28469cad5df299059087665bcb0021e9f2ad751de0198e32",
+      "local_matches_historical_baseline": true
+    },
+    {
+      "path": "DataLayer/SandboxInspectionStore.swift",
+      "local_sha256": "df15f3463ad6b4d81bbedb286e01365f4f9791933caa291b789d88efd9374939",
+      "upstream_sha256": "ab725dfba7b37347ecf753d107095622cdc25803a1501444bc978be59e690ee4",
+      "local_matches_historical_baseline": true
+    },
+    {
+      "path": "DataLayer/SandboxModels.swift",
+      "local_sha256": "ef791b796939a80eb71734be088295a8d941d0342289027e089fd7f1b1b4c627",
+      "upstream_sha256": "1ec118e11fc32a9901ddfd95945230fba489d2d05e258fdcdadb1e807fceb602",
+      "local_matches_historical_baseline": false
+    },
+    {
+      "path": "DataLayer/SkillScanner.swift",
+      "local_sha256": "033f3c4b86f6d14883fd78ae9dc0aadfe2bc28f46017117c9801f07e346d74d9",
+      "upstream_sha256": "2473f04b8c1ae2dc341e5ad9ea0a01ec25663cda6f52a6fbfe599c6545f78f49",
+      "local_matches_historical_baseline": false
+    },
+    {
+      "path": "DataLayer/StructuredDetailParser.swift",
+      "local_sha256": "9fdd308a78d584bb5040b82e8e7184e21d64417b08755200333ad8964d7cc040",
+      "upstream_sha256": "5ffc9f7f08e3613d7976201a71d1acaf1d0c05f57b81035dc7fa68d86543d480",
+      "local_matches_historical_baseline": true
+    },
+    {
+      "path": "DataLayer/UpdateChecker.swift",
+      "local_sha256": "5999b054697d0678db75d1fd1b948ac491535f1204aa9842f0980c78f1b459b8",
+      "upstream_sha256": "e7597f3cfc09425327501f55b3bb5288bd6591222889a697a76c7316e52daa1e",
+      "local_matches_historical_baseline": true
+    },
+    {
+      "path": "DesignSystem/InspectorLayoutPolicy.swift",
+      "local_sha256": "1c848f727c50fa1327da556523db5c84be4eb4abf7b4c48c499ecec023f1fc79",
+      "upstream_sha256": "b2d3fd17c69d00711cf9dab2a842e1f83a099ab0b8c360d8ef2e00a78c8893dc",
+      "local_matches_historical_baseline": true
+    },
+    {
+      "path": "DesignSystem/QuickHoverHelp.swift",
+      "local_sha256": "b1173bbd1359de982efaa3819e7a1ab1375bde9b70abc303a9e77acaa1b0e462",
+      "upstream_sha256": "83df45f06cd85590d5d400d0eb2c493c384fc0bc503840cdc7a35f255a60e1e7",
+      "local_matches_historical_baseline": true
+    },
+    {
+      "path": "Features/AIRuntimeView.swift",
+      "local_sha256": "edd1ad0aed0640de5ebcd65bcffc872d570e8021b92d88d368803cff2cd8899a",
+      "upstream_sha256": "30b4af8fb6c09350694dee23716cd5e78bf43437fcc8bb04867ea1b64822d4e6",
+      "local_matches_historical_baseline": false
+    },
+    {
+      "path": "Features/AlertsView.swift",
+      "local_sha256": "36447f33d8c7e2f213d0b1c55e5c0509c0aac4a6a05014452ddde7252cd6e75a",
+      "upstream_sha256": "f87f620b1200a87976cfab32fca6bc89352fd4c4cc8be0e2338a20794a7fbecb",
+      "local_matches_historical_baseline": false
+    },
+    {
+      "path": "Features/AppSettingsView.swift",
+      "local_sha256": "488991020fb614bdc5f1503662617e8e96597bffdbd3e2b1169f25d3c3a542f6",
+      "upstream_sha256": "ad6734335dec9e4057338a8a25be18cfc1ff88992e2e664b2ab9052d7ce46642",
+      "local_matches_historical_baseline": true
+    },
+    {
+      "path": "Features/CatalogViews.swift",
+      "local_sha256": "7827676b5e29ce68efbc5a019939ff391b801f0f58de77340c898e45ab337aff",
+      "upstream_sha256": "0b9efbedcfc10a0da139fd357de88344a0db7eb788f6f42dc2ee6e90744de7a2",
+      "local_matches_historical_baseline": false
+    },
+    {
+      "path": "Features/ConfigEditorDefinitions.swift",
+      "local_sha256": "2c73c6313a48e585b2fcd4d069f511adffcfff06f9c9eaf153411d5a373b613a",
+      "upstream_sha256": "56abab36b6120c083facaecd14ba12e749ebe54df604c460b215f38255a02fca",
+      "local_matches_historical_baseline": false
+    },
+    {
+      "path": "Features/DiscoverViews.swift",
+      "local_sha256": "78f1e329deb5de4c6be7391d337037cc2fc96d74accc901391c2d4f9e0e3dc2f",
+      "upstream_sha256": "34d927a572731969ad9e0dd2bd6365aabd9f91c2ccd35d567b972f61f84ed430",
+      "local_matches_historical_baseline": false
+    },
+    {
+      "path": "Features/FirstRunView.swift",
+      "local_sha256": "f0055ff0b35430fc583905bb5d5e41ba98673e4c46df0f3faf19dc633bd66818",
+      "upstream_sha256": "88d51750d63fdc08bea491683bad225fd4209ee2fe0fdc58213153a125e92a5c",
+      "local_matches_historical_baseline": false
+    },
+    {
+      "path": "Features/LocalModelsView.swift",
+      "local_sha256": "c5d35599bc4cd8849affced74aabf0d17e45cb161c75bc78974747d3e2e345c8",
+      "upstream_sha256": "a8e1e69cb677dac019c1badf19e4a61f8618b033a2f76c2d7d0d75a56a4e7d71",
+      "local_matches_historical_baseline": false
+    },
+    {
+      "path": "Features/LogsView.swift",
+      "local_sha256": "298425e9b33d65fdb267508d2894bad468f5f040cefb75d0eb274ad47aadfb10",
+      "upstream_sha256": "365d5eff8688d0f8b305138c0d2a56ab82bf547634222f66e6afd13f804027bc",
+      "local_matches_historical_baseline": true
+    },
+    {
+      "path": "Features/MainWindow.swift",
+      "local_sha256": "8c5bfcc70bdaef367b7a860dafdb119fe78b983e279d8fa675a27e4442b5ce43",
+      "upstream_sha256": "d972c9f4a3d80be90e12af4a689b3dca1ecdfdb5c66ff1c959111b03ede1bd8d",
+      "local_matches_historical_baseline": true
+    },
+    {
+      "path": "Features/OverviewView.swift",
+      "local_sha256": "b85e04484776f78d98ef26c19895a9eb79158605146221fc649c89aac319d9c9",
+      "upstream_sha256": "f14ec95f24705c19edcf4b14d12ead8990efa1f8999ab00a8f67e344dbdee52c",
+      "local_matches_historical_baseline": false
+    },
+    {
+      "path": "Features/PoliciesView.swift",
+      "local_sha256": "b52496dc27a9cb184ec8dc4106e5c338648aa3665f725a880adc185d6a8d9834",
+      "upstream_sha256": "4811fe1fa7d3ce2ba228f47e039342910a61f12d4ac3b85670dcd570aaddfe90",
+      "local_matches_historical_baseline": true
+    },
+    {
+      "path": "Features/RedactionPolicyView.swift",
+      "local_sha256": "7d5ec83c869f45a99623d6a552454b767e51749213caadc022274082d4b2ae55",
+      "upstream_sha256": "2c67023dfbcb1b67eedadea813eae6af594b2bb8c143d46dad51ce8c787fb445",
+      "local_matches_historical_baseline": true
+    },
+    {
+      "path": "Features/SandboxInspectorView.swift",
+      "local_sha256": "6c2213914976fcdfbacafd4244575ac41bb08b427615909186e0f0e3e9d10099",
+      "upstream_sha256": "c3c6f6f213b3fa4cd0d7e4bc993729ea86e1e5dcc5b583e0aef78a0055216184",
+      "local_matches_historical_baseline": true
+    },
+    {
+      "path": "Features/SandboxesView.swift",
+      "local_sha256": "1d60f3c81da96e284fe8c95add3823d1ae6908147b1e5f0003e5da89103799ce",
+      "upstream_sha256": "0a796192b6127fd9889fd9aff1b26c00a4d2b5bb855cbc6b935ee8b6872d42e4",
+      "local_matches_historical_baseline": false
+    },
+    {
+      "path": "Features/SetupDefinitions.swift",
+      "local_sha256": "a4b1345930305f32adbd336918a1aefc7561aa1ce28c006f21ab911f67d9b204",
+      "upstream_sha256": "4e0d8cf0a663107b2df9afbf8bf4ae98ce5a5f4c78a4eabcb0519b0c65ab1a01",
+      "local_matches_historical_baseline": false
+    },
+    {
+      "path": "Features/SetupView.swift",
+      "local_sha256": "13cbcc534fcd464a8b2f5aacd434d93b2b17e29de63fc5f78a6e75a63e46aa31",
+      "upstream_sha256": "3b698f3c43614c59f73d2798c4f6e02bc5367588c1a0ca85aaf966b7f159d3ca",
+      "local_matches_historical_baseline": false
+    },
+    {
+      "path": "Resources/policy_catalog_bridge.py",
+      "local_sha256": "6a19dffa5ac48cd4d31145c9a4b0cb0aca0a69429b4849e8740ea5a7d4c49ed0",
+      "upstream_sha256": "7e82b0ea85339f1ae4950d4128b511b3a63e28244c1ecb745243a4ee02685d73",
+      "local_matches_historical_baseline": false
+    }
+  ]
+}

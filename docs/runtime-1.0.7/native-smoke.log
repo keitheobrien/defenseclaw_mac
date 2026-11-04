@@ -1,0 +1,195 @@
+Native panel artifacts: /var/folders/98/c5z97r555l9gcwzqktsc2_gw0000gn/T/defenseclawmac-panel-tests-ycuk3m58
+Fixture: {'root': '/private/tmp/defenseclawmac-parity-q74mrl0u', 'port': 65154, 'cli': '/private/tmp/defenseclawmac-parity-q74mrl0u/bin/defenseclaw'}
+sandbox_extension_issue_file_to_process failed for /var/folders/98/c5z97r555l9gcwzqktsc2_gw0000gn/T/defenseclawmac-panel-tests-ycuk3m58/build/Build/Products/Debug/DefenseClawMac.app: 1 (Operation not permitted)
+could not create image from window
+could not create image from window
+could not create image from window
+NOTE bitmap fallback for overview: window capture unavailable
+NOTE bitmap fallback for overview-detail: window capture unavailable
+NOTE bitmap fallback for overview-detail: window capture unavailable
+PASS render overview; tables=2; rows=[1, 2]
+could not create image from window
+could not create image from window
+NOTE bitmap fallback for alerts: window capture unavailable
+NOTE bitmap fallback for alerts-detail: window capture unavailable
+PASS render alerts; tables=1; rows=[1]
+could not create image from window
+could not create image from window
+NOTE bitmap fallback for logs: window capture unavailable
+NOTE bitmap fallback for logs-detail: window capture unavailable
+PASS render logs; tables=1; rows=[2]
+could not create image from window
+could not create image from window
+NOTE bitmap fallback for audit: window capture unavailable
+NOTE bitmap fallback for audit-detail: window capture unavailable
+PASS render audit; tables=1; rows=[4]
+could not create image from window
+could not create image from window
+NOTE bitmap fallback for activity: window capture unavailable
+NOTE bitmap fallback for activity-detail: window capture unavailable
+PASS render activity; tables=1; rows=[1]
+could not create image from window
+could not create image from window
+NOTE bitmap fallback for skills: window capture unavailable
+NOTE bitmap fallback for skills-detail: window capture unavailable
+PASS render skills; tables=1; rows=[1]
+could not create image from window
+could not create image from window
+NOTE bitmap fallback for mcps: window capture unavailable
+NOTE bitmap fallback for mcps-detail: window capture unavailable
+PASS render mcps; tables=1; rows=[1]
+could not create image from window
+could not create image from window
+NOTE bitmap fallback for plugins: window capture unavailable
+NOTE bitmap fallback for plugins-detail: window capture unavailable
+PASS render plugins; tables=1; rows=[1]
+could not create image from window
+could not create image from window
+NOTE bitmap fallback for tools: window capture unavailable
+NOTE bitmap fallback for tools-detail: window capture unavailable
+PASS render tools; tables=1; rows=[1]
+could not create image from window
+could not create image from window
+NOTE bitmap fallback for policies: window capture unavailable
+NOTE bitmap fallback for policies-detail: window capture unavailable
+PASS render policies; tables=1; rows=[2]
+could not create image from window
+could not create image from window
+NOTE bitmap fallback for sandboxes: window capture unavailable
+NOTE bitmap fallback for sandboxes-detail: window capture unavailable
+PASS render sandboxes; tables=1; rows=[1]
+could not create image from window
+could not create image from window
+NOTE bitmap fallback for inventory: window capture unavailable
+NOTE bitmap fallback for inventory-detail: window capture unavailable
+PASS render inventory; tables=1; rows=[1]
+could not create image from window
+could not create image from window
+NOTE bitmap fallback for aiDiscovery: window capture unavailable
+NOTE bitmap fallback for aiDiscovery-detail: window capture unavailable
+PASS render aiDiscovery; tables=1; rows=[1]
+could not create image from window
+NOTE bitmap fallback for aiRuntime: window capture unavailable
+PASS render aiRuntime; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for registries: window capture unavailable
+PASS render registries; tables=0; rows=[]
+2026-11-04 12:20:14.452 DefenseClawMac[17712:20672320] WARNING: Application performed a reentrant operation in its NSTableView delegate. This warning will become an assert in the future.
+could not create image from window
+could not create image from window
+NOTE bitmap fallback for setup: window capture unavailable
+NOTE bitmap fallback for setup-detail: window capture unavailable
+PASS render setup; tables=1; rows=[25]
+could not create image from window
+could not create image from window
+NOTE bitmap fallback for inventory-ide: window capture unavailable
+NOTE bitmap fallback for inventory-ide-detail: window capture unavailable
+PASS render inventory-ide; tables=1; rows=[1]
+could not create image from window
+could not create image from window
+NOTE bitmap fallback for inventory-identities: window capture unavailable
+NOTE bitmap fallback for inventory-identities-detail: window capture unavailable
+PASS render inventory-identities; tables=1; rows=[1]
+could not create image from window
+could not create image from window
+NOTE bitmap fallback for models: window capture unavailable
+NOTE bitmap fallback for models-detail: window capture unavailable
+PASS render models; tables=1; rows=[1]
+could not create image from window
+could not create image from window
+NOTE bitmap fallback for sandboxes-unavailable: window capture unavailable
+NOTE bitmap fallback for sandboxes-unavailable-detail: window capture unavailable
+PASS render sandboxes-unavailable; tables=1; rows=[1]
+could not create image from window
+NOTE bitmap fallback for settings-general: window capture unavailable
+PASS render settings-general; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for settings-monitoring: window capture unavailable
+PASS render settings-monitoring; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for settings-notifications: window capture unavailable
+PASS render settings-notifications; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for settings-connection: window capture unavailable
+PASS render settings-connection; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for wizard-0: window capture unavailable
+PASS render wizard-0; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for wizard-1: window capture unavailable
+PASS render wizard-1; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for wizard-2: window capture unavailable
+PASS render wizard-2; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for wizard-3: window capture unavailable
+PASS render wizard-3; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for wizard-4: window capture unavailable
+PASS render wizard-4; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for wizard-5: window capture unavailable
+PASS render wizard-5; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for wizard-6: window capture unavailable
+PASS render wizard-6; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for wizard-7: window capture unavailable
+PASS render wizard-7; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for wizard-8: window capture unavailable
+PASS render wizard-8; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for wizard-9: window capture unavailable
+PASS render wizard-9; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for wizard-10: window capture unavailable
+PASS render wizard-10; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for wizard-11: window capture unavailable
+PASS render wizard-11; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for wizard-12: window capture unavailable
+PASS render wizard-12; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for wizard-13: window capture unavailable
+PASS render wizard-13; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for wizard-14: window capture unavailable
+PASS render wizard-14; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for wizard-15: window capture unavailable
+PASS render wizard-15; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for wizard-16: window capture unavailable
+PASS render wizard-16; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for wizard-17: window capture unavailable
+PASS render wizard-17; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for wizard-18: window capture unavailable
+PASS render wizard-18; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for wizard-19: window capture unavailable
+PASS render wizard-19; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for wizard-20: window capture unavailable
+PASS render wizard-20; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for wizard-21: window capture unavailable
+PASS render wizard-21; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for wizard-22: window capture unavailable
+PASS render wizard-22; tables=0; rows=[]
+could not create image from window
+NOTE bitmap fallback for redaction: window capture unavailable
+PASS render redaction; tables=0; rows=[]
+2026-11-04 12:21:31.970 DefenseClawMac[17712:20672320] WARNING: Application performed a reentrant operation in its NSTableView delegate. This warning will become an assert in the future.
+could not create image from window
+could not create image from window
+NOTE bitmap fallback for palette: window capture unavailable
+NOT TESTED palette Run button: native accessibility button was unavailable
+NOTE bitmap fallback for palette-detail: window capture unavailable
+PASS render palette; tables=1; rows=[247]
+PASS all native panel/form renders completed
+

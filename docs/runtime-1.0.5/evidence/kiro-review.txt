@@ -1,0 +1,21 @@
+Window: "", App: DefenseClawMac.
+0 sheet Secondary Actions: Raise
+	1 container
+		2 image Description: Cable Connector Plug, ID: cable.connector
+		3 text Setup: Connector Setup
+		4 button Close
+		5 text Add or re-run a connector, choose the active hook connector set (batch), or remove one. Review These commands will run in order. Processing stops if a command fails: defenseclaw setup kiro --yes --mode observe Action setup Framework kiro Guardrail mode observe Replace existing no Local stack no Restart gateway yes
+		6 button ← Back
+		7 button Cancel
+		8 button Apply
+9 menu bar
+	10 DefenseClawMac
+	11 Edit
+	12 View
+	13 Monitor
+	14 Commands
+	15 Go
+	16 Window
+	17 Help
+
+The focused UI element is 0 sheet Secondary Actions: Raise

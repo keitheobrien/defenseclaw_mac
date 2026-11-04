@@ -1,0 +1,32 @@
+[
+  {
+    "panel": "Alerts",
+    "selected": true,
+    "hasDetail": true
+  },
+  {
+    "panel": "Audit",
+    "selected": true,
+    "hasDetail": true
+  },
+  {
+    "panel": "Skills",
+    "selected": true,
+    "hasDetail": false
+  },
+  {
+    "panel": "MCPs",
+    "selected": true,
+    "hasDetail": false
+  },
+  {
+    "panel": "Plugins",
+    "selected": true,
+    "hasDetail": false
+  },
+  {
+    "panel": "Tools",
+    "selected": true,
+    "hasDetail": false
+  }
+]

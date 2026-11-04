@@ -1,0 +1,52 @@
+Window: "Runtime", App: DefenseClawMac.
+0 standard window Runtime, ID: main, Secondary Actions: Raise
+	1 split group main, SidebarNavigationSplitView
+		2 scroll area
+			3 list Sidebar
+				4 row (selectable) Monitor
+				5 row (selectable) Overview
+				6 row (selectable) Alerts
+1
+				7 row (selectable) Logs
+				8 row (selectable) Audit
+				9 row (selectable) Activity
+				10 row (selectable) Govern
+				11 row (selectable) Skills
+				12 row (selectable) MCPs
+				13 row (selectable) Plugins
+				14 row (selectable) Tools
+				15 row (selectable) Policies
+				16 row (selectable) Sandboxes
+				17 row (selectable) Discover
+				18 row (selectable) Inventory
+				19 row (selectable) AI Discovery
+				20 row (selected) Runtime
+				21 row (selectable) Registries
+				22 row (selectable) Configure
+				23 row (selectable) Setup
+		24 splitter (disabled, settable, float) 249
+		25 container
+			26 text AI Discovery Runtime 0 of 0 findings · 0 processes, 0 connections · polled 7:00:15 PM · WATCHING
+			27 text field (settable) Filter
+			28 button Refresh
+			29 button Poll now
+			30 text Help: inference heartbeat: up via process fixture, Value: inference heartbeat: up shadow egress: partial agent actions: off shadow egress: partial via socket fixture — this account only agent actions: off — not selected in ai_discovery.runtime.planes shadow egress partially covered: this account only No findings Nothing at or above the reporting floor. Coverage is shown above — "nothing found" and "nothing could be looked at" are different results.
+	31 toolbar
+		32 button Description: Hide Sidebar, Secondary Actions: Increment, Decrement, Delete, Cancel
+		33 button Description: Command Palette, Secondary Actions: Increment, Decrement, Delete, Cancel, Move previous, Remove from toolbar
+	34 text Runtime
+	35 menu button Window sharing
+36 menu bar
+	37 DefenseClawMac
+	38 Edit
+	39 View
+	40 Monitor
+	41 Commands
+	42 Go
+	43 Window
+	44 Help
+
+Selected:
+	20 row (selected)
+
+Note: Pay special attention to the content selected by the user. If the user asks a question or refers to the content they are looking at on-screen, they might be referring to the selected content (but they might be referring to something else that's visible, too).

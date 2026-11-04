@@ -1,0 +1,143 @@
+Window: "Overview", App: DefenseClawMac.
+0 standard window Overview, ID: main, Secondary Actions: Raise
+	1 split group main, SidebarNavigationSplitView
+		2 scroll area
+			3 list Sidebar
+				4 row (selectable) Monitor
+				5 row (selected) Overview
+				6 row (selectable) Alerts
+1
+				7 row (selectable) Logs
+				8 row (selectable) Audit
+				9 row (selectable) Activity
+				10 row (selectable) Govern
+				11 row (selectable) Skills
+				12 row (selectable) MCPs
+				13 row (selectable) Plugins
+				14 row (selectable) Tools
+				15 row (selectable) Policies
+				16 row (selectable) Sandboxes
+				17 row (selectable) Discover
+				18 row (selectable) Inventory
+				19 row (selectable) AI Discovery
+				20 row (selectable) Runtime
+				21 row (selectable) Registries
+				22 row (selectable) Configure
+				23 row (selectable) Setup
+		24 splitter (disabled, settable, float) 249
+		25 container
+			26 scroll area Secondary Actions: Scroll Up, Scroll Down (showing 0-100 of 118 items)
+				27 image Description: Alert, ID: exclamationmark.bubble
+				28 text What Needs Attention [OK] Runtime signals are quiet.
+				29 image Description: Hdr, ID: square.stack.3d.up
+				30 text Services
+				31 image Description: Search, ID: magnifyingglass.circle
+				32 text Scanners
+				33 image (selected) Description: Checkmark In A Shield, ID: checkmark.shield
+				34 text Enforcement Gateway disabled up 1m skill-scanner installed Agent unknown Codex (configured, not connected) mcp-scanner installed Watchdog running aibom built-in Guardrail running observe, default codeguard built-in API running guardrail observe, default Sinks disabled keys not checked Telemetry degraded 2 destinations: local-sqlite (healthy), local-observability (degraded) AI Discovery disabled Sandbox disabled
+				35 collection Secondary Actions: AXScrollToTop, AXScrollToBottom
+					36 button Description: Hook Calls (1 connectors), 0, Latest 500 audit events, Help: Opens Logs filtered to hook calls
+					37 button Description: Blocks, 4, Latest 500 decisions, Help: Opens Audit filtered to blocked decisions
+					38 button Description: Findings, 1, Unacknowledged, Help: Opens all unacknowledged alerts
+					39 button Description: Guardrail - observe, ON, Current configuration, Help: Opens Logs filtered to guardrail events
+				40 text Updated 5s ago
+				41 image Description: Flash, ID: bolt
+				42 text Quick Actions
+				43 button Scan Skills
+				44 button Open Inventory
+				45 button Restart Gateway
+				46 button Run Doctor
+				47 menu button Diagnostics, ID: ellipsis.circle
+				48 switch Run gateway as administrator, Value: off
+				49 button Gateway Permissions…
+				50 text Enable administrator mode for Runtime monitoring across the machine, then start or restart the gateway.
+				51 image Description: Transparent Three-Dimensional Cube With Visible Edges, ID: cube.transparent
+				52 text Sandboxes 1 running · 1 total · 1 ask(s) waiting · OpenShell 0.1.3 gateway fixture (MicroVM) 1 1 1 0 Active Blocked sites Asks Alerts
+				53 button Open Sandboxes
+				54 image Description: Edit, ID: slider.horizontal.3
+				55 text Base configuration Agent codex Redaction default sensitive Policy posture balanced: block CRIT, alert MED+ (default) Enforcement codex hook observability (observe)
+				56 link Show 4 More Settings
+				57 image Description: Person With A Shield Checkmark Badge, ID: person.badge.shield.checkmark
+				58 text Effective policy Generation 9 Policy digest fixture-policy-digest
+				59 image Description: Cable Connector Plug, ID: cable.connector
+				60 text Connectors
+				61 scroll area
+					62 outline
+						63 row (selectable) Codex (codex)
+observe
+default
+never
+5
+0
+0
+running
+						64 container
+							65 sort button Connector
+							66 sort button Configured mode
+							67 sort button Rule Pack
+							68 sort button Last Activity
+							69 sort button Calls
+							70 sort button Blocks
+							71 sort button Alerts
+							72 sort button Status
+							73 sort button Action
+				74 image Description: Cellular Data, ID: antenna.radiowaves.left.and.right
+				75 text Observability Destinations · Runtime
+				76 scroll area
+					77 outline
+						78 row (selectable) local-sqlite
+v8
+local
+sqlite
+healthy
+logs
+accepted 12 · delivered 12 · dropped 0 · rejected 0 · retried 0
+local audit database
+						79 row (selectable) local-observability
+v8
+process
+otlp
+degraded
+logs,traces,metrics
+accepted 20 · delivered 2 · dropped 3 · rejected 4 · retried 5
+not reported
+						80 container
+							81 sort button Name
+							82 sort button Target
+							83 sort button Scope
+							84 sort button Kind/Preset
+							85 sort button State
+							86 sort button Signals
+							87 sort button Delivery
+							88 sort button Endpoint
+				89 text Help: Policy: enabled
+Health: degraded
+delivery_failed
+Signals: logs,traces,metrics
+accepted 20 · delivered 2 · dropped 3 · rejected 4 · retried 5
+Queue: 6 / 4096 records · 512 / 1048576 bytes
+Circuit: open
+Endpoint: not reported, Value: local-observability: degraded · delivery_failed · 6 / 4096 records · 512 / 1048576 bytes Names are identities: a new name adds a route; the same name updates it. Manage in Setup → Observability / Galileo.
+				90 image Description: Bar Chart With An X Axis, ID: chart.bar.xaxis
+				91 text Activity — last 24h Skills MCPs Total scans Active alerts
+	92 toolbar
+		93 button Description: Hide Sidebar, Secondary Actions: Increment, Decrement, Delete, Cancel
+		94 button Description: Command Palette, Secondary Actions: Increment, Decrement, Delete, Cancel, Move previous, Move next, Remove from toolbar
+		95 button Description: Run Health Check, Secondary Actions: Increment, Decrement, Delete, Cancel, Move previous, Move next, Remove from toolbar
+		96 button Description: Refresh, Secondary Actions: Increment, Decrement, Delete, Cancel, Move previous, Remove from toolbar
+	97 text Overview
+	98 menu button Window sharing
+99 menu bar
+	100 DefenseClawMac
+	101 Edit
+	102 View
+	103 Monitor
+	104 Commands
+	105 Go
+	106 Window
+	107 Help
+
+Selected:
+	5 row (selected)
+
+Note: Pay special attention to the content selected by the user. If the user asks a question or refers to the content they are looking at on-screen, they might be referring to the selected content (but they might be referring to something else that's visible, too).

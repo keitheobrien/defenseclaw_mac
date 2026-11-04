@@ -145,7 +145,7 @@ final class CommandActivityStore {
         entries[index].status = result.cancelled ? .cancelled : (result.succeeded ? .succeeded : .failed)
         if result.succeeded {
             entries[index].sideEffects = successEffects.isEmpty
-                ? Self.inferredEffects(binary: binary, arguments: arguments, category: category)
+                ? (mutation ? Self.inferredEffects(binary: binary, arguments: arguments, category: category) : [])
                 : successEffects
         }
         if usesAdministrator && result.exitCode == 78 {

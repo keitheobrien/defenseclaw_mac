@@ -33,6 +33,8 @@ CLANG_MODULE_CACHE_PATH="$MODULE_CACHE" xcrun swiftc \
   "$ROOT/DefenseClawMac/DataLayer/CommandRegistry.swift" \
   "$ROOT/DefenseClawMac/DataLayer/InstallationContext.swift" \
   "$ROOT/DefenseClawMac/DataLayer/ConfigStore.swift" \
+  "$ROOT/DefenseClawMac/DataLayer/ScannerProbe.swift" \
+  "$ROOT/DefenseClawMac/DataLayer/RuntimeOverviewSummary.swift" \
   "$ROOT/DefenseClawMac/Features/ConfigEditorDefinitions.swift" \
   "$ROOT/Tests/ConfigEditorContractTests.swift" \
   -o "$BUILD_DIR/ConfigEditorContractTests"

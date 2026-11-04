@@ -1,0 +1,78 @@
+Window: "Activity", App: DefenseClawMac.
+0 standard window Activity, ID: main, Secondary Actions: Raise
+	1 split group main, SidebarNavigationSplitView
+		2 scroll area
+			3 list Sidebar
+				4 row (selectable) Monitor
+				5 row (selectable) Overview
+				6 row (selectable) Alerts
+1
+				7 row (selectable) Logs
+				8 row (selectable) Audit
+				9 row (selected) Activity
+				10 row (selectable) Govern
+				11 row (selectable) Skills
+				12 row (selectable) MCPs
+				13 row (selectable) Plugins
+				14 row (selectable) Tools
+				15 row (selectable) Policies
+				16 row (selectable) Sandboxes
+				17 row (selectable) Discover
+				18 row (selectable) Inventory
+				19 row (selectable) AI Discovery
+				20 row (selectable) Runtime
+				21 row (selectable) Registries
+				22 row (selectable) Configure
+				23 row (selectable) Setup
+		24 splitter (disabled, settable, float) 249
+		25 container
+			26 Activity
+				27 radio button Description: Commands, Value: 1
+				28 radio button Description: Mutations, Value: 0
+			29 scroll area
+				30 outline
+					31 row (selected) Oct 30 at 7:01:55 PM
+setup redaction status
+defenseclaw setup redaction status
+Exit 0
+81 ms
+—
+					32 container
+						33 sort button Started
+						34 sort button Command
+						35 sort button Status
+						36 sort button Duration
+						37 sort button Side Effects
+			38 scroll area Details
+				39 list Secondary Actions: AXScrollToTop, AXScrollToBottom
+					40 text setup redaction status
+					41 button Close command details
+					42 text Status Exit 0 Started 10/30/2026, 7:01 PM Duration 81 ms Origin Logs Category setup defenseclaw setup redaction status Output
+					43 button Description: Copy command output, Help: Copy Output
+					44 text Synthetic fixture: default sensitive; no external destinations. No real policy was read.
+
+						45 text Synthetic fixture: default sensitive; no external destinations. No real policy was read.
+
+	46 toolbar
+		47 button Description: Hide Sidebar, Secondary Actions: Increment, Decrement, Delete, Cancel
+		48 button Description: Command Palette, Secondary Actions: Increment, Decrement, Delete, Cancel, Move previous, Move next, Remove from toolbar
+		49 button Description: Run Command, Secondary Actions: Increment, Decrement, Delete, Cancel, Move previous, Move next, Remove from toolbar
+		50 button Description: Clear Completed, Secondary Actions: Increment, Decrement, Delete, Cancel, Move previous, Move next, Remove from toolbar
+		51 search text field (settable) Search activity
+			52 button Search
+	53 text Activity
+	54 menu button Window sharing
+55 menu bar
+	56 DefenseClawMac
+	57 Edit
+	58 View
+	59 Monitor
+	60 Commands
+	61 Go
+	62 Window
+	63 Help
+
+Selected:
+	9 row (selected)
+
+Note: Pay special attention to the content selected by the user. If the user asks a question or refers to the content they are looking at on-screen, they might be referring to the selected content (but they might be referring to something else that's visible, too).

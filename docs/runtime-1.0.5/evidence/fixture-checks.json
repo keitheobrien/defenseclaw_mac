@@ -1,0 +1,98 @@
+[
+  {
+    "panel": "Overview",
+    "window": "Overview",
+    "loading": false,
+    "hasSyntheticData": true
+  },
+  {
+    "panel": "Alerts",
+    "window": "Alerts",
+    "loading": false,
+    "hasSyntheticData": true
+  },
+  {
+    "panel": "Logs",
+    "window": "Logs",
+    "loading": false,
+    "hasSyntheticData": true
+  },
+  {
+    "panel": "Audit",
+    "window": "Audit",
+    "loading": false,
+    "hasSyntheticData": true
+  },
+  {
+    "panel": "Activity",
+    "window": "Activity",
+    "loading": false,
+    "hasSyntheticData": false
+  },
+  {
+    "panel": "Skills",
+    "window": "Skills",
+    "loading": false,
+    "hasSyntheticData": true
+  },
+  {
+    "panel": "MCPs",
+    "window": "MCPs",
+    "loading": false,
+    "hasSyntheticData": true
+  },
+  {
+    "panel": "Plugins",
+    "window": "Plugins",
+    "loading": false,
+    "hasSyntheticData": true
+  },
+  {
+    "panel": "Tools",
+    "window": "Tools",
+    "loading": false,
+    "hasSyntheticData": true
+  },
+  {
+    "panel": "Policies",
+    "window": "Policies",
+    "loading": false,
+    "hasSyntheticData": false
+  },
+  {
+    "panel": "Sandboxes",
+    "window": "Sandboxes",
+    "loading": false,
+    "hasSyntheticData": true
+  },
+  {
+    "panel": "Inventory",
+    "window": "Inventory",
+    "loading": false,
+    "hasSyntheticData": false
+  },
+  {
+    "panel": "AI Discovery",
+    "window": "AI Discovery",
+    "loading": false,
+    "hasSyntheticData": false
+  },
+  {
+    "panel": "Runtime",
+    "window": "Runtime",
+    "loading": false,
+    "hasSyntheticData": true
+  },
+  {
+    "panel": "Registries",
+    "window": "Registries",
+    "loading": false,
+    "hasSyntheticData": false
+  },
+  {
+    "panel": "Setup",
+    "window": "Setup",
+    "loading": false,
+    "hasSyntheticData": false
+  }
+]

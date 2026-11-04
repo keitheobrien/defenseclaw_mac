@@ -113,6 +113,7 @@ private struct GatewayMutationDenied: LocalizedError {
 actor GatewayClient {
     private var baseURL: URL?
     private var token: String?
+    private var observabilityConfig: YAMLNode
     private var mutationsAllowed: Bool
     private var mutationDenialReason: String
     private let session: URLSession
@@ -136,6 +137,7 @@ actor GatewayClient {
     ) {
         self.baseURL = config.baseURL
         self.token = config.gatewayToken
+        self.observabilityConfig = config.raw["observability"] ?? .mapping([:])
         self.mutationsAllowed = mutationsAllowed
         self.mutationDenialReason = mutationDenialReason
         self.responseByteLimit = max(1, maximumResponseBytes)
@@ -149,6 +151,7 @@ actor GatewayClient {
     func update(config: DefenseClawConfig) {
         baseURL = config.baseURL
         token = config.gatewayToken
+        observabilityConfig = config.raw["observability"] ?? .mapping([:])
     }
 
     func update(installationContext: InstallationContext) {
@@ -353,35 +356,86 @@ actor GatewayClient {
         // Per-item casts so one malformed element can't blank the panel.
         snap.observabilityRows = Self.observabilityRows(
             destinations: ((telemetryDetails?["destinations"] as? [Any]) ?? []).compactMap { $0 as? [String: Any] },
-            sinks: ((sinkDetails?["sinks"] as? [Any]) ?? []).compactMap { $0 as? [String: Any] }
+            sinks: ((sinkDetails?["sinks"] as? [Any]) ?? []).compactMap { $0 as? [String: Any] },
+            config: observabilityConfig
         )
         snap.telemetryDetail = Self.telemetrySummary(telemetryDetails)
+        (snap.retentionState, snap.retentionFailure) = Self.retentionHealth(telemetryDetails)
         return snap
+    }
+
+    /// v8_status.retention_health_from_gateway: only a known controller state
+    /// is shown, and both tokens are bounded like _safe_health_token so a
+    /// hostile payload can't put arbitrary text on the Overview.
+    static func retentionHealth(_ details: [String: Any]?) -> (state: String, failure: String) {
+        guard let details else { return ("", "") }
+        let state = safeHealthToken(details["retention_state"])
+        guard ["waiting_for_readiness", "healthy", "warning", "degraded", "disabled", "stopped"].contains(state) else {
+            return ("", "")
+        }
+        return (state, safeHealthToken(details["retention_failure"] ?? details["failure"]))
+    }
+
+    /// _safe_health_token: lowercase, `^[a-z0-9][a-z0-9_.:-]{0,127}$`, else "".
+    static func safeHealthToken(_ value: Any?) -> String {
+        guard let text = value as? String else { return "" }
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard let pattern = try? NSRegularExpression(pattern: "^[a-z0-9][a-z0-9_.:-]{0,127}$") else { return "" }
+        let range = NSRange(normalized.startIndex..., in: normalized)
+        return pattern.firstMatch(in: normalized, range: range) != nil ? normalized : ""
     }
 
     // MARK: - Observability destinations (TUI overview_state parity)
 
     private static func observabilityRows(
         destinations: [[String: Any]],
-        sinks: [[String: Any]]
+        sinks: [[String: Any]],
+        config: YAMLNode
     ) -> [ObservabilityDestinationRow] {
         var rows: [ObservabilityDestinationRow] = []
         for item in destinations {
             guard let rawName = (item["name"] as? String)?.nonEmpty else { continue }
             let name = rawName.lowercased() == "galileo" ? "Galileo" : rawName
+            let kind = (item["kind"] as? String)?.nonEmpty
             let preset = (item["preset"] as? String) ?? ""
+            let configured = config["destinations"]?.sequence?.first { $0["name"]?.string == rawName }
+            let endpoint = (item["endpoint"] as? String)?.nonEmpty
+                ?? (kind == "sqlite" ? config["local.path"]?.string : configured?["endpoint"]?.string)
+                ?? (kind == "sqlite" ? "local audit database" : "not reported")
+            let counters = item["counters"] as? [String: Any]
+            let queue = item["queue"] as? [String: Any]
+            let enabled = item["enabled"] as? Bool ?? false
+            let state = (item["state"] as? String)?.nonEmpty ?? (enabled ? "enabled" : "disabled")
+            let rawReason = (item["reason"] as? String)?.nonEmpty
+                ?? (["healthy", "disabled"].contains(state) ? nil : (item["last_failure_class"] as? String)?.nonEmpty) ?? ""
+            let reason = ["activated", "delivery_recovered", "scrape_recovered"].contains(rawReason) ? "" : rawReason
+            let activity = counters.map { values in
+                ["accepted", "delivered", "dropped", "rejected", "retried"].map {
+                    "\($0) \(max(0, looseInt(values[$0])))"
+                }.joined(separator: " · ")
+            } ?? ""
+            let queued = queue.map {
+                "\(max(0, looseInt($0["items"]))) / \(max(0, looseInt($0["max_items"]))) records · "
+                    + "\(max(0, looseInt($0["bytes"]))) / \(max(0, looseInt($0["max_bytes"]))) bytes"
+            } ?? ""
+            let signals = (item["signals"] as? [String])?.joined(separator: ",")
+                ?? (item["signals"] as? String)?.nonEmpty ?? "none"
             rows.append(ObservabilityDestinationRow(
                 name: name,
-                target: "otel",
-                scope: (item["scope"] as? String)?.nonEmpty ?? "process",
-                kind: preset.nonEmpty ?? "otlp",
-                state: (item["enabled"] as? Bool ?? false) ? "enabled" : "disabled",
-                signals: (item["signals"] as? String)?.nonEmpty ?? "none",
-                routing: routingLabel(
+                target: kind == nil ? "otel" : "v8",
+                scope: (item["scope"] as? String)?.nonEmpty ?? (kind == "sqlite" ? "local" : "process"),
+                kind: kind ?? preset.nonEmpty ?? "otlp",
+                state: DisplayRedaction.text(state),
+                signals: signals,
+                routing: activity.nonEmpty ?? routingLabel(
                     routing: item["routing"] as? [String: Any],
                     delivery: item["delivery"] as? [String: Any]
                 ),
-                endpoint: redactEndpoint((item["endpoint"] as? String)?.nonEmpty ?? "—")
+                endpoint: kind == "sqlite" || endpoint == "not reported" ? DisplayRedaction.text(endpoint) : redactEndpoint(endpoint),
+                policyState: enabled ? "enabled" : "disabled",
+                queue: queued,
+                healthReason: DisplayRedaction.text(reason),
+                circuit: DisplayRedaction.text((item["circuit_state"] as? String) ?? "")
             ))
         }
         for item in sinks {
@@ -454,7 +508,9 @@ actor GatewayClient {
                   let rawName = (item["name"] as? String)?.nonEmpty else { continue }
             let preset = ((item["preset"] as? String) ?? "").lowercased()
             var label = (preset == "galileo" || rawName.lowercased() == "galileo") ? "Galileo" : rawName
-            if let delivery = item["delivery"] as? [String: Any], looseInt(delivery["attempted"]) > 0 {
+            if let state = (item["state"] as? String)?.nonEmpty {
+                label += " (\(DisplayRedaction.text(state)))"
+            } else if let delivery = item["delivery"] as? [String: Any], looseInt(delivery["attempted"]) > 0 {
                 let attempted = max(0, looseInt(delivery["attempted"]))
                 let delivered = max(0, looseInt(delivery["collector_accepted"] ?? delivery["delivered"]))
                 label += String(format: " (%.1f%% delivered)", 100.0 * Double(delivered) / Double(attempted))
@@ -545,7 +601,10 @@ actor GatewayClient {
         var fields: [String: String] = [:]
         if let digest = policy["effective_digest"] as? String ?? policy["effective_policy_digest"] as? String, !digest.isEmpty {
             fields["Policy digest"] = digest
-            fields["Generation"] = String(describing: policy["generation"] ?? "unknown")
+            // The gateway-local generation resets on restart. The TUI uses
+            // the persistent config-writer generation and omits unknown zero.
+            let generation = max(0, Self.looseInt(policy["config_generation"]))
+            if generation > 0 { fields["Generation"] = String(generation) }
         }
         guard resolveProfile else { return fields }
         let data = try await request("GET", "/api/v1/guardrail/profiles/resolve",
@@ -555,7 +614,15 @@ actor GatewayClient {
             throw GatewayError.badResponse("The gateway returned no effective profile settings.")
         }
         fields["Account"] = user
-        fields["Profile"] = (profile["profile"] as? String)?.nonEmpty ?? "Global configuration"
+        // A failed identity lookup names a fallback profile, which read as
+        // the one chosen for the account (overview_state GAP-1271).
+        let lookupError = ((profile["lookup_error"] as? String) ?? "").split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        if !lookupError.isEmpty {
+            fields["Profile"] = "unknown (user lookup failed)"
+            fields["Lookup error"] = "Couldn't look up your account, so your guardrail profile is unknown (\(lookupError)) - check it with: defenseclaw guardrail profile explain"
+        } else {
+            fields["Profile"] = (profile["profile"] as? String)?.nonEmpty ?? "Global configuration"
+        }
         for (key, label) in [("mode", "Mode"), ("rule_pack", "Rule pack"), ("rule_pack_dir", "Rule pack path"), ("block_at", "Block at"), ("alert_at", "Alert at")] {
             if let value = effective[key] as? String, !value.isEmpty { fields[label] = value }
         }
