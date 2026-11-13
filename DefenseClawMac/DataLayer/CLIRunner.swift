@@ -1033,6 +1033,114 @@ actor CLIRunner {
             let setting = binaryName == "defenseclaw" ? " Set its path in Settings ▸ Connection." : ""
             return CLIResult(exitCode: 127, output: "\(binaryName) binary not found.\(setting)")
         }
+        if arguments.first == "upgrade", !arguments.contains("--help"), !arguments.contains("-h"),
+           binary == locateBinary(named: "defenseclaw") {
+            guard mutation, installationContext.permitsMutation else {
+                return CLIResult(exitCode: 77, output: "Runtime upgrade requires an explicitly mutable installation operation.\n")
+            }
+            return await runRuntimeUpgrade(binary: binary, arguments: arguments,
+                standardInput: standardInput, environment: environment,
+                executionID: executionID, onLine: onLine)
+        }
+        return await runProcess(binary: binary, arguments: arguments,
+            standardInput: standardInput, environment: environment, mutation: mutation,
+            executionID: executionID, onLine: onLine)
+    }
+
+    /// One Activity operation owns authorization, preparation, the ordinary-user
+    /// updater and recovery. No installer or user-selected CLI is elevated.
+    private func runRuntimeUpgrade(
+        binary: String, arguments: [String], standardInput: String?,
+        environment: [String: String], executionID: UUID,
+        onLine: (@Sendable (String) async -> Void)?
+    ) async -> CLIResult {
+        let ownsExclusivity = exclusiveOperationID == nil
+        if ownsExclusivity {
+            guard runStates.isEmpty else {
+                return CLIResult(exitCode: 75, output: "Wait for active runtime commands before upgrading.\n")
+            }
+            exclusiveOperationID = executionID
+        }
+        defer {
+            runStates[executionID] = nil
+            if ownsExclusivity { exclusiveOperationID = nil }
+        }
+        let context = installationContext
+        let administrator = administratorEnabled()
+        var preparationOutput = ""
+        if administrator {
+            let stopped = await runUpgradeGatewayAction(.stop, context: context,
+                executionID: executionID, onLine: onLine)
+            guard stopped.succeeded else { return stopped }
+            preparationOutput = stopped.output
+        }
+        if !administrator { runStates[executionID] = .reserved(cancelRequested: false) }
+        let home = context.homeRoot.path
+        let blocker = await Task.detached(priority: .utility) {
+            RuntimeUpgradeStateAccess.check(home: home, uid: getuid())
+        }.value
+        var result: CLIResult
+        var ranInstaller = false
+        if installationContext != context {
+            result = CLIResult(exitCode: 75, output: "The selected installation changed during upgrade preparation. Nothing was replaced.\n")
+        } else if Task.isCancelled || upgradePreparationWasCancelled(executionID) {
+            result = CLIResult(exitCode: 130, output: "Runtime upgrade cancelled before replacement.\n", cancelled: true)
+        } else if let blocker {
+            result = CLIResult(exitCode: 77, output: blocker + "\n")
+        } else {
+            ranInstaller = true
+            result = await runProcess(binary: binary, arguments: arguments,
+                standardInput: standardInput, environment: environment, mutation: true,
+                executionID: executionID, onLine: onLine)
+        }
+        if let onLine, !ranInstaller || result.exitCode == 126 {
+            await onLine(result.output)
+        }
+        result.output = preparationOutput + result.output
+        if administrator {
+            // A fresh task deliberately does not inherit cancellation: once
+            // Stop succeeds, cancellation must not skip gateway recovery.
+            let restored = await Task {
+                await self.runUpgradeGatewayAction(.restart, context: context,
+                    executionID: executionID, onLine: onLine)
+            }.value
+            result.output += restored.output
+            if !restored.succeeded {
+                let warning = "Runtime upgrade recovery error: administrator gateway restart failed. Use Restart Gateway as Administrator in Overview; see Activity for details.\n"
+                result.output += warning
+                if let onLine { await onLine(warning) }
+                if result.succeeded { result.exitCode = restored.exitCode == 0 ? 77 : restored.exitCode }
+            }
+        }
+        return result
+    }
+
+    private func upgradePreparationWasCancelled(_ id: UUID) -> Bool {
+        if case .reserved(let cancelled) = runStates[id] { return cancelled }
+        return false
+    }
+
+    private func runUpgradeGatewayAction(
+        _ action: GatewayAdminAction, context: InstallationContext, executionID: UUID,
+        onLine: (@Sendable (String) async -> Void)?
+    ) async -> CLIResult {
+        let operation = GatewayAdministratorOperation()
+        runStates[executionID] = .administrator(operation)
+        if let onLine { await onLine("Requesting administrator gateway \(action.rawValue) for runtime upgrade…") }
+        let result = await withTaskCancellationHandler {
+            await administratorExecutor(action, context, operation)
+        } onCancel: { _ = operation.cancel() }
+        runStates[executionID] = action == .stop
+            ? .reserved(cancelRequested: operation.wasCancellationRequested) : nil
+        if let onLine { await onLine(result.output) }
+        return result
+    }
+
+    private func runProcess(
+        binary: String, arguments: [String], standardInput: String?,
+        environment: [String: String], mutation: Bool, executionID: UUID,
+        onLine: (@Sendable (String) async -> Void)?
+    ) async -> CLIResult {
         let proc = Process()
         guard CLIProcessGroupLauncher.configure(proc, target: binary, arguments: arguments) else {
             return CLIResult(exitCode: 126, output: "Internal command launcher is unavailable.")

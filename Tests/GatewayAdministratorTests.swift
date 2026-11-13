@@ -21,6 +21,8 @@ private actor InvocationProbe {
     func count() -> Int { calls.count }
     func isReleased() -> Bool { released }
     func firstContext() -> InstallationContext? { calls.first?.1 }
+    func actions() -> [GatewayAdminAction] { calls.map(\.0) }
+    func allContextsMatch(_ context: InstallationContext) -> Bool { calls.allSatisfy { $0.1 == context } }
 }
 
 @main
@@ -38,7 +40,97 @@ struct GatewayAdministratorTests {
         await testTaskCancellationAfterReservationRefusesDispatch()
         await testRebindCancelsPendingAuthorization()
         await testCancellationAfterDispatchWaitsForResult()
+        await testRuntimeUpgradeRecovery()
         print("GatewayAdministratorTests passed")
+    }
+
+    private static func testRuntimeUpgradeRecovery() async {
+        let fm = FileManager.default
+        for scenario in ["success", "updater-failure", "denied", "blocked", "restart-failure", "ordinary", "ordinary-blocked", "cancelled", "help", "read-only", "cancel-activity", "selection-change"] {
+            let fixture = fm.homeDirectoryForCurrentUser
+                .appendingPathComponent(".defenseclawmac-upgrade-test-" + UUID().uuidString)
+            let home = fixture.appendingPathComponent("runtime")
+            let bin = home.appendingPathComponent(".venv/bin")
+            try! fm.createDirectory(at: bin, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            let cli = bin.appendingPathComponent("defenseclaw")
+            let status = scenario == "updater-failure" ? 9 : 0
+            try! Data("#!/bin/sh\nprintf 'fixture updater output\\n'\nif [ \"${2:-}\" = --help ]; then exit 0; fi\n/usr/bin/touch \"$DEFENSECLAW_HOME/upgrade-ran\"\nexit \(status)\n".utf8).write(to: cli)
+            _ = chmod(cli.path, 0o700)
+            let quarantine = home.appendingPathComponent("quarantine")
+            try! fm.createDirectory(at: quarantine, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+            if scenario == "blocked" || scenario == "ordinary-blocked" { _ = chmod(quarantine.path, 0o000) }
+            defer { _ = chmod(quarantine.path, 0o700); try? fm.removeItem(at: fixture) }
+            let selected = InstallationContext.resolve(environment: ["DEFENSECLAW_HOME": home.path],
+                appConfigOverride: nil, userHome: fixture, fileExists: fm.fileExists(atPath:), readText: { _ in nil })
+            let probe = InvocationProbe()
+            let runner = CLIRunner(context: selected, administratorEnabled: { !scenario.hasPrefix("ordinary") },
+                administratorExecutor: { action, context, operation in
+                    await probe.record(action, context)
+                    if scenario == "denied", action == .stop {
+                        return CLIResult(exitCode: 77, output: "fixture authorization denied\n")
+                    }
+                    expect(operation.beginDispatch(), "recovery must execute in a fresh, uncancelled task")
+                    if ["cancel-activity", "selection-change"].contains(scenario), action == .stop {
+                        while !(await probe.isReleased()) { await Task.yield() }
+                    }
+                    if scenario == "cancelled", action == .stop {
+                        withUnsafeCurrentTask { $0?.cancel() }
+                    }
+                    if scenario == "restart-failure", action == .restart {
+                        return CLIResult(exitCode: 77, output: "fixture restart denied\n")
+                    }
+                    return CLIResult(exitCode: 0, output: "fixture administrator \(action.rawValue)\n")
+                })
+            let runID = UUID()
+            let task = Task {
+                await runner.run(binary: cli.path,
+                    arguments: scenario == "help" ? ["upgrade", "--help"] : ["upgrade", "--yes", "--version", "1.0.2"],
+                    mutation: scenario != "read-only", runID: runID)
+            }
+            if ["cancel-activity", "selection-change"].contains(scenario) {
+                await waitForCall(probe)
+                let concurrent = await runner.run(binary: "/usr/bin/true", arguments: [], mutation: false)
+                expect(concurrent.exitCode == 75, "preparation must hold exclusive runtime access")
+                if scenario == "cancel-activity" {
+                    let cancellation = await runner.cancel(runID: runID)
+                    expect(cancellation == .finishing, "a dispatched Stop must finish before cancellation recovery")
+                } else {
+                    await runner.rebind(to: context("-reselected"))
+                }
+                await probe.release()
+            }
+            let result = await task.value
+            let actions = await probe.actions()
+            let ran = fm.fileExists(atPath: home.appendingPathComponent("upgrade-ran").path)
+            if scenario == "help" || scenario == "read-only" {
+                expect(actions.isEmpty && !ran, "help and read-only requests must never prepare or replace a runtime")
+                expect(scenario == "help" ? result.succeeded : result.exitCode == 77, "help succeeds and read-only replacement refuses")
+            } else if scenario == "denied" {
+                expect(actions == [.stop] && !ran && result.exitCode == 77, "denial must prevent updater and extra authorization")
+            } else if scenario == "ordinary" {
+                expect(actions.isEmpty && ran && result.succeeded, "administrator mode off must make no helper call")
+            } else if scenario == "ordinary-blocked" {
+                expect(actions.isEmpty && !ran && result.exitCode == 77,
+                       "unreadable data with administrator mode off must refuse before replacement or authorization")
+                expect(result.output.contains("quarantine") && result.output.contains("Stop the gateway as administrator"),
+                       "leftover private state must explain its path and the ownership recovery action")
+            } else {
+                expect(actions == [.stop, .restart], "every prepared upgrade must restore the gateway: \(scenario), actions=\(actions), result=\(result.output)")
+                expect(ran == !["blocked", "cancelled", "cancel-activity", "selection-change"].contains(scenario), "preflight and cancellation must precede replacement: \(scenario), ran=\(ran), result=\(result.output)")
+                if scenario == "success" { expect(result.succeeded, "successful update and restart must succeed") }
+                if scenario == "updater-failure" { expect(result.exitCode == 9, "recovery must preserve installer failure") }
+                if scenario == "blocked" { expect(result.output.contains("quarantine") && result.exitCode == 77, "blocked data must be explained") }
+                if scenario == "restart-failure" { expect(!result.succeeded && result.output.contains("Restart Gateway as Administrator"), "restart failure cannot report success") }
+                if scenario == "cancelled" || scenario == "cancel-activity" { expect(result.cancelled && !ran, "cancellation must still recover the gateway") }
+                if scenario == "selection-change" {
+                    expect(result.exitCode == 75 && !ran, "reselection must prevent runtime replacement")
+                    let originalContext = await probe.allContextsMatch(selected)
+                    expect(originalContext, "recovery must remain pinned to the stopped installation")
+                }
+            }
+            let after = await runner.run(binary: "/usr/bin/true", arguments: [], mutation: false)
+            expect(after.succeeded, "upgrade must release reservations and exclusivity: \(scenario)")
+        }
     }
 
     private static func expect(_ value: Bool, _ message: String) {
