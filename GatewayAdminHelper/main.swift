@@ -847,7 +847,7 @@ private final class GatewayAdminSession: NSObject, GatewayAdminProtocol {
                 let outcome = try GatewayAdminTrust.withAuthorization(authorization) {
                     let account = try InvokingAccount(uid: uid)
                     try GatewayAdminTrust.validateInstallation(home: homePath, config: configPath, account: account)
-                    return try GatewayAdminLifecycle.perform(
+                    let result = try GatewayAdminLifecycle.perform(
                         action: operation,
                         currentGateway: GatewayAdminTrust.currentStagedGateway(account: account),
                         prepare: { try GatewayAdminTrust.prepareInstalledGateway(account: account) },
@@ -861,6 +861,21 @@ private final class GatewayAdminSession: NSObject, GatewayAdminProtocol {
                                                           home: homePath, config: configPath, account: account)
                         }
                     )
+                    guard operation == .stop, result.0 == 0 else { return result }
+                    // A root gateway creates private runtime state as root.
+                    // Return it to the authenticated account only after Stop,
+                    // while authorization is alive and writers are quiescent.
+                    do {
+                        let repaired = try RuntimeUpgradeStateAccess.restoreOwnership(
+                            home: homePath, uid: account.uid, gid: account.gid)
+                        let connectors = try RuntimeUpgradeStateAccess.restoreLegacyConnectorOwnership(
+                            accountHome: account.home, uid: account.uid, gid: account.gid)
+                        return (0, result.1 + "\nRestored account ownership of \(repaired) runtime state entries and \(connectors) legacy connector files; permissions preserved.\n")
+                    } catch {
+                        // Stop itself succeeded. Keep that truthful result;
+                        // the upgrade preflight refuses any unreadable residue.
+                        return (0, result.1 + "\nRuntime ownership repair incomplete: \(error.localizedDescription)\n")
+                    }
                 }
                 // Repair vendor policy folders a root gateway may have left
                 // unreadable, after the action and outside the authorization

@@ -12,10 +12,12 @@ final class GatewayAdministratorOperation: @unchecked Sendable {
     private let lock = NSLock()
     private var cancelled = false
     private var dispatched = false
+    private var cancellationRequested = false
 
     func cancel() -> CLICancellationDisposition {
         lock.lock()
         defer { lock.unlock() }
+        cancellationRequested = true
         if dispatched { return .finishing }
         if cancelled { return .alreadyRequested }
         cancelled = true
@@ -26,6 +28,14 @@ final class GatewayAdministratorOperation: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return cancelled
+    }
+
+    /// Finishing an already-dispatched Stop does not undo it. An enclosing
+    /// upgrade still needs to honor Cancel before launching its installer.
+    var wasCancellationRequested: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancellationRequested
     }
 
     func beginDispatch() -> Bool {

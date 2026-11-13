@@ -24,6 +24,16 @@ The app compares the installed runtime with the latest published DefenseClaw rel
 
 Managed installations remain read-only in the app; their administrator controls the system service. Do not change ownership of your home directory or `.defenseclaw` to enable Runtime monitoring.
 
+## Runtime upgrades after administrator use
+
+A root gateway can leave private state and quarantine folders owned by root. The normal-user installer cannot read those folders for its disk-space estimate or rollback snapshot. Before replacement, the app checks that runtime data is readable and reports the affected path in Activity instead of showing only the installer banner.
+
+With administrator mode enabled, a runtime upgrade requests an authorized Stop, restores account ownership of root-owned runtime data, runs the authenticated updater as the normal user, and requests an administrator Restart. Recovery is attempted after installer failure or cancellation as well as success. Complete the native authorization prompts for Stop and Restart. If administrator mode was disabled after a root gateway ran, enable it and retry the upgrade, or use Stop Gateway as Administrator before disabling it again.
+
+Ownership recovery preserves file permissions and contents. It uses bounded, no-follow file-descriptor traversal, skips symlinks and installer machinery, and refuses hard-linked files, unexpected owners, mountpoints and unsafe modes. No installer or user-selected CLI runs with administrator privileges. The selected installation remains pinned throughout preparation and recovery.
+
+Older administrator gateways also left `~/.config/opencode/plugins/defenseclaw.js` and `~/.claude/settings.json` owned by root, preventing the installer's connector refresh and cleanup. Authorized Stop restores account ownership of those two fixed legacy registration files when their parent directories belong to the authenticated account. Their contents and permissions are preserved; missing files are left absent, and links, shared-writable directories and unsafe files are refused. Other agent configuration files are outside this recovery scope.
+
 ## Vendor policy folders
 
 DefenseClaw runtimes before the fix for `/etc/codex` created any missing watch root with mode 0700, so a gateway running as root left `/etc/codex` root-owned and unreadable, and Codex paused every launch with "Organization settings could not be loaded". After every administrator Start, Restart or Stop, the helper inspects a fixed list of vendor policy folders (`/etc/codex`, `/etc/cursor`, `/etc/github-copilot`, `/Library/Application Support/ClaudeCode`, `/Library/Application Support/opencode`). A root-owned folder that others cannot traverse is removed only if its entire tree is empty (`rmdir`, deepest first). A populated folder, or one that cannot be safely inspected, keeps its existing permissions and is reported for administrator review in the action's Activity record. Readable folders, files, symlinks and folders owned by anyone else are never touched. A Start keeps checking for a few seconds because the watcher creates its roots shortly after the gateway daemonizes.

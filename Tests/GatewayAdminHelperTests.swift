@@ -149,6 +149,8 @@ private enum GatewayAdminHelperTests {
         try testInstalledGatewayCopy(root: root, account: account)
         try testGatewayLifecycle()
         try testVendorPolicyGuard(root: root)
+        try testRuntimeStateOwnership(root: root, account: account)
+        try testLegacyConnectorOwnership(root: root, account: account)
 
         var idle = GatewayAdminIdleState()
         check(idle.isIdle, "The helper should begin idle")
@@ -167,6 +169,131 @@ private enum GatewayAdminHelperTests {
         check(idle.canExit(observedGeneration: idle.generation), "The new idle generation should permit exit")
         print("Gateway administrator helper: \(checks) security checks passed")
     }
+
+    private static func testRuntimeStateOwnership(root: URL, account: InvokingAccount) throws {
+        let fm = FileManager.default
+        let home = root.appendingPathComponent("runtime-state")
+        let quarantine = home.appendingPathComponent("quarantine")
+        try fm.createDirectory(at: quarantine, withIntermediateDirectories: true,
+                               attributes: [.posixPermissions: 0o700])
+        let state = home.appendingPathComponent("active_connector.json")
+        try Data("fixture state".utf8).write(to: state)
+        _ = chmod(state.path, 0o600)
+        let environment = home.appendingPathComponent(".venv")
+        try fm.createDirectory(at: environment, withIntermediateDirectories: false)
+        _ = chmod(environment.path, 0o000)
+        defer { _ = chmod(environment.path, 0o700); _ = chmod(quarantine.path, 0o700) }
+
+        check(RuntimeUpgradeStateAccess.check(home: home.path, uid: account.uid) == nil,
+              "Installer machinery must not be traversed as runtime data")
+        _ = chmod(state.path, 0o000)
+        check(RuntimeUpgradeStateAccess.check(home: home.path, uid: account.uid)?.contains("active_connector.json") == true,
+              "The metadata-only access check must still refuse unreadable regular files")
+        check(try RuntimeUpgradeStateAccess.restoreOwnership(home: home.path,
+            uid: account.uid, gid: account.gid) == 0,
+              "Recovery must leave account-owned regular files untouched, including unreadable ones")
+        _ = chmod(state.path, 0o600)
+        _ = chmod(quarantine.path, 0o000)
+        let denied = RuntimeUpgradeStateAccess.check(home: home.path, uid: account.uid)
+        check(denied?.contains("quarantine") == true && denied?.contains("error:") == true,
+              "Unreadable quarantine must produce the actionable diagnostic missing from install.sh")
+        _ = chmod(quarantine.path, 0o700)
+        // This account stands in for root in an isolated fixture. Production
+        // always repairs UID 0 to the kernel-authenticated requesting account.
+        let changed = try RuntimeUpgradeStateAccess.restoreOwnership(
+            home: home.path, uid: account.uid, gid: account.gid, rootOwner: account.uid)
+        check(changed == 2, "Only runtime data entries should be repaired")
+        var status = stat()
+        _ = lstat(state.path, &status)
+        check(status.st_mode & 0o777 == 0o600, "Private state permissions must not be widened")
+        check(try Data(contentsOf: state) == Data("fixture state".utf8), "Ownership repair must not rewrite state")
+
+        let outside = root.appendingPathComponent("outside-state")
+        try Data("outside".utf8).write(to: outside)
+        let link = home.appendingPathComponent("linked-state")
+        try fm.createSymbolicLink(at: link, withDestinationURL: outside)
+        check(try RuntimeUpgradeStateAccess.restoreOwnership(home: home.path, uid: account.uid,
+            gid: account.gid, rootOwner: account.uid) == 2, "Symlinks must be skipped")
+        let hardLink = home.appendingPathComponent("hard-linked-state")
+        try fm.linkItem(at: outside, to: hardLink)
+        rejects("A hard-linked privileged repair target was accepted") {
+            _ = try RuntimeUpgradeStateAccess.restoreOwnership(home: home.path, uid: account.uid,
+                gid: account.gid, rootOwner: account.uid)
+        }
+        try fm.removeItem(at: hardLink)
+        let linkedHome = root.appendingPathComponent("linked-runtime")
+        try fm.createSymbolicLink(at: linkedHome, withDestinationURL: home)
+        rejects("A symlinked runtime root was accepted") {
+            _ = try RuntimeUpgradeStateAccess.restoreOwnership(home: linkedHome.path, uid: account.uid,
+                gid: account.gid, rootOwner: account.uid)
+        }
+        _ = chmod(state.path, 0o4600)
+        _ = lstat(state.path, &status)
+        check(status.st_mode & 0o4000 != 0,
+              "The filesystem stripped the set-ID fixture bit; run helper security tests outside the sandbox")
+        rejects("An ownership repair on a set-ID file was accepted") {
+            _ = try RuntimeUpgradeStateAccess.restoreOwnership(home: home.path, uid: account.uid,
+                gid: account.gid, rootOwner: account.uid)
+        }
+        _ = chmod(state.path, 0o600)
+    }
+    private static func testLegacyConnectorOwnership(root: URL, account: InvokingAccount) throws {
+        let fm = FileManager.default
+        let home = root.appendingPathComponent("legacy-connectors")
+        try fm.createDirectory(at: home, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        func restore(_ rootOwner: uid_t = account.uid) throws -> Int {
+            try RuntimeUpgradeStateAccess.restoreLegacyConnectorOwnership(accountHome: home.path,
+                uid: account.uid, gid: account.gid, rootOwner: rootOwner)
+        }
+        check(try restore() == 0, "Missing legacy connector directories must stay absent")
+        let plugin = home.appendingPathComponent(".config/opencode/plugins/defenseclaw.js")
+        let settings = home.appendingPathComponent(".claude/settings.json")
+        for file in [plugin, settings] {
+            try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                   attributes: [.posixPermissions: 0o700])
+            check(try restore() == (file == settings ? 1 : 0), "Missing registration files must not be created")
+            try Data("private connector fixture".utf8).write(to: file)
+            _ = chmod(file.path, 0o600)
+        }
+        let unrelated = plugin.deletingLastPathComponent().appendingPathComponent("other-plugin.js")
+        try Data("unrelated fixture".utf8).write(to: unrelated)
+        check(try restore() == 2, "Recovery must touch only the two fixed legacy files")
+        check(try restore(0) == 0, "Account-owned legacy files must not be changed")
+        for file in [plugin, settings] {
+            var metadata = stat()
+            _ = lstat(file.path, &metadata)
+            check(metadata.st_mode & 0o777 == 0o600, "Legacy file permissions must stay private")
+            check(try Data(contentsOf: file) == Data("private connector fixture".utf8), "Recovery must preserve connector contents")
+        }
+        let outside = root.appendingPathComponent("outside-connector")
+        try Data("outside fixture".utf8).write(to: outside)
+        try fm.removeItem(at: plugin)
+        try fm.createSymbolicLink(at: plugin, withDestinationURL: outside)
+        rejects("A symlinked legacy connector file was accepted") { _ = try restore() }
+        try fm.removeItem(at: plugin)
+        try fm.linkItem(at: outside, to: plugin)
+        rejects("A hard-linked legacy connector file was accepted") { _ = try restore() }
+        try fm.removeItem(at: plugin)
+        try Data("private connector fixture".utf8).write(to: plugin)
+        _ = chmod(plugin.path, 0o620)
+        rejects("A shared-writable legacy connector file was accepted") { _ = try restore() }
+        _ = chmod(plugin.path, 0o600)
+        let plugins = plugin.deletingLastPathComponent()
+        _ = chmod(plugins.path, 0o720)
+        rejects("A shared-writable connector directory was accepted") { _ = try restore() }
+        _ = chmod(plugins.path, 0o700)
+        let moved = home.appendingPathComponent("moved-plugins")
+        try fm.moveItem(at: plugins, to: moved)
+        try fm.createSymbolicLink(at: plugins, withDestinationURL: moved)
+        rejects("A symlinked connector parent was accepted") { _ = try restore() }
+        let linkedHome = root.appendingPathComponent("linked-legacy-home")
+        try fm.createSymbolicLink(at: linkedHome, withDestinationURL: home)
+        rejects("A symlinked account home was accepted for connector recovery") {
+            _ = try RuntimeUpgradeStateAccess.restoreLegacyConnectorOwnership(accountHome: linkedHome.path,
+                uid: account.uid, gid: account.gid, rootOwner: account.uid)
+        }
+    }
+
     private static func testInstalledGatewayCopy(root: URL, account: InvokingAccount) throws {
         check(GatewayAdminTrust.installedGatewayPath(account: account) == account.home + "/.local/bin/defenseclaw-gateway",
               "The privileged source must be derived from the authenticated account")
