@@ -63,7 +63,7 @@ struct GatewayAdministratorTests {
             let selected = InstallationContext.resolve(environment: ["DEFENSECLAW_HOME": home.path],
                 appConfigOverride: nil, userHome: fixture, fileExists: fm.fileExists(atPath:), readText: { _ in nil })
             let probe = InvocationProbe()
-            let runner = CLIRunner(context: selected, administratorEnabled: { !scenario.hasPrefix("ordinary") },
+            let runner = CLIRunner(context: selected, upgradeAgents: { [] }, administratorEnabled: { !scenario.hasPrefix("ordinary") },
                 administratorExecutor: { action, context, operation in
                     await probe.record(action, context)
                     if scenario == "denied", action == .stop {

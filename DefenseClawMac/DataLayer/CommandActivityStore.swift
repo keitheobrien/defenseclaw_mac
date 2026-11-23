@@ -84,6 +84,7 @@ final class CommandActivityStore {
         title: String,
         binary: String = "defenseclaw",
         arguments: [String],
+        stopOpenCodeForUpgrade: Bool = false,
         standardInput: String? = nil,
         environment: [String: String] = [:],
         mutation: Bool = true,
@@ -130,6 +131,7 @@ final class CommandActivityStore {
         let result = await runner.run(
             binary: binary,
             arguments: arguments,
+            stopOpenCodeForUpgrade: stopOpenCodeForUpgrade,
             standardInput: standardInput,
             environment: environment,
             mutation: mutation,

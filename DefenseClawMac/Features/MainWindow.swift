@@ -256,7 +256,9 @@ struct MainWindow: View {
                 .buttonStyle(.borderless)
                 .accessibilityLabel("Dismiss runtime update")
             default:
-                if appState.sourceDevelopmentRuntimeDetected {
+                if appState.openCodeUpgradeRetry != nil {
+                    RuntimeUpgradeOpenCodeButton().controlSize(.small)
+                } else if appState.sourceDevelopmentRuntimeDetected {
                     RuntimeSourceSwitchButton()
                         .controlSize(.small)
                 } else {

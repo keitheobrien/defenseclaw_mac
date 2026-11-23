@@ -8,6 +8,7 @@ xcrun swiftc \
   "$ROOT/DefenseClawMac/DataLayer/InstallationContext.swift" \
   "$ROOT/DefenseClawMac/DataLayer/ConfigStore.swift" \
   "$ROOT/DefenseClawMac/DataLayer/CLIRunner.swift" \
+  "$ROOT/DefenseClawMac/DataLayer/RuntimeUpgradeAgents.swift" \
   "$ROOT/DefenseClawMac/DataLayer/GatewayAdminProtocol.swift" \
   "$ROOT/DefenseClawMac/DataLayer/GatewayAdministratorClient.swift" \
   "$ROOT/Tests/GatewayAdministratorTests.swift" \
