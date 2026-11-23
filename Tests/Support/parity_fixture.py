@@ -113,7 +113,7 @@ def cli():
 
 
 def serve():
-    root = Path(tempfile.mkdtemp(prefix="defenseclawmac-parity-", dir="/private/tmp"))
+    root = Path(tempfile.mkdtemp(prefix="defenseclawmac-parity-", dir=os.environ.get("PARITY_FIXTURE_PARENT", "/private/tmp")))
     (root / "bin").mkdir()
     (root / "bin/defenseclaw").write_text(Path(__file__).read_text())
     (root / "bin/defenseclaw").chmod(0o755)

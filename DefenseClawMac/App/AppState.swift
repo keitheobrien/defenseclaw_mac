@@ -165,6 +165,13 @@ final class AppState {
     var publishedRuntimeVersion: String?
     var availableRuntimeUpdate: ReleaseInfo?
     var runtimeUpgradeState: UpgradeState = .idle
+    struct OpenCodeUpgradeRetry: Equatable {
+        let release: ReleaseInfo
+        let context: InstallationContext
+        let sourceSwitch: SourceRuntimeSwitchRequest?
+        let cliPath: String
+    }
+    private(set) var openCodeUpgradeRetry: OpenCodeUpgradeRetry?
     private(set) var runtimeUpgradeRunID: UUID?
 
     var runtimeUpgradeOutput: String {
@@ -341,7 +348,10 @@ final class AppState {
 
     init(
         installationContext: InstallationContext = .resolve(),
-        gatewayListenerTrust: @escaping @Sendable (URL) -> Bool = { GatewayListenerTrust.isTrusted($0) }
+        gatewayListenerTrust: @escaping @Sendable (URL) -> Bool = { GatewayListenerTrust.isTrusted($0) },
+        runtimeUpgradeAgents: @escaping @Sendable () async throws -> [RuntimeUpgradeAgent] = {
+            try await Task.detached(priority: .utility) { try RuntimeUpgradeAgents.running() }.value
+        }
     ) {
         self.installationContext = installationContext
         configStore = ConfigStore(context: installationContext)
@@ -356,7 +366,7 @@ final class AppState {
             gatewayLogURL: installationContext.gatewayLogURL,
             watchdogLogURL: installationContext.watchdogLogURL
         )
-        let runner = CLIRunner(context: installationContext)
+        let runner = CLIRunner(context: installationContext, upgradeAgents: runtimeUpgradeAgents)
         cli = runner
         activity = CommandActivityStore(runner: runner)
         AppDelegate.sandboxNotificationHandler = { [weak self] action, info in
@@ -518,6 +528,7 @@ final class AppState {
         publishedRuntimeVersion = nil
         availableRuntimeUpdate = nil
         runtimeUpgradeState = .idle
+        openCodeUpgradeRetry = nil
         runtimeInstallState = .idle
         runtimeInstallRunID = nil
         firstRunDismissed = false
@@ -976,6 +987,7 @@ final class AppState {
         title: String,
         binary: String = "defenseclaw",
         arguments: [String],
+        stopOpenCodeForUpgrade: Bool = false,
         standardInput: String? = nil,
         environment: [String: String] = [:],
         mutation: Bool = true,
@@ -1015,6 +1027,7 @@ final class AppState {
             title: title,
             binary: binary,
             arguments: arguments,
+            stopOpenCodeForUpgrade: stopOpenCodeForUpgrade,
             standardInput: standardInput,
             environment: environment,
             mutation: mutation,
@@ -1521,9 +1534,7 @@ final class AppState {
             return "Couldn't reach the release server (offline or GitHub rate-limited). Try again shortly."
         }
         // Fall back to the most meaningful single line.
-        let errorLine = output.split(separator: "\n")
-            .first { $0.contains("×") || $0.localizedCaseInsensitiveContains("error:") }
-            .map { $0.trimmingCharacters(in: .whitespaces) }
+        let errorLine = RuntimeUpgradeAgents.failureSummary(output)
         return errorLine ?? "defenseclaw upgrade exited \(exitCode). See Copy Full Upgrade Log in Settings."
     }
 
@@ -1590,7 +1601,18 @@ final class AppState {
         Task { _ = await runRuntimeUpgradeIfAvailable(sourceSwitch: request) }
     }
 
-    private func runRuntimeUpgradeIfAvailable(sourceSwitch: SourceRuntimeSwitchRequest? = nil) async -> Bool {
+    func stopOpenCodeAndUpgrade(_ request: OpenCodeUpgradeRetry) {
+        guard runtimeUpgradeRunID == nil, !updateOperationInProgress else { return }
+        guard openCodeUpgradeRetry == request, request.context == installationContext,
+              request.release == availableRuntimeUpdate else {
+            runtimeUpgradeState = .failed("The runtime selection or available release changed. Retry the upgrade before stopping OpenCode.")
+            openCodeUpgradeRetry = nil
+            return
+        }
+        Task { _ = await runRuntimeUpgradeIfAvailable(sourceSwitch: request.sourceSwitch, openCodeConsent: request) }
+    }
+
+    private func runRuntimeUpgradeIfAvailable(sourceSwitch: SourceRuntimeSwitchRequest? = nil, openCodeConsent: OpenCodeUpgradeRetry? = nil) async -> Bool {
         guard runtimeUpgradeRunID == nil, !updateOperationInProgress,
               !installationBindInProgress, !runtimeVersionCheckInProgress else { return false }
         guard installationMutationsAllowed else {
@@ -1606,6 +1628,7 @@ final class AppState {
         let generation = installationGeneration
         let context = installationContext
         runtimeUpgradeRunID = runID
+        openCodeUpgradeRetry = nil
         runtimeUpgradeState = .checking
         runtimeUpgradeLog = ""
         runtimeUpgradeLogTail = ""
@@ -1638,6 +1661,13 @@ final class AppState {
         guard let release = availableRuntimeUpdate,
               UpdateChecker.isNewer(release.version, than: installed) else { return true }
         guard let selectedCLI = await cli.locateBinary(), installationSnapshotIsCurrent(generation) else { return false }
+        // Confirmation is scoped to the installation, executable and release shown.
+        // Recheck after the awaited version/path probes, not just when the button is pressed.
+        if let consent = openCodeConsent,
+           consent.context != context || consent.release != release || consent.cliPath != selectedCLI {
+            runtimeUpgradeState = .failed("The runtime selection or available release changed. Retry the upgrade before stopping OpenCode.")
+            return false
+        }
         // Legacy release protocols retain their authenticated resolver workflow.
         guard release.version.hasPrefix("1.") else {
             guard let command = RuntimeUpgradeResolverCommand.authenticated(releaseTag: release.tag) else {
@@ -1663,7 +1693,7 @@ final class AppState {
         runtimeUpgradeState = .installing
         await audit.setSuspendedForUpgrade(true)
         let result = await runCommand(runID: runID, title: sourceSwitch == nil ? "Upgrade DefenseClaw runtime to \(release.version)" : "Switch to published runtime \(release.version)",
-            binary: invocation.binary, arguments: invocation.arguments, environment: invocation.environment,
+            binary: invocation.binary, arguments: invocation.arguments, stopOpenCodeForUpgrade: openCodeConsent != nil, environment: invocation.environment,
             category: "upgrade", origin: "Runtime Update")
         runtimeUpgradeLog = activity.entries.first(where: { $0.id == runID })?.output ?? result.output
         var verified = false
@@ -1704,6 +1734,9 @@ final class AppState {
             ? "The updater finished, but the installed runtime could not be verified as \(release.version) or newer. See Activity for output."
             : (result.cancelled ? "Runtime upgrade cancelled. Check Activity and the installed runtime before retrying."
                : Self.summarizeUpgradeFailure(runtimeUpgradeLog, exitCode: result.exitCode))
+        if result.runtimeUpgradeNeedsOpenCodeStop, !result.cancelled {
+            openCodeUpgradeRetry = OpenCodeUpgradeRetry(release: release, context: context, sourceSwitch: sourceSwitch, cliPath: selectedCLI)
+        }
         runtimeUpgradeState = .failed(failure)
         return false
     }

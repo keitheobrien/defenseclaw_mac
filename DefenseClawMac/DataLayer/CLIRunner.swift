@@ -26,6 +26,7 @@ struct CLIResult: Sendable {
     var output: String
     var cancelled: Bool = false
     var outputTruncated: Bool = false
+    var runtimeUpgradeNeedsOpenCodeStop: Bool = false
     var succeeded: Bool { exitCode == 0 && !cancelled && !outputTruncated }
 }
 
@@ -530,6 +531,7 @@ actor CLIRunner {
     }
 
     private var exclusiveOperationID: UUID?
+    private var upgradeAgentPreparationCancellation: [UUID: Bool] = [:]
 
     /// Runtime replacement must not race CLI commands using the same venv.
     func beginExclusiveOperation(id: UUID) -> Bool {
@@ -546,11 +548,15 @@ actor CLIRunner {
     private var runStates: [UUID: RunState] = [:]
     private var installationContext: InstallationContext
 
+    private let upgradeAgents: @Sendable () async throws -> [RuntimeUpgradeAgent]
     private let administratorEnabled: @Sendable () -> Bool
     private let administratorExecutor: @Sendable (GatewayAdminAction, InstallationContext, GatewayAdministratorOperation) async -> CLIResult
 
     init(
         context: InstallationContext = .resolve(),
+        upgradeAgents: @escaping @Sendable () async throws -> [RuntimeUpgradeAgent] = {
+            try await Task.detached(priority: .utility) { try RuntimeUpgradeAgents.running() }.value
+        },
         administratorEnabled: @escaping @Sendable () -> Bool = {
             UserDefaults.standard.bool(forKey: GatewayAdministratorClient.preferenceKey)
         },
@@ -559,6 +565,7 @@ actor CLIRunner {
         }
     ) {
         self.installationContext = context
+        self.upgradeAgents = upgradeAgents
         self.administratorEnabled = administratorEnabled
         self.administratorExecutor = administratorExecutor
     }
@@ -945,6 +952,7 @@ actor CLIRunner {
     func run(
         binary binaryName: String,
         arguments: [String],
+        stopOpenCodeForUpgrade: Bool = false,
         standardInput: String? = nil,
         environment: [String: String] = [:],
         mutation: Bool = true,
@@ -1038,7 +1046,7 @@ actor CLIRunner {
             guard mutation, installationContext.permitsMutation else {
                 return CLIResult(exitCode: 77, output: "Runtime upgrade requires an explicitly mutable installation operation.\n")
             }
-            return await runRuntimeUpgrade(binary: binary, arguments: arguments,
+            return await runRuntimeUpgrade(binary: binary, arguments: arguments, stopOpenCode: stopOpenCodeForUpgrade,
                 standardInput: standardInput, environment: environment,
                 executionID: executionID, onLine: onLine)
         }
@@ -1050,7 +1058,7 @@ actor CLIRunner {
     /// One Activity operation owns authorization, preparation, the ordinary-user
     /// updater and recovery. No installer or user-selected CLI is elevated.
     private func runRuntimeUpgrade(
-        binary: String, arguments: [String], standardInput: String?,
+        binary: String, arguments: [String], stopOpenCode: Bool, standardInput: String?,
         environment: [String: String], executionID: UUID,
         onLine: (@Sendable (String) async -> Void)?
     ) async -> CLIResult {
@@ -1066,13 +1074,24 @@ actor CLIRunner {
             if ownsExclusivity { exclusiveOperationID = nil }
         }
         let context = installationContext
+        // Run before privileged gateway stop, data repair, downloads, or venv replacement.
+        runStates[executionID] = .reserved(cancelRequested: false)
+        let preparation = await prepareUpgradeAgents(stopOpenCode: stopOpenCode,
+            context: context, executionID: executionID, onLine: onLine)
+        guard preparation.succeeded else {
+            if let onLine { await onLine(preparation.output) }
+            return preparation
+        }
+        guard installationContext == context, !Task.isCancelled, !upgradePreparationWasCancelled(executionID) else {
+            return CLIResult(exitCode: 130, output: "Runtime upgrade preparation was cancelled or the installation changed.\n", cancelled: true)
+        }
         let administrator = administratorEnabled()
-        var preparationOutput = ""
+        var preparationOutput = preparation.output
         if administrator {
             let stopped = await runUpgradeGatewayAction(.stop, context: context,
                 executionID: executionID, onLine: onLine)
             guard stopped.succeeded else { return stopped }
-            preparationOutput = stopped.output
+            preparationOutput += stopped.output
         }
         if !administrator { runStates[executionID] = .reserved(cancelRequested: false) }
         let home = context.homeRoot.path
@@ -1115,6 +1134,80 @@ actor CLIRunner {
         return result
     }
 
+    private func prepareUpgradeAgents(
+        stopOpenCode: Bool, context: InstallationContext, executionID: UUID,
+        onLine: (@Sendable (String) async -> Void)?
+    ) async -> CLIResult {
+        upgradeAgentPreparationCancellation[executionID] = false
+        defer { upgradeAgentPreparationCancellation[executionID] = nil }
+        func cancelled() -> CLIResult? {
+            if Task.isCancelled || upgradePreparationWasCancelled(executionID)
+                || upgradeAgentPreparationCancellation[executionID] == true {
+                return CLIResult(exitCode: 130, output: "Runtime upgrade cancelled before installation.\n", cancelled: true)
+            }
+            if installationContext != context {
+                return CLIResult(exitCode: 75, output: "The selected installation changed. Retry the runtime upgrade.\n")
+            }
+            return nil
+        }
+        do {
+            var agents = try await upgradeAgents()
+            if let result = cancelled() { return result }
+            if agents.isEmpty { return CLIResult(exitCode: 0, output: "") }
+            guard stopOpenCode, agents.allSatisfy({ $0.kind == .openCode }) else {
+                return RuntimeUpgradeAgents.blocked(agents)
+            }
+            for executable in Set(agents.map(\.executable)).sorted() {
+                // A fresh scan checks current ownership and installed launcher identity;
+                // never stop a PID, use PATH to choose another version, or elevate OpenCode.
+                agents = try await upgradeAgents()
+                if let result = cancelled() { return result }
+                guard agents.allSatisfy({ $0.kind == .openCode }) else { return RuntimeUpgradeAgents.blocked(agents) }
+                guard agents.contains(where: { $0.executable == executable }) else { continue }
+                let version = await runProcess(binary: executable, arguments: ["--version"],
+                    standardInput: nil, environment: [:], mutation: false, executionID: executionID,
+                    onLine: nil, timeout: .seconds(10))
+                if version.cancelled { return version }
+                runStates[executionID] = .reserved(cancelRequested: false)
+                guard version.succeeded, RuntimeUpgradeAgents.isV2(version.output) else {
+                    return CLIResult(exitCode: 75, output: "Runtime upgrade paused before installation: OpenCode's V2 service command could not be verified. Quit OpenCode completely, including terminal sessions, then retry. Nothing was installed.\n")
+                }
+                // The version probe is a suspension point: revalidate before mutation.
+                agents = try await upgradeAgents()
+                if let result = cancelled() { return result }
+                guard agents.allSatisfy({ $0.kind == .openCode }) else { return RuntimeUpgradeAgents.blocked(agents) }
+                guard agents.contains(where: { $0.executable == executable }) else { continue }
+                if let onLine { await onLine("Stopping OpenCode's background server before upgrading…") }
+                if let result = cancelled() { return result }
+                let stopped = await runProcess(binary: executable, arguments: ["service", "stop"],
+                    standardInput: nil, environment: [:], mutation: true, executionID: executionID,
+                    onLine: onLine, timeout: .seconds(30))
+                guard stopped.succeeded else {
+                    var result = stopped
+                    result.output += "\nerror: OpenCode did not finish stopping. Close its windows and terminal sessions, then retry the runtime upgrade. Nothing was installed.\n"
+                    return result
+                }
+                runStates[executionID] = .reserved(cancelRequested: false)
+            }
+            // A window can immediately respawn the server, and a foreground CLI
+            // can outlive service stop. A zero exit status alone is not sufficient.
+            for attempt in 0..<15 {
+                agents = try await upgradeAgents()
+                if let result = cancelled() { return result }
+                if agents.isEmpty {
+                    let message = "OpenCode stopped. Reopen it after the runtime upgrade finishes.\n"
+                    if let onLine { await onLine(message) }
+                    return CLIResult(exitCode: 0, output: message)
+                }
+                if attempt < 14 { try await Task.sleep(for: .milliseconds(200)) }
+            }
+            return RuntimeUpgradeAgents.blocked(agents)
+        } catch {
+            if let result = cancelled() { return result }
+            return CLIResult(exitCode: 75, output: "Runtime upgrade paused before installation: Could not check running agents. Quit OpenCode and Amp, then retry the runtime upgrade. Nothing was installed.\n")
+        }
+    }
+
     private func upgradePreparationWasCancelled(_ id: UUID) -> Bool {
         if case .reserved(let cancelled) = runStates[id] { return cancelled }
         return false
@@ -1139,7 +1232,7 @@ actor CLIRunner {
     private func runProcess(
         binary: String, arguments: [String], standardInput: String?,
         environment: [String: String], mutation: Bool, executionID: UUID,
-        onLine: (@Sendable (String) async -> Void)?
+        onLine: (@Sendable (String) async -> Void)?, timeout: Duration? = nil
     ) async -> CLIResult {
         let proc = Process()
         guard CLIProcessGroupLauncher.configure(proc, target: binary, arguments: arguments) else {
@@ -1187,6 +1280,14 @@ actor CLIRunner {
             mutation: mutation,
             cancellationRequested: false
         ))
+
+        let timeoutTask = timeout.map { duration in
+            Task {
+                do { try await Task.sleep(for: duration) } catch { return }
+                _ = self.requestCancellation(executionID: executionID, token: runToken)
+            }
+        }
+        defer { timeoutTask?.cancel() }
 
         if let standardInput, let inputPipe {
             inputPipe.fileHandleForWriting.write(Data((standardInput + "\n").utf8))
@@ -1345,7 +1446,12 @@ actor CLIRunner {
     /// happens to reuse the same public identifier.
     @discardableResult
     func cancel(runID: UUID) -> CLICancellationDisposition {
-        requestCancellation(executionID: runID, token: nil)
+        // Cancel the whole preparation even if a service command has already
+        // exited and is only draining output. Do not advance to the installer.
+        if upgradeAgentPreparationCancellation[runID] != nil {
+            upgradeAgentPreparationCancellation[runID] = true
+        }
+        return requestCancellation(executionID: runID, token: nil)
     }
 
     private func requestCancellation(

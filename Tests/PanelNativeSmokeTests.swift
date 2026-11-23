@@ -12,7 +12,12 @@ struct PanelNativeSmokeTests {
         if ProcessInfo.processInfo.environment["PARITY_UPGRADE_ONLY"] == "1" {
             precondition(FileManager.default.homeDirectoryForCurrentUser.path == ProcessInfo.processInfo.environment["HOME"], "upgrade test must use only the disposable home")
         }
-        let state = AppState(gatewayListenerTrust: { _ in true })
+        let state = AppState(gatewayListenerTrust: { _ in true }, runtimeUpgradeAgents: {
+            guard let home = ProcessInfo.processInfo.environment["DEFENSECLAW_HOME"] else { return [] }
+            let fixture = URL(fileURLWithPath: home)
+            guard FileManager.default.fileExists(atPath: fixture.appendingPathComponent("opencode-running").path) else { return [] }
+            return [.init(kind: .openCode, pid: 92506, executable: fixture.appendingPathComponent("bin/opencode").path)]
+        })
         let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 1180, height: 800),
                               styleMask: [.titled, .resizable, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -54,6 +59,18 @@ struct PanelNativeSmokeTests {
             window.title = "Parity fixture: " + name
             window.makeKeyAndOrderFront(nil)
             try? await Task.sleep(for: .seconds(2))
+            if name.hasPrefix("opencode-") {
+                func scrollViews(_ view: NSView) -> [NSScrollView] {
+                    (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews)
+                }
+                for scroll in scrollViews(host) {
+                    if let document = scroll.documentView {
+                        document.scroll(NSPoint(x: 0, y: max(0, document.bounds.height - scroll.contentView.bounds.height)))
+                        scroll.reflectScrolledClipView(scroll.contentView)
+                    }
+                }
+                try? await Task.sleep(for: .milliseconds(400))
+            }
             capture(name, host)
             let nativeTables = tables(host)
             if name == "palette" {
@@ -106,7 +123,8 @@ struct PanelNativeSmokeTests {
                 var launchArguments = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
                 launchArguments.removeValue(forKey: CLIRunner.pathOverrideKey)
                 UserDefaults.standard.setVolatileDomain(launchArguments, forName: UserDefaults.argumentDomain)
-                for scenario in ["success", "failure", "cancelled", "unverified", "equal", "newer", "source", "source-switch", "source-failure", "source-launcher", "source-stale-consent"] {
+                let scenarios = ProcessInfo.processInfo.environment["PARITY_OPENCODE_ONLY"] == "1" ? [] : ["success", "failure", "cancelled", "unverified", "equal", "newer", "source", "source-switch", "source-failure", "source-launcher", "source-stale-consent"]
+                for scenario in scenarios {
                     UserDefaults.standard.set(fixture.appendingPathComponent("bin/defenseclaw").path, forKey: CLIRunner.pathOverrideKey)
                     await state.cli.invalidateBinaryCache()
                     let switching = scenario.hasPrefix("source-")
@@ -211,6 +229,76 @@ struct PanelNativeSmokeTests {
                     }
                     print("PASS automatic runtime upgrade: \(scenario)")
                 }
+                // Exercise the production preflight, Activity output, retry binding,
+                // and views against a disposable V2 service. No live agent is stopped.
+                let agent = fixture.appendingPathComponent("bin/opencode")
+                let script = """
+                #!/usr/bin/python3
+                from pathlib import Path
+                import sys
+                root = Path(__file__).resolve().parent.parent
+                if sys.argv[1:] == ["--version"]:
+                    print("2.2.5")
+                elif sys.argv[1:] == ["service", "stop"]:
+                    (root / "opencode-stop-called").touch()
+                    (root / "opencode-running").unlink(missing_ok=True)
+                else:
+                    sys.exit(64)
+                """
+                try! Data(script.utf8).write(to: agent)
+                try! FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: agent.path)
+                try! Data().write(to: fixture.appendingPathComponent("opencode-running"))
+                UserDefaults.standard.set(fixture.appendingPathComponent("bin/defenseclaw").path, forKey: CLIRunner.pathOverrideKey)
+                await state.cli.invalidateBinaryCache()
+                try! Data("1.0.0".utf8).write(to: versionFile)
+                await state.refreshInstalledRuntimeVersion()
+                let release = ReleaseInfo(tag: "1.0.1", version: "1.0.1", assetName: "", assetURL: "", assetSHA256: "", htmlURL: "https://example.invalid/release", notes: "Fixture")
+                state.availableRuntimeUpdate = release
+                state.runtimeUpgradeState = .failed("defenseclaw upgrade exited 1. See Copy Full Upgrade Log in Settings.")
+                await show("opencode-before", AnyView(AppSettingsView()))
+                @MainActor func waitForUpgrade() async {
+                    for _ in 0..<200 {
+                        try? await Task.sleep(for: .milliseconds(100))
+                        if state.runtimeUpgradeRunID == nil { return }
+                    }
+                    fatalError("upgrade did not finish")
+                }
+                state.performRuntimeUpgrade()
+                await waitForUpgrade()
+                guard let request = state.openCodeUpgradeRetry else { fatalError("OpenCode recovery action was not offered") }
+                precondition(state.installedRuntimeVersion == "1.0.0", "preflight must not install anything")
+                precondition(!FileManager.default.fileExists(atPath: fixture.appendingPathComponent("opencode-stop-called").path), "no service stop without consent")
+                precondition(state.activity.entries.first?.output.contains("background server") == true, "reason is recorded in Activity")
+                await show("opencode-after", AnyView(AppSettingsView()))
+                // The parent test driver uses System Events for SwiftUI's remote
+                // accessibility tree; in-process legacy AX children omit these controls.
+                try! Data().write(to: fixture.appendingPathComponent("opencode-ui-ready"))
+                for _ in 0..<300 {
+                    if FileManager.default.fileExists(atPath: fixture.appendingPathComponent("opencode-dialog-open").path),
+                       !FileManager.default.fileExists(atPath: fixture.appendingPathComponent("opencode-dialog-captured").path),
+                       let host = window.contentView {
+                        capture("opencode-confirmation", host)
+                        try! Data().write(to: fixture.appendingPathComponent("opencode-dialog-captured"))
+                    }
+                    if FileManager.default.fileExists(atPath: fixture.appendingPathComponent("opencode-ui-cancelled").path) { break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                precondition(FileManager.default.fileExists(atPath: fixture.appendingPathComponent("opencode-ui-cancelled").path), "native confirmation must be opened and cancelled")
+                precondition(!FileManager.default.fileExists(atPath: fixture.appendingPathComponent("opencode-stop-called").path), "Cancel leaves OpenCode running")
+                state.availableRuntimeUpdate = ReleaseInfo(tag: "1.0.2", version: "1.0.2", assetName: "", assetURL: "", assetSHA256: "", htmlURL: "", notes: "")
+                state.stopOpenCodeAndUpgrade(request)
+                precondition(state.openCodeUpgradeRetry == nil, "changed release invalidates stop consent")
+                precondition(!FileManager.default.fileExists(atPath: fixture.appendingPathComponent("opencode-stop-called").path), "stale consent must not stop OpenCode")
+                state.availableRuntimeUpdate = release
+                state.performRuntimeUpgrade()
+                await waitForUpgrade()
+                state.stopOpenCodeAndUpgrade(state.openCodeUpgradeRetry!)
+                await waitForUpgrade()
+                precondition(state.installedRuntimeVersion == "1.0.1" && state.runtimeUpgradeState == .idle, "confirmed service stop resumes and verifies the runtime upgrade")
+                precondition(FileManager.default.fileExists(atPath: fixture.appendingPathComponent("opencode-stop-called").path), "confirmed retry used service stop")
+                precondition(state.activity.entries.first?.output.contains("OpenCode stopped") == true, "service stop and installer share Activity")
+                await show("opencode-upgrade-complete", AnyView(AppSettingsView()))
+                print("PASS OpenCode preflight, consent cancellation, stale release, and confirmed retry")
                 print("PASS all native panel/form renders completed")
                 fflush(stdout)
                 app.terminate(nil)

@@ -114,6 +114,9 @@ private struct GeneralSettings: View {
                         }
                     }
                     runtimeStatus
+                    if appState.openCodeUpgradeRetry != nil {
+                        RuntimeUpgradeOpenCodeButton().controlSize(.small)
+                    }
                     if appState.sourceDevelopmentRuntimeDetected, let url = URL(string: update.htmlURL) {
                         Link("Review newer runtime release", destination: url)
                         Text("Keep using your checkout, or explicitly switch to the published release. Your source files stay in place.")
@@ -243,7 +246,7 @@ private struct GeneralSettings: View {
         case .actionRequired(let guidance, _):
             Text(guidance).font(.caption).foregroundStyle(Cisco.blue).lineLimit(3)
         case .failed(let why):
-            Text(why).font(.caption).foregroundStyle(Cisco.red).lineLimit(2)
+            Text(why).font(.caption).foregroundStyle(Cisco.red).fixedSize(horizontal: false, vertical: true)
         default:
             EmptyView()
         }
@@ -560,5 +563,26 @@ struct RuntimeSourceSwitchButton: View {
         } message: { request in
             Text("The runtime updater will install version \(request.release.version), replace the active CLI and gateway launchers, migrate data if needed, and restart runtime services. DefenseClawMac will then use the published runtime. Your checkout at \(request.plan.checkoutRoot) stays untouched. The updater owns backup and rollback. This also replaces any older release installation at \(request.context.homeRoot.path)/.venv.")
         }
+    }
+}
+
+/// The same recovery action is available in Settings and the update banner.
+struct RuntimeUpgradeOpenCodeButton: View {
+    @Environment(AppState.self) private var appState
+    @State private var confirmation: AppState.OpenCodeUpgradeRetry?
+
+    var body: some View {
+        Button("Stop OpenCode and Upgrade…") { confirmation = appState.openCodeUpgradeRetry }
+            .accessibilityLabel("Stop OpenCode and Upgrade")
+            .accessibilityIdentifier("runtime-upgrade-stop-opencode")
+            .disabled(appState.openCodeUpgradeRetry == nil || appState.updateOperationInProgress || !appState.installationMutationsAllowed)
+            .alert("Stop OpenCode and Upgrade?", isPresented: Binding(
+                get: { confirmation != nil }, set: { if !$0 { confirmation = nil } }
+            ), presenting: confirmation) { request in
+                Button("Stop and Upgrade") { appState.stopOpenCodeAndUpgrade(request) }
+                Button("Cancel", role: .cancel) { }
+            } message: { request in
+                Text("Save your work and quit OpenCode windows and terminal sessions first. DefenseClaw Mac will stop your OpenCode background server, interrupting active OpenCode work, and install runtime \(request.release.version). You can reopen OpenCode when the upgrade finishes.")
+            }
     }
 }
