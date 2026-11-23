@@ -37,3 +37,9 @@ All screenshots use synthetic data. The before image reproduces the previous gen
 ![After: explanation and recovery action](../images/runtime-upgrade-opencode/after.png)
 
 ![Confirmation before stopping OpenCode](../images/runtime-upgrade-opencode/confirmation.png)
+
+## Release 1.1.37 compatibility scope
+
+Release 1.1.37 targets DefenseClaw runtime **1.0.10**. The current upstream comparison was taken at `217eec59579c3c25e788ee291f720b2e8486dd63` on 2026-11-23; upstream source metadata still reports 1.0.0, while the installed wheel and published runtime report 1.0.10. Runtime help, packaged dependencies, setup catalog, config version 9, and flat-release packaging contracts passed the read-only audit. Upgrade preparation, flat-runtime packaging, compatibility-audit, and gateway-signing regression suites passed.
+
+The broader compatibility audit is not fully green: the existing Mac command palette contains 249 of the runtime's 281 registry entries. Every existing command has matching arguments; the 32 missing entries cover routing, substrate, and Cowork setup. The palette is unchanged by this release. The saved source-comparison baseline also predates current upstream and standalone-app changes; it has not been rewritten to hide that drift. These are pre-existing feature-parity limitations, not a full-app compatibility certification. Native UI coverage for this release is the upgrade workflow described above; unrelated live integrations and clean-machine installation are not certified by these tests.
