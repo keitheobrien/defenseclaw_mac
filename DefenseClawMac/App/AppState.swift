@@ -30,7 +30,7 @@ enum PanelID: String, CaseIterable, Identifiable {
     case overview, alerts, logs, audit, activity
     case skills, mcps, plugins, tools
     case inventory, aiDiscovery, aiRuntime, registries
-    case setup, sandboxes, policies
+    case setup, sandboxes, policies, routing, substrate
 
     var id: String { rawValue }
 
@@ -52,6 +52,8 @@ enum PanelID: String, CaseIterable, Identifiable {
         case .setup: "Setup"
         case .sandboxes: "Sandboxes"
         case .policies: "Policies"
+        case .routing: "Model Routing"
+        case .substrate: "Agent Substrate"
         }
     }
 
@@ -73,6 +75,8 @@ enum PanelID: String, CaseIterable, Identifiable {
         case .setup: "gearshape.2"
         case .sandboxes: "cube.transparent"
         case .policies: "shield.lefthalf.filled"
+        case .routing: "arrow.triangle.branch"
+        case .substrate: "server.rack"
         }
     }
 }

@@ -53,6 +53,25 @@ def cli():
     elif args in (["--version"], ["version"]):
         version_file = root / "runtime-version"
         print("defenseclaw, version " + (version_file.read_text().strip() if version_file.exists() else "1.0.0"))
+    elif args[:1] == ["routing"]:
+        if (root / "routing-fail").exists():
+            print("Fixture routing unavailable"); sys.exit(1)
+        if (root / "routing-malformed").exists():
+            print("Invalid fixture JSON"); return
+        if args[1:2] == ["status"]:
+            print(json.dumps({"enabled": True, "managed": (root / "routing-managed").exists(), "classifier": "rules",
+                "health": {"state": "disabled" if (root / "routing-applying").exists() else "running"},
+                "models": [{"alias": "fast", "provider": "openai", "model": "fixture-model", "default": True}],
+                "rule_list": [{"id": "coding", "match": {"connectors": ["codex"]}, "allow": ["fast"], "default": "fast"}],
+                "budget_list": [{"id": "monthly", "scope": "user", "subject": "*", "period": "month", "limit_usd": 20, "on_exceed": "warn"}], "warnings": []}))
+        elif args[1:2] == ["usage"]:
+            print(json.dumps({"scope": "own", "rows": [{"key": "fixture-model", "calls": 3, "input_tokens": 1000, "output_tokens": 250, "cost_usd": None, "cost_basis": "price unavailable"}]}))
+        elif args[1:3] == ["pricing", "show"]:
+            print(json.dumps({"version": "fixture", "models": [{"provider": "openai", "model": "fixture-model", "input_per_mtok": 1, "output_per_mtok": 2}]}))
+        else:
+            print("Fixture routing command applied.")
+    elif args[:2] == ["substrate", "list"]:
+        print(json.dumps({"actors": [{"name": "fixture-agent", "atespace": "engineering", "state": "running", "connector": "claudecode", "profile": "default", "template": "fixture-template"}]}))
     elif args[:1] == ["upgrade"]:
         assert args == ["upgrade", "--yes", "--version", "1.0.1"], "unexpected upgrade arguments"
         assert os.environ.get("DEFENSECLAW_APP_PATH") == "none", "Mac app must be preserved"
