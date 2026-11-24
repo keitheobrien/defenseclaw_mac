@@ -61,7 +61,7 @@ The Mac app now exposes the operator-facing additions in [DefenseClaw 1.0.10](ht
 | Historical standalone source-hash baseline | **FAIL (baseline drift):** still pins upstream `00ef714b8a47f3ba90dad69b91dc8aa40c735057` and older standalone hashes. It was not rewritten to make this report green. Current-release command/config contracts were reviewed separately; a full recertification of every historical standalone divergence remains outstanding. |
 | Sandbox inspector opt-in native layout suite | **SKIP** in the shell suite; unrelated to the new routing fixture. |
 | Live cloud/managed/Kubernetes integrations | **NOT TESTED**, as detailed per feature above. |
-| Notarized release | **BLOCKED** by the previously identified missing Apple notarization profile. No unnotarized artifact was published. |
+| Notarized release | **BLOCKED:** the final `notarytool` profile check reached Apple but returned HTTP 403: a required developer-team agreement is missing or expired. The team must renew that agreement before notarization can proceed. No unnotarized artifact was published. |
 
 Commands used (paths can be adjusted to the local checkout):
 
