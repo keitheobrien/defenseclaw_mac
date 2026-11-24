@@ -34,7 +34,8 @@ struct CommandPaletteView: View {
     private var commands: [CommandDefinition] {
         CommandRegistry.paletteCommands(
             supportedSetupCommands: appState.runtimeSetupCommands,
-            supportedRuntimeCommands: appState.runtimeDiscoveryCommands
+            supportedRuntimeCommands: appState.runtimeDiscoveryCommands,
+            runtimeVersion: appState.installedRuntimeVersion
         )
     }
 

@@ -10,8 +10,8 @@ import sys
 import tempfile
 import time
 
-if sys.argv[1:] not in (["--run-gui"], ["--run-sandbox-gui"], ["--run-upgrade-gui"], ["--run-opencode-upgrade-gui"], ["--run-inspection-gui"]):
-    print("SKIP PanelNativeSmokeTests: use --run-gui, --run-sandbox-gui, --run-upgrade-gui, --run-opencode-upgrade-gui, or --run-inspection-gui in a macOS desktop session.")
+if sys.argv[1:] not in (["--run-gui"], ["--run-sandbox-gui"], ["--run-upgrade-gui"], ["--run-opencode-upgrade-gui"], ["--run-inspection-gui"], ["--run-runtime1010-gui"]):
+    print("SKIP PanelNativeSmokeTests: use --run-gui, --run-sandbox-gui, --run-upgrade-gui, --run-opencode-upgrade-gui, --run-inspection-gui, or --run-runtime1010-gui in a macOS desktop session.")
     sys.exit(0)
 repo = Path(__file__).resolve().parent.parent
 root = Path(tempfile.mkdtemp(prefix="defenseclawmac-panel-tests-"))
@@ -61,6 +61,8 @@ try:
     env.update(DEFENSECLAW_HOME=str(fixture_root), DEFENSECLAW_CONFIG=str(fixture_root / "config.yaml"),
                DEFENSECLAW_VENV=os.environ.get("DEFENSECLAW_TEST_VENV", str(repo.parent / "defenseclaw/.venv")), PYTHONDONTWRITEBYTECODE="1",
                PARITY_SCREENSHOTS=str(root / "screenshots"))
+    if sys.argv[1:] == ["--run-runtime1010-gui"]:
+        env["PARITY_RUNTIME1010_ONLY"] = "1"
     if sys.argv[1:] == ["--run-inspection-gui"]:
         env["PARITY_INSPECTION_ONLY"] = "1"
     if sys.argv[1:] == ["--run-sandbox-gui"]:
@@ -125,6 +127,18 @@ try:
                 end tell
             end tell'''
             result = subprocess.run(["/usr/bin/osascript", "-e", fallback], capture_output=True, text=True, timeout=10)
+        if result.returncode and title in ("Review", "Apply Change"):
+            # SwiftUI may omit native button names; use the form's default action
+            # only in the exact disposable runtime-feature window.
+            fallback = f'''tell application "System Events"
+                tell first application process whose unix id is {pid}
+                    if name of window 1 is not "Parity fixture: runtime1010-add-model" then error "Unexpected fixture window"
+                    set frontmost to true
+                    delay 0.2
+                    key code 36
+                end tell
+            end tell'''
+            result = subprocess.run(["/usr/bin/osascript", "-e", fallback], capture_output=True, text=True, timeout=10)
         if result.returncode:
             raise RuntimeError("Native fixture accessibility action failed: " + result.stderr.strip())
 
@@ -137,6 +151,10 @@ try:
             while process.poll() is None:
                 if time.monotonic() > deadline:
                     raise TimeoutError("Native fixture timed out")
+                for marker, title in [("runtime1010-review", "Review"), ("runtime1010-apply", "Apply Change")]:
+                    if (fixture_root / (marker + "-ready")).exists() and not (fixture_root / (marker + "-done")).exists():
+                        press_fixture_button(process.pid, title=title)
+                        (fixture_root / (marker + "-done")).touch()
                 if (fixture_root / "opencode-ui-ready").exists() and not dialog_open:
                     press_fixture_button(process.pid, identifier="runtime-upgrade-stop-opencode")
                     time.sleep(0.5)

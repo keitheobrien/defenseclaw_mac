@@ -105,6 +105,7 @@ struct SetupView: View {
     @Environment(AppState.self) private var appState
     @State private var activeWizard: WizardDefinition?
     @State private var showRedactionPolicy = false
+    @State private var showRuntimeControls = false
 
     var body: some View {
         ScrollView {
@@ -118,6 +119,12 @@ struct SetupView: View {
                         .background(Cisco.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
                 }
                 Text("Setup Areas").font(.title3.weight(.semibold))
+                HStack {
+                    Button("Model Routing, Budgets & Usage") { appState.selectedPanel = .routing }
+                    Button("Guardrail Cascade & Runtime Controls…") { showRuntimeControls = true }
+                    Button("Agent Substrate") { appState.selectedPanel = .substrate }
+                }
+                .disabled(!Runtime1010Features.supported(appState.installedRuntimeVersion))
                 Button { showRedactionPolicy = true } label: {
                     Label("Redaction Policy — inspect profiles, buckets, destinations, and routes", systemImage: "eye.slash")
                 }
@@ -163,6 +170,12 @@ struct SetupView: View {
         .sheet(item: $activeWizard) { wizard in
             WizardSheet(wizard: wizard)
                 .environment(appState)
+        }
+        .sheet(isPresented: $showRuntimeControls) {
+            VStack {
+                RuntimeFeaturesView(area: .controls).environment(appState)
+                Button("Done") { showRuntimeControls = false }.padding(.bottom)
+            }.frame(width: 850, height: 720)
         }
         .sheet(isPresented: $showRedactionPolicy) {
             RedactionPolicySheet().environment(appState)

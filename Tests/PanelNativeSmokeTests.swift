@@ -115,6 +115,50 @@ struct PanelNativeSmokeTests {
                                                  mutation: false, category: "diagnostics", origin: "Parity fixture")
             precondition(version.succeeded && version.output.contains("1.0.0"))
             precondition(!state.activity.entries.isEmpty, "CLI command must be recorded in Activity")
+            if ProcessInfo.processInfo.environment["PARITY_RUNTIME1010_ONLY"] == "1" {
+                let fixture = URL(fileURLWithPath: ProcessInfo.processInfo.environment["DEFENSECLAW_HOME"]!)
+                state.installedRuntimeVersion = "1.0.9"
+                await show("runtime1010-older-runtime", AnyView(RuntimeFeaturesView(area: .routing)))
+                state.installedRuntimeVersion = "1.0.10"
+                await show("runtime1010-routing", AnyView(RuntimeFeaturesView(area: .routing)))
+                precondition(state.activity.entries.contains { $0.title == "Read routing routing" && $0.output.contains("fast") })
+                await show("runtime1010-usage", AnyView(RuntimeFeaturesView(area: .routing, initialTab: "Usage")))
+                precondition(state.activity.entries.contains { $0.title == "Read routing usage" && $0.output.contains("price unavailable") })
+                await show("runtime1010-prices", AnyView(RuntimeFeaturesView(area: .routing, initialTab: "Prices")))
+                await show("runtime1010-substrate", AnyView(RuntimeFeaturesView(area: .substrate)))
+                await show("runtime1010-controls", AnyView(RuntimeFeaturesView(area: .controls)))
+                await show("runtime1010-context", AnyView(RuntimeFeatureActionSheet(action: Runtime1010Features.context)))
+                await show("runtime1010-alignment", AnyView(RuntimeFeatureActionSheet(action: Runtime1010Features.alignment)))
+                await show("runtime1010-setup", AnyView(SetupView()))
+                let action = Runtime1010Features.routing.first { $0.id == "model-add" }!
+                await show("runtime1010-add-model", AnyView(RuntimeFeatureActionSheet(action: action, initialValues: ["name": "native-fixture", "provider": "openai", "model": "fixture-model"])))
+                @MainActor func press(_ title: String) async {
+                    let marker = title == "Review" ? "runtime1010-review" : "runtime1010-apply"
+                    try! Data().write(to: fixture.appendingPathComponent(marker + "-ready"))
+                    for _ in 0..<200 {
+                        if FileManager.default.fileExists(atPath: fixture.appendingPathComponent(marker + "-done").path) { break }
+                        try? await Task.sleep(for: .milliseconds(100))
+                    }
+                    precondition(FileManager.default.fileExists(atPath: fixture.appendingPathComponent(marker + "-done").path), "External UI driver must press \(title)")
+                    try? await Task.sleep(for: .seconds(2))
+                }
+                await press("Review")
+                capture("runtime1010-review-model", window.contentView!)
+                await press("Apply Change")
+                precondition(state.activity.entries.contains { $0.title == "Add model" && $0.output.contains("Fixture routing command applied") }, "native Apply must record the command in Activity")
+                capture("runtime1010-applied-model", window.contentView!)
+                for marker in ["routing-managed", "routing-fail", "routing-malformed"] {
+                    try! Data().write(to: fixture.appendingPathComponent(marker))
+                    await show("runtime1010-" + marker, AnyView(RuntimeFeaturesView(area: .routing)))
+                    try! FileManager.default.removeItem(at: fixture.appendingPathComponent(marker))
+                }
+                await show("runtime1010-activity", AnyView(ActivityView()))
+                print("PASS runtime 1.0.10 native routing, usage, prices, Substrate, review/apply, managed and failure states")
+                print("PASS all native panel/form renders completed")
+                fflush(stdout)
+                app.terminate(nil)
+                return
+            }
             if ProcessInfo.processInfo.environment["PARITY_UPGRADE_ONLY"] == "1" {
                 let fixture = URL(fileURLWithPath: ProcessInfo.processInfo.environment["DEFENSECLAW_HOME"]!)
                 let versionFile = fixture.appendingPathComponent("runtime-version")
