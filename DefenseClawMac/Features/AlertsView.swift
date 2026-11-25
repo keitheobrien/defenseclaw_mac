@@ -29,6 +29,7 @@ struct AlertsView: View {
     @State private var kindFilter: String = "all"
     @State private var selection = Set<String>()
     @State private var confirmAck = false
+    @SceneStorage("alerts.columnCustomization") private var columnCustomization: TableColumnCustomization<AlertRow>
     @State private var findingDetails: [ScanFindingEvent] = []
     @State private var findingHistory: [AuditEvent] = []
     @State private var hydratedAuditEvent: AuditEvent?
@@ -90,31 +91,46 @@ struct AlertsView: View {
                 )
                 .frame(maxHeight: .infinity)
             } else {
-                Table(rows, selection: $selection) {
+                // Columns can be shown, hidden and reordered from the header's
+                // context menu. Details keeps a real minimum so it stays
+                // readable beside the detail pane; Run starts hidden because
+                // the pane and Copy carry it.
+                Table(rows, selection: $selection, columnCustomization: $columnCustomization) {
                     TableColumn("Time") { row in
                         Text(row.timestamp, format: .dateTime.hour().minute().second())
-                            .font(.caption.monospacedDigit())
-                    }
-                    .width(76)
-                    TableColumn("Severity") { row in SeverityBadge(severity: row.severity) }
-                        .width(86)
-                    TableColumn("Kind") { row in
-                        Text(row.kind).font(.caption).foregroundStyle(.secondary)
+                            .font(.dcCell.monospacedDigit())
                     }
                     .width(86)
-                    TableColumn("Action") { row in Text(row.action).font(.caption) }
-                        .width(min: 90, ideal: 130)
+                    .customizationID("time")
+                    .disabledCustomizationBehavior(.visibility)
+                    TableColumn("Severity") { row in SeverityBadge(severity: row.severity) }
+                        .width(86)
+                        .customizationID("severity")
+                        .disabledCustomizationBehavior(.visibility)
+                    TableColumn("Kind") { row in
+                        Text(row.kind).font(.dcCell).foregroundStyle(.secondary)
+                    }
+                    .width(64)
+                    .customizationID("kind")
+                    TableColumn("Action") { row in Text(row.action).font(.dcCell).lineLimit(1) }
+                        .width(min: 90, ideal: 170, max: 260)
+                        .customizationID("action")
                     TableColumn("Target") { row in
-                        Text(row.target).font(.caption).lineLimit(1)
+                        Text(row.target).font(.dcCell).lineLimit(1)
                     }
-                    .width(min: 110, ideal: 180)
+                    .width(min: 70, ideal: 140, max: 320)
+                    .customizationID("target")
                     TableColumn("Details") { row in
-                        Text(row.details).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        Text(row.details).font(.dcCell).foregroundStyle(.secondary).lineLimit(1)
                     }
+                    .width(min: 180, ideal: 360)
+                    .customizationID("details")
                     TableColumn("Run") { row in
-                        Text(row.runID).font(.caption2.monospaced()).foregroundStyle(.tertiary).lineLimit(1)
+                        Text(row.runID).font(.dcCellSecondary.monospaced()).foregroundStyle(.tertiary).lineLimit(1)
                     }
                     .width(80)
+                    .customizationID("run")
+                    .defaultVisibility(.hidden)
                 }
                 .contextMenu(forSelectionType: String.self) { ids in
                     Button("Copy Details") {
@@ -199,19 +215,26 @@ struct AlertsView: View {
     private func alertInspector(_ row: AlertRow) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(row.action).font(.headline)
-                        HStack(spacing: 6) {
-                            SeverityBadge(severity: row.severity)
-                            Text(row.kind.capitalized).font(.caption).foregroundStyle(.secondary)
-                        }
+                DCInspectorHeader(row.action, onClose: { selection = [] }) {
+                    HStack(spacing: 6) {
+                        SeverityBadge(severity: row.severity)
+                        Text(row.kind.capitalized).font(.caption).foregroundStyle(.secondary)
                     }
-                    Spacer()
-                    Button { selection = [] } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.borderless)
-                        .accessibilityLabel("Close alert details")
                 }
+                // Actions live with the details, as in Audit.
+                HStack {
+                    Button {
+                        confirmAck = true
+                    } label: { Label("Acknowledge…", systemImage: "checkmark.circle") }
+                    .disabled(
+                        appState.ackInProgress
+                            || (!selectedAuditSeverities.isEmpty && !appState.installationMutationsAllowed)
+                    )
+                    Button {
+                        copyToPasteboard("\(row.timestamp) [\(row.severity.rawValue)] \(row.action) \(row.target) — \(row.details)")
+                    } label: { Label("Copy", systemImage: "doc.on.doc") }
+                }
+                .controlSize(.small)
                 KeyValueGrid(pairs: [
                     ("Target", row.target),
                     ("Time", row.timestamp.formatted()),
@@ -228,17 +251,17 @@ struct AlertsView: View {
                     : []
                 if !safeMetadata.isEmpty {
                     Divider()
-                    Text("Security Metadata").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    DCInspectorSectionTitle("Security Metadata")
                     KeyValueGrid(pairs: safeMetadata)
                 }
                 if !structured.isEmpty {
                     Divider()
-                    Text("Event Details").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    DCInspectorSectionTitle("Event Details")
                     KeyValueGrid(pairs: structured)
                 }
                 if !row.details.isEmpty {
                     Divider()
-                    Text("Raw Details").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    DCInspectorSectionTitle("Raw Details")
                     Text(row.details)
                         .font(.system(.caption, design: .monospaced))
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -250,7 +273,7 @@ struct AlertsView: View {
 
                 if !findingDetails.isEmpty {
                     Divider()
-                    Text("Findings").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    DCInspectorSectionTitle("Findings")
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(findingDetails) { finding in
                             VStack(alignment: .leading, spacing: 4) {
@@ -275,7 +298,7 @@ struct AlertsView: View {
                     }
                 } else if case .scan(let scan) = row, !scan.findingTitles.isEmpty {
                     Divider()
-                    Text("Findings").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    DCInspectorSectionTitle("Findings")
                     ForEach(scan.findingTitles, id: \.self) { Text($0).font(.caption) }
                 }
 
@@ -343,7 +366,7 @@ struct AlertsView: View {
             HStack(spacing: 12) {
                 ForEach(Self.alertSeverities, id: \.self) { sev in
                     let count = connectorScopedAlerts.filter { $0.severity == sev }.count
-                    StatCard(title: sev.rawValue, value: "\(count)", tint: Cisco.severityColor(sev))
+                    StatCard(title: sev.rawValue, value: "\(count)", tint: Cisco.severityTextColor(sev))
                 }
             }
             if !detectionOnlyLine.isEmpty {

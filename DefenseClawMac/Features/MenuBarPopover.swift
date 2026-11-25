@@ -23,6 +23,7 @@ struct MenuBarPopover: View {
     @Environment(AppState.self) private var appState
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
+    @State private var confirmingAckAll = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -86,6 +87,11 @@ struct MenuBarPopover: View {
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
+            // The dot is color-only; say the state in words for VoiceOver
+            // and on hover.
+            .help("\(c.name): \(DCLabel.state(c.state))")
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(c.name), \(DCLabel.state(c.state)), \(c.mode) mode, \(c.calls) calls, \(c.blocks) blocks")
         }
     }
 
@@ -248,6 +254,9 @@ struct MenuBarPopover: View {
                     }
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(
+                    "\(row.severity.rawValue) alert, \(row.target.isEmpty ? row.action : row.target), \(DCDates.relative(row.timestamp))"
+                )
             }
         }
     }
@@ -263,36 +272,74 @@ struct MenuBarPopover: View {
         }
     }
 
+    @ViewBuilder
     private var footerButtons: some View {
-        HStack {
-            Button("Open DefenseClaw") {
-                openMainWindow()
-            }
-            .controlSize(.small)
-            Button {
-                openSettings()
-            } label: {
-                Image(systemName: "gearshape")
-            }
-            .controlSize(.small)
-            .help("Settings")
-            Button("Ack All") {
-                Task { await appState.acknowledge(appState.unackedAlerts) }
-            }
-            .controlSize(.small)
-            .disabled(
-                appState.unackedAlerts.isEmpty
-                    || appState.ackInProgress
-                    || !appState.installationMutationsAllowed
-            )
-            Button(appState.monitoringPaused ? "Resume" : "Pause") {
-                appState.monitoringPaused.toggle()
-            }
-            .controlSize(.small)
-            Spacer()
-            Button("Quit") { NSApp.terminate(nil) }
+        if confirmingAckAll {
+            ackAllConfirmation
+        } else {
+            HStack {
+                Button("Open DefenseClaw") {
+                    openMainWindow()
+                }
                 .controlSize(.small)
+                Button("Acknowledge All…") {
+                    confirmingAckAll = true
+                }
+                .controlSize(.small)
+                .disabled(
+                    appState.unackedAlerts.isEmpty
+                        || appState.ackInProgress
+                        || !appState.installationMutationsAllowed
+                )
+                Spacer()
+                Menu {
+                    Button(appState.monitoringPaused ? "Resume Monitoring" : "Pause Monitoring") {
+                        appState.monitoringPaused.toggle()
+                    }
+                    Button("Settings…") { openSettings() }
+                    Divider()
+                    Button("Quit DefenseClaw") { NSApp.terminate(nil) }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("More")
+                .accessibilityLabel("More")
+            }
         }
+    }
+
+    /// Same consequence the Alerts panel confirms (spec §15.5): audit rows
+    /// clear whole severity classes through the CLI. Confirmed inline because
+    /// a dialog would dismiss the menu bar window.
+    private var ackAllConfirmation: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Acknowledge all \(appState.unackedAlerts.count) alerts?")
+                .font(.callout.weight(.semibold))
+            Text("DefenseClaw acknowledges entire severity classes in the audit database. Scan and egress findings are hidden until the app relaunches.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("Cancel") { confirmingAckAll = false }
+                    .keyboardShortcut(.cancelAction)
+                    .controlSize(.small)
+                Button("Acknowledge All", role: .destructive) {
+                    confirmingAckAll = false
+                    Task { await appState.acknowledge(appState.unackedAlerts) }
+                }
+                .controlSize(.small)
+                .disabled(
+                    appState.unackedAlerts.isEmpty
+                        || appState.ackInProgress
+                        || !appState.installationMutationsAllowed
+                )
+            }
+        }
+        .onDisappear { confirmingAckAll = false }
     }
 
 }

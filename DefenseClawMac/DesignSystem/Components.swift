@@ -31,9 +31,11 @@ struct SeverityBadge: View {
     }
 
     private var background: Color {
-        severity == .info
-            ? Cisco.severityColor(severity).opacity(0.18)
-            : Cisco.severityColor(severity).opacity(0.88)
+        switch severity {
+        case .info: Cisco.severityColor(severity).opacity(0.18)
+        case .critical: Cisco.criticalFill
+        default: Cisco.severityColor(severity).opacity(0.88)
+        }
     }
 
     var body: some View {
@@ -47,12 +49,69 @@ struct SeverityBadge: View {
     }
 }
 
+enum DCLabel {
+    /// Display form of a runtime state token: "not_configured" becomes
+    /// "Not configured". Short all-caps tokens (ON, OK) pass through. Display
+    /// only — comparisons and colors keep using the raw runtime value.
+    static func state(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.count <= 3, trimmed == trimmed.uppercased() { return trimmed }
+        let spaced = trimmed.replacingOccurrences(of: "_", with: " ").lowercased()
+        return spaced.prefix(1).uppercased() + spaced.dropFirst()
+    }
+
+    /// Capitalizes the first letter and leaves the rest (names, env vars) as is.
+    static func sentence(_ raw: String) -> String {
+        raw.prefix(1).uppercased() + raw.dropFirst()
+    }
+}
+
+/// Collapsible page section with a remembered open/closed state — keeps
+/// secondary detail one click away instead of in one long scroll.
+struct DCDisclosureSection<Content: View>: View {
+    let title: String
+    @AppStorage private var expanded: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ViewBuilder var content: Content
+
+    init(_ title: String, storageKey: String, defaultExpanded: Bool = false, @ViewBuilder content: () -> Content) {
+        self.title = title
+        _expanded = AppStorage(wrappedValue: defaultExpanded, storageKey)
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                withAnimation(reduceMotion ? nil : .snappy) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                    Text(title).font(.title3.weight(.semibold))
+                        .accessibilityAddTraits(.isHeader)
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+            .accessibilityHint(expanded ? "Collapses this section" : "Expands this section")
+            if expanded { content }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 struct StatePill: View {
     let raw: String
     var body: some View {
         HStack(spacing: 4) {
             Circle().fill(Cisco.stateColor(raw: raw)).frame(width: 7, height: 7)
-            Text(raw.lowercased())
+                .accessibilityHidden(true)
+            Text(DCLabel.state(raw))
                 .font(.caption.weight(.medium))
         }
         .padding(.horizontal, 8)
@@ -92,7 +151,7 @@ struct StatCard<Content: View>: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.system(size: 26, weight: .bold, design: .rounded))
+                .font(.system(.largeTitle, design: .rounded).weight(.bold))
                 .foregroundStyle(tint)
             detail
         }
@@ -122,8 +181,10 @@ struct DCCard<Content: View>: View {
             HStack(spacing: 6) {
                 if let systemImage {
                     Image(systemName: systemImage).foregroundStyle(Cisco.blue)
+                        .accessibilityHidden(true)
                 }
                 Text(title).font(.headline)
+                    .accessibilityAddTraits(.isHeader)
                 Spacer()
             }
             content
@@ -240,6 +301,64 @@ struct DiffView: View {
     }
 }
 
+/// Close control for the shared detail pane (`dcInspector`). Escape closes
+/// the pane too.
+struct DCInspectorCloseButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark.circle.fill")
+                .font(.body)
+                // A comfortable click target, not just the 11-point glyph.
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .help("Close Details (Esc)")
+            .accessibilityLabel("Close details")
+    }
+}
+
+/// One header for every detail pane: selectable title, optional badges or
+/// subtitle line beneath it, close button on the right.
+struct DCInspectorHeader<Accessory: View>: View {
+    let title: String
+    let onClose: () -> Void
+    @ViewBuilder var accessory: Accessory
+
+    init(_ title: String, onClose: @escaping () -> Void, @ViewBuilder accessory: () -> Accessory = { EmptyView() }) {
+        self.title = title
+        self.onClose = onClose
+        self.accessory = accessory()
+    }
+
+    var body: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.headline)
+                    .lineLimit(3)
+                    .textSelection(.enabled)
+                accessory
+            }
+            Spacer(minLength: 8)
+            DCInspectorCloseButton(action: onClose)
+        }
+    }
+}
+
+/// Small caption heading between groups inside a detail pane.
+struct DCInspectorSectionTitle: View {
+    let title: String
+    init(_ title: String) { self.title = title }
+    var body: some View {
+        Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            .accessibilityAddTraits(.isHeader)
+    }
+}
+
 struct KeyValueGrid: View {
     let pairs: [(String, String)]
     var body: some View {
@@ -247,11 +366,11 @@ struct KeyValueGrid: View {
             ForEach(Array(pairs.enumerated()), id: \.offset) { _, pair in
                 GridRow {
                     Text(pair.0)
-                        .font(.caption)
+                        .font(.dcCellSecondary)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: true, vertical: false)
                     Text(pair.1)
-                        .font(.caption)
+                        .font(.dcCell)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
@@ -291,6 +410,9 @@ struct ConfidenceGauge: View {
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Confidence")
+        .accessibilityValue("\(AIConfidence.percent(normalizedValue)) percent")
     }
 }
 

@@ -22,6 +22,7 @@ import UniformTypeIdentifiers
 
 struct AuditView: View {
     @Environment(AppState.self) private var appState
+    @SceneStorage("audit.columnCustomization") private var columnCustomization: TableColumnCustomization<AuditEvent>
     @State private var events: [AuditEvent] = []
     @State private var preset = "all"
     @State private var search = ""
@@ -157,29 +158,41 @@ struct AuditView: View {
     }
 
     private var table: some View {
-        Table(visibleEvents, selection: $selection) {
+        // Same column behavior as Alerts: customizable from the header menu,
+        // Details keeps a readable minimum, Run starts hidden.
+        Table(visibleEvents, selection: $selection, columnCustomization: $columnCustomization) {
             TableColumn("Time") { e in
                 Text(e.timestamp, format: .dateTime.month().day().hour().minute().second())
-                    .font(.caption.monospacedDigit())
+                    .font(.dcCell.monospacedDigit())
             }
-            .width(130)
-            TableColumn("Action") { e in Text(e.action).font(.caption) }
-                .width(min: 100, ideal: 140)
-            TableColumn("Type") { e in
-                Text(e.eventType).font(.caption).foregroundStyle(.secondary)
-            }
-            .width(70)
-            TableColumn("Target") { e in Text(e.target).font(.caption).lineLimit(1) }
-                .width(min: 110, ideal: 170)
+            .width(150)
+            .customizationID("time")
+            .disabledCustomizationBehavior(.visibility)
             TableColumn("Severity") { e in SeverityBadge(severity: e.severity) }
                 .width(86)
+                .customizationID("severity")
+            TableColumn("Type") { e in
+                Text(e.eventType).font(.dcCell).foregroundStyle(.secondary)
+            }
+            .width(70)
+            .customizationID("type")
+            TableColumn("Action") { e in Text(e.action).font(.dcCell).lineLimit(1) }
+                .width(min: 90, ideal: 140, max: 240)
+                .customizationID("action")
+            TableColumn("Target") { e in Text(e.target).font(.dcCell).lineLimit(1) }
+                .width(min: 70, ideal: 150, max: 320)
+                .customizationID("target")
+            TableColumn("Details") { e in
+                Text(e.details).font(.dcCell).foregroundStyle(.secondary).lineLimit(1)
+            }
+            .width(min: 180, ideal: 360)
+            .customizationID("details")
             TableColumn("Run") { e in
-                Text(e.runID).font(.caption2.monospaced()).foregroundStyle(.tertiary).lineLimit(1)
+                Text(e.runID).font(.dcCellSecondary.monospaced()).foregroundStyle(.tertiary).lineLimit(1)
             }
             .width(76)
-            TableColumn("Details") { e in
-                Text(e.details).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-            }
+            .customizationID("run")
+            .defaultVisibility(.hidden)
         }
         .contextMenu(forSelectionType: String.self) { ids in
             Button("Copy Details") {
@@ -220,17 +233,11 @@ struct AuditView: View {
 
     private func auditInspector(_ event: AuditEvent) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(event.action).font(.headline)
-                    HStack(spacing: 6) {
-                        SeverityBadge(severity: event.severity)
-                        Text(event.eventType).font(.caption).foregroundStyle(.secondary)
-                    }
+            DCInspectorHeader(event.action, onClose: { selection = [] }) {
+                HStack(spacing: 6) {
+                    SeverityBadge(severity: event.severity)
+                    Text(event.eventType).font(.caption).foregroundStyle(.secondary)
                 }
-                Spacer()
-                Button { selection = [] } label: { Image(systemName: "xmark.circle.fill") }
-                    .buttonStyle(.borderless)
             }
             HStack {
                 Button {

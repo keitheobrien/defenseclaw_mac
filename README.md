@@ -39,7 +39,7 @@ Turning the setting off is remembered across launches and updates. Stopping the 
 
 ### Administrator mode
 
-For a compatible runtime that needs machine-wide observation, enable **Run gateway as administrator** in **Overview** or **Settings → Connection**. Start, Stop, Restart, and automatic startup then use the signed background helper and macOS administrator authorization. Administrator mode is separate from automatic startup and is off by default.
+For a compatible runtime that needs machine-wide observation, enable **Run gateway as administrator** in **Settings → Connection** (Overview's Gateway menu opens it). Start, Stop, Restart, and automatic startup then use the signed background helper and macOS administrator authorization. Administrator mode is separate from automatic startup and is off by default.
 
 macOS may require background-service approval. Runtime **agent actions** also require Full Disk Access for `/usr/bin/eslogger`; access granted to a terminal does not transfer to the background gateway. Follow [administrator gateway setup](docs/GATEWAY_ADMINISTRATOR.md) for the approval steps and compatible-runtime requirements.
 
@@ -87,24 +87,25 @@ Everything the app reads is unauthenticated (`/health`) or read-only; all state 
 
 ## Panels
 
-The sidebar groups 16 panels:
+Overview sits at the top of the sidebar, followed by four groups:
 
-- **Monitor** — Overview, Alerts, Logs, Audit, Activity
-- **Govern** — Skills, MCPs, Plugins, Tools, Policies, Sandboxes
-- **Discover** — Inventory, AI Discovery, Runtime, Registries
-- **Configure** — Setup
+- **Monitor** — Alerts, Logs, Audit
+- **Protect** — Policies, Sandboxes, Skills, MCP Servers, Plugins, Tools
+- **Discover** — Inventory, AI Discovery, Runtime Sensors, Registries
+- **System** — Setup, Model Routing, Agent Substrate, Activity
 
-⌘1–⌘9, ⌘0, and ⌘⇧1–⌘⇧3 jump between monitoring, governance, and discovery panels; ⌘⇧S opens Setup; ⌘R refreshes; ⌘F searches. A command palette (⌘⇧P) exposes the full DefenseClaw command registry, and ⌃M cycles the shared connector filter across every view.
+⌘1–⌘9 and ⌘0 jump to the first ten panels in sidebar order (the Go menu lists them all); ⌘R refreshes; ⌘F searches. A command palette (⌘⇧P) exposes the full DefenseClaw command registry, and ⌘⇧M cycles the shared connector filter across every view.
 
 ### Overview
 
 The dashboard is a faithful port of the TUI's boxes:
 
-- **What Needs Attention** — the runtime's notice rules (gateway offline, guardrail unconfigured, missing API keys, connector drift, silent LLM bypass, doctor findings, and more).
+- **Status header** — the menu bar shield's state in words, with the gateway Start / Restart / Stop control (also in the Gateway menu).
+- **What Needs Attention** — the runtime's notice rules (gateway offline, guardrail unconfigured, missing API keys, connector drift, silent LLM bypass, doctor findings, and more), each with a one-click remedy where one exists.
 - **Services** — all nine subsystems (Gateway, Agent, Watchdog, Guardrail, API, Sinks, Telemetry, AI Discovery, Sandbox) with state and per-service detail.
 - **Scanners**, **Enforcement** tiles (Hook Calls / Blocks / Findings / Guardrail), **Configuration**, **Connectors**, **Observability Destinations · Runtime** (loaded OTel exporters and audit sinks with delivery stats), **Doctor** (hydrated from the on-disk cache with staleness and live-health reconciliation), and **Discovered AI Agents**.
 
-Select a connector (the roster chip, a Connectors-table row, or ⌃M) and the Configuration, Enforcement, and Scanners boxes rescope to that connector — including per-connector AIBOM coverage.
+Select a connector (the roster chip, a Connectors-table row, or ⌘⇧M) and the Configuration, Enforcement, and Scanners boxes rescope to that connector — including per-connector AIBOM coverage.
 
 ### Policies, sandboxes, and inventory
 

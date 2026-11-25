@@ -74,6 +74,8 @@ struct FirstRunView: View {
     @State private var hiltSeverity = "HIGH"
     @AppStorage(GatewayAutoStartPreference.key) private var startGateway = true
     @State private var verify = true
+    @State private var step: SetupStep = .agents
+    @State private var showAdvanced = false
     @State private var runID: UUID?
     @State private var exitCode: Int32?
     @State private var setupInProgress = false
@@ -120,10 +122,11 @@ struct FirstRunView: View {
                 Image(systemName: "shield.lefthalf.filled")
                     .font(.system(size: 38))
                     .foregroundStyle(Cisco.blue)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Set Up DefenseClaw").font(.title2.weight(.semibold))
                     Text(cliFound
-                         ? "DefenseClaw registers the hook connectors you select (detected ones are pre-selected). You can optionally choose which connectors enforce policy."
+                         ? "Three short steps: choose your agents, choose how DefenseClaw responds, then review."
                          : runtimeDetected
                          ? "An existing DefenseClaw runtime was found. This app will not replace it with the bundled payload."
                          : "Install the DefenseClaw runtime first, then return here to configure it.")
@@ -197,19 +200,29 @@ struct FirstRunView: View {
                     }
                     .disabled(isCancelling || isFinishing)
                 } else if cliFound {
-                    Button {
-                        initialize()
-                    } label: {
-                        Label(exitCode == 0 ? "Run Setup Again" : "Initialize DefenseClaw", systemImage: "play.fill")
+                    if let previous = SetupStep(rawValue: step.rawValue - 1) {
+                        Button("Back") { step = previous }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(setupInvalid || !appState.installationMutationsAllowed)
+                    if step == .review {
+                        Button {
+                            initialize()
+                        } label: {
+                            Label(exitCode == 0 ? "Run Setup Again" : "Initialize DefenseClaw", systemImage: "play.fill")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(setupInvalid || !appState.installationMutationsAllowed)
+                    } else if let next = SetupStep(rawValue: step.rawValue + 1) {
+                        Button("Continue") { step = next }
+                            .buttonStyle(.borderedProminent)
+                            .keyboardShortcut(.defaultAction)
+                            .disabled(stepInvalid)
+                    }
                 }
             }
         }
         .padding(24)
-        .frame(width: 700, height: cliFound ? 760 : 560)
+        .frame(width: 700, height: cliFound ? 680 : 560)
         .task {
             guard !checked else { return }
             checked = true
@@ -225,92 +238,176 @@ struct FirstRunView: View {
         }
     }
 
-    private var setupForm: some View {
-        Form {
-            Section("Agent and Policy") {
-                Picker("Profile", selection: $profile) {
-                    Text("Observe - detect and log").tag("observe")
-                    Text("Action - enforce policy").tag("action")
+    /// The assistant's three steps. Order and grouping are layout; every
+    /// option, default and validation is the TUI first run's.
+    private enum SetupStep: Int, CaseIterable {
+        case agents, protection, review
+
+        var title: String {
+            switch self {
+            case .agents: "Agents"
+            case .protection: "Protection"
+            case .review: "Review"
+            }
+        }
+    }
+
+    private var stepSubtitle: String {
+        switch step {
+        case .agents: "DefenseClaw installs its hooks into the agents you select. Nothing changes until you initialize on the last step."
+        case .protection: "Start in Observe to see what DefenseClaw finds, or enforce policy right away. You can change this later in Setup."
+        case .review: "These are the exact commands DefenseClaw will run. Each one is recorded in Activity."
+        }
+    }
+
+    private var stepInvalid: Bool {
+        switch step {
+        case .agents:
+            connectorDiscoveryInProgress || (!detectedConnectors.isEmpty && registeredSelection.isEmpty)
+        case .protection:
+            profile == "action" && !detectedConnectors.isEmpty && actionConnectors.isEmpty
+        case .review:
+            setupInvalid
+        }
+    }
+
+    private var stepIndicator: some View {
+        HStack(spacing: 8) {
+            ForEach(SetupStep.allCases, id: \.rawValue) { item in
+                HStack(spacing: 5) {
+                    Image(systemName: item.rawValue < step.rawValue
+                          ? "checkmark.circle.fill"
+                          : "\(item.rawValue + 1).circle\(item == step ? ".fill" : "")")
+                        .foregroundStyle(item.rawValue <= step.rawValue ? Cisco.blue : Color.secondary)
+                    Text(item.title)
+                        .font(.callout.weight(item == step ? .semibold : .regular))
+                        .foregroundStyle(item == step ? Color.primary : Color.secondary)
                 }
-                if connectorDiscoveryInProgress {
-                    LabeledContent("Connectors") {
-                        HStack(spacing: 6) {
-                            ProgressView().controlSize(.small)
-                            Text("Detecting installed agents...").foregroundStyle(.secondary)
+                if item != .review {
+                    Rectangle().fill(.quaternary).frame(width: 28, height: 1)
+                }
+            }
+            Spacer()
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Step \(step.rawValue + 1) of \(SetupStep.allCases.count), \(step.title)")
+    }
+
+    private var setupForm: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            stepIndicator
+            Text(stepSubtitle)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Form {
+                switch step {
+                case .agents: agentsStep
+                case .protection: protectionStep
+                case .review: reviewStep
+                }
+            }
+            .formStyle(.grouped)
+        }
+    }
+
+    @ViewBuilder
+    private var agentsStep: some View {
+        Section("Which agents should DefenseClaw protect?") {
+            if connectorDiscoveryInProgress {
+                LabeledContent("Connectors") {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Detecting installed agents...").foregroundStyle(.secondary)
+                    }
+                }
+            } else if !detectedConnectors.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Register DefenseClaw for").font(.callout.weight(.medium))
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading) {
+                        ForEach(detectedConnectors, id: \.self) { name in
+                            Toggle(friendlyConnectorName(name), isOn: registeredConnectorBinding(name))
+                                .toggleStyle(.checkbox)
                         }
                     }
-                } else if !detectedConnectors.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Register DefenseClaw for").font(.callout.weight(.medium))
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading) {
-                            ForEach(detectedConnectors, id: \.self) { name in
-                                Toggle(friendlyConnectorName(name), isOn: registeredConnectorBinding(name))
-                                    .toggleStyle(.checkbox)
-                            }
-                        }
-                        if registeredSelection.isEmpty {
-                            Label("Select at least one connector to register.", systemImage: "exclamationmark.triangle.fill")
-                                .font(.caption)
-                                .foregroundStyle(Cisco.orange)
-                        }
-                    }
-                    Text("Detected connectors are pre-selected; uncheck any you don't want DefenseClaw hooks installed into. Observe mode never blocks; Action applies only to the checked connectors below.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    if profile == "action" {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Enforce on").font(.callout.weight(.medium))
-                            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading) {
-                                ForEach(registeredSelection, id: \.self) { name in
-                                    Toggle(friendlyConnectorName(name), isOn: actionConnectorBinding(name))
-                                        .toggleStyle(.checkbox)
-                                }
-                            }
-                            if actionConnectors.isEmpty {
-                                Label("Select at least one connector for Action mode.", systemImage: "exclamationmark.triangle.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(Cisco.orange)
-                            }
-                        }
-                    }
-                } else {
-                    Picker("Fallback hook connector", selection: $connector) {
-                        ForEach(Self.connectors, id: \.self) {
-                            Text(friendlyConnectorName($0)).tag($0)
-                        }
-                    }
-                    HStack(spacing: 8) {
-                        Button {
-                            discoveryRequested = true
-                            Task { await discoverConnectors() }
-                        } label: {
-                            Label(discoveryRequested ? "Detect Again" : "Detect Installed Agents",
-                                  systemImage: "magnifyingglass")
-                        }
-                        .disabled(!appState.installationMutationsAllowed)
-                        Text("Runs `defenseclaw agent discover`, which executes each detected agent CLI's --version to identify it.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Text(discoveryRequested
-                         ? "No installed hook connectors were returned by discovery. Setup will use this explicit hook connector fallback."
-                         : "Choose a hook connector directly, or detect the agents installed on this Mac.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    if let connectorDiscoveryError {
-                        Label(connectorDiscoveryError, systemImage: "exclamationmark.triangle.fill")
+                    if registeredSelection.isEmpty {
+                        Label("Select at least one connector to register.", systemImage: "exclamationmark.triangle.fill")
                             .font(.caption)
                             .foregroundStyle(Cisco.orange)
                     }
                 }
+                Text("Detected agents are pre-selected. Uncheck any you don't want DefenseClaw hooks installed into.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Picker("Fallback hook connector", selection: $connector) {
+                    ForEach(Self.connectors, id: \.self) {
+                        Text(friendlyConnectorName($0)).tag($0)
+                    }
+                }
+                HStack(spacing: 8) {
+                    Button {
+                        discoveryRequested = true
+                        Task { await discoverConnectors() }
+                    } label: {
+                        Label(discoveryRequested ? "Detect Again" : "Detect Installed Agents",
+                              systemImage: "magnifyingglass")
+                    }
+                    .disabled(!appState.installationMutationsAllowed)
+                    Text("Runs `defenseclaw agent discover`, which executes each detected agent CLI's --version to identify it.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Text(discoveryRequested
+                     ? "No installed hook connectors were returned by discovery. Setup will use this explicit hook connector fallback."
+                     : "Choose a hook connector directly, or detect the agents installed on this Mac.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let connectorDiscoveryError {
+                    Label(connectorDiscoveryError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(Cisco.orange)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var protectionStep: some View {
+        Section("How should DefenseClaw respond?") {
+            Picker("Protection", selection: $profile) {
+                Text("Observe — detect and log, never block (recommended to start)").tag("observe")
+                Text("Action — enforce policy on the agents you choose").tag("action")
+            }
+            .pickerStyle(.radioGroup)
+            if profile == "action", !detectedConnectors.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Enforce on").font(.callout.weight(.medium))
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading) {
+                        ForEach(registeredSelection, id: \.self) { name in
+                            Toggle(friendlyConnectorName(name), isOn: actionConnectorBinding(name))
+                                .toggleStyle(.checkbox)
+                        }
+                    }
+                    if actionConnectors.isEmpty {
+                        Label("Select at least one connector for Action mode.", systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(Cisco.orange)
+                    }
+                }
+            }
+        }
+        // A plain toggle rather than a DisclosureGroup: disclosure rows in a
+        // grouped Form do not expand reliably on macOS.
+        Section("Advanced") {
+            Toggle("Show advanced options", isOn: $showAdvanced)
+            if showAdvanced {
                 Picker("Scanner Mode", selection: $scannerMode) {
                     Text("Local").tag("local")
                     Text("Remote").tag("remote")
                     Text("Both").tag("both")
                 }
                 Toggle("Enable LLM judge", isOn: $llmJudge)
-            }
-            Section("Enforcement") {
                 // tui/panels/first_run.py: fail mode and HITL apply to the
                 // action profile only; observe keeps failing open and the
                 // CLI preserves any saved setting.
@@ -331,16 +428,70 @@ struct FirstRunView: View {
                     }
                 }
             }
-            Section("Finish") {
-                Toggle("Start gateway automatically", isOn: $startGateway)
-                    .disabled(!appState.installationMutationsAllowed || setupInProgress)
-                Text("Starts the gateway after setup and whenever DefenseClawMac opens, including after an app update. You can change this in Settings → Connection.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Toggle("Verify readiness", isOn: $verify)
+        }
+    }
+
+    private var agentsSummary: String {
+        let names = detectedConnectors.isEmpty ? [connector] : registeredSelection
+        return names.map { friendlyConnectorName($0) }.joined(separator: ", ")
+    }
+
+    private var protectionSummary: String {
+        guard profile == "action" else { return "Observe — detect and log" }
+        let enforced = registeredSelection.filter { actionConnectors.contains($0) }
+        return enforced.isEmpty
+            ? "Action — enforce policy"
+            : "Action on " + enforced.map { friendlyConnectorName($0) }.joined(separator: ", ")
+    }
+
+    @ViewBuilder
+    private var reviewStep: some View {
+        Section("Summary") {
+            LabeledContent("Agents", value: agentsSummary)
+            LabeledContent("Protection", value: protectionSummary)
+            LabeledContent("Scanner mode", value: scannerMode.capitalized)
+            LabeledContent("LLM judge", value: llmJudge ? "On" : "Off")
+            if profile == "action" {
+                LabeledContent("Hook failure mode", value: failMode.capitalized)
+                LabeledContent("Human approval", value: humanApproval ? "\(hiltSeverity) and above" : "Off")
             }
         }
-        .formStyle(.grouped)
+        Section("Finish") {
+            Toggle("Start gateway automatically", isOn: $startGateway)
+                .disabled(!appState.installationMutationsAllowed || setupInProgress)
+            Text("Starts the gateway after setup and whenever DefenseClawMac opens, including after an app update. You can change this in Settings → Connection.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Toggle("Verify readiness", isOn: $verify)
+        }
+        Section("Commands") {
+            Text(initializationPlan
+                .map { (["defenseclaw"] + $0).map(ShellQuoting.quote).joined(separator: " ") }
+                .joined(separator: "\n"))
+                .font(.caption.monospaced())
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// The same plan `initialize()` executes, so Review shows exactly what runs.
+    private var initializationPlan: [[String]] {
+        ConnectorOnboarding.initializationPlan(
+            detectedConnectors: detectedConnectors,
+            registeredConnectors: registeredConnectors,
+            fallbackConnector: connector,
+            actionConnectors: actionConnectors,
+            profile: profile,
+            scannerMode: scannerMode,
+            llmJudge: llmJudge,
+            failMode: failMode,
+            humanApproval: humanApproval,
+            hiltSeverity: hiltSeverity,
+            // Gateway lifecycle is dispatched separately so administrator
+            // mode and Activity recording apply to the final start.
+            startGateway: false,
+            verify: verify
+        )
     }
 
     @ViewBuilder
@@ -525,22 +676,7 @@ struct FirstRunView: View {
                 appState.firstRunSetupInProgress = false
             }
             guard !stopIfSetupCancelled() else { return }
-            let plan = ConnectorOnboarding.initializationPlan(
-                detectedConnectors: detectedConnectors,
-                registeredConnectors: registeredConnectors,
-                fallbackConnector: connector,
-                actionConnectors: actionConnectors,
-                profile: profile,
-                scannerMode: scannerMode,
-                llmJudge: llmJudge,
-                failMode: failMode,
-                humanApproval: humanApproval,
-                hiltSeverity: hiltSeverity,
-                // Gateway lifecycle is dispatched separately so administrator
-                // mode and Activity recording apply to the final start.
-                startGateway: false,
-                verify: verify
-            )
+            let plan = initializationPlan
 
             for (index, arguments) in plan.enumerated() {
                 guard !stopIfSetupCancelled() else { return }
@@ -719,6 +855,7 @@ struct FirstRunView: View {
                 Spacer(minLength: 8)
                 Button { copyToPasteboard(command) } label: { Image(systemName: "doc.on.doc") }
                     .buttonStyle(.borderless).help("Copy Command")
+                    .accessibilityLabel("Copy command")
             }
         }
     }

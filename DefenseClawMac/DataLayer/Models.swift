@@ -200,8 +200,12 @@ struct OverviewEnforcementMetrics: Sendable, Equatable {
 /// One "What needs attention" line (TUI OverviewNotice): level info|warn|error.
 struct OverviewNotice: Identifiable, Sendable, Equatable {
     enum Level: String, Sendable { case info, warn, error }
+    /// The one-click remedy the Overview offers beside a notice. Presentation
+    /// only: which notices exist, their order and wording follow the TUI.
+    enum Action: Sendable, Equatable { case startGateway, openSetup, runHealthCheck, openAlerts }
     var level: Level
     var message: String
+    var action: Action? = nil
     var id: String { "\(level.rawValue)-\(message)" }
 }
 
