@@ -80,6 +80,7 @@ struct MainWindow: View {
             CommandPaletteView()
                 .environment(appState)
         }
+        .background { popoverPreviewHost }
         .toolbar {
             ToolbarItem {
                 Button { appState.commandPalettePresented = true } label: {
@@ -113,6 +114,9 @@ struct MainWindow: View {
     // Design-review switches, compiled into Debug builds only:
     //   defaults write <bundle id> dcPreviewBanners -bool YES
     //   defaults write <bundle id> dcPreviewFirstRun -bool YES
+    //   defaults write <bundle id> dcPreviewPopover -bool YES
+    // The last one shows the real menu bar popover view in a sheet, for
+    // machines where the status item is hidden or unreachable.
     // They only make existing views visible; their buttons keep their real
     // behavior, so do not press them against a live install.
     #if DEBUG
@@ -122,6 +126,26 @@ struct MainWindow: View {
     private static let previewBanners = false
     private static let previewFirstRun = false
     #endif
+
+    #if DEBUG
+    @State private var popoverPreviewPresented = UserDefaults.standard.bool(forKey: "dcPreviewPopover")
+    #endif
+
+    @ViewBuilder
+    private var popoverPreviewHost: some View {
+        #if DEBUG
+        Color.clear.sheet(isPresented: $popoverPreviewPresented) {
+            VStack(spacing: 0) {
+                MenuBarPopover().environment(appState)
+                Divider()
+                Button("Close Preview") { popoverPreviewPresented = false }
+                    .padding(8)
+            }
+        }
+        #else
+        EmptyView()
+        #endif
+    }
 
     private func sidebarRows(_ panels: [PanelID]) -> some View {
         ForEach(panels) { panel in

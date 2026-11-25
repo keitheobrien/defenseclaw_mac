@@ -192,22 +192,24 @@ private struct MenuBarIcon: View {
     @Environment(AppState.self) private var appState
 
     var body: some View {
+        // Kept to plain Image/Text, as on main: MenuBarExtra labels are only
+        // documented to render those, so no modifiers are added here.
         switch appState.menuBarState {
         case .healthy:
-            Image("MenuBarShield").accessibilityLabel("DefenseClaw, all systems running")
+            Image("MenuBarShield")
         case .alerting(let count):
-            Image("MenuBarShieldFill").accessibilityLabel("DefenseClaw, \(count) alerts")
-            Text("\(count)").accessibilityHidden(true)
+            Image("MenuBarShieldFill")
+            Text("\(count)")
         case .degraded:
-            Image("MenuBarShieldHalf").accessibilityLabel("DefenseClaw, running with issues")
+            Image("MenuBarShieldHalf")
         case .offline:
-            Image("MenuBarShieldSlash").accessibilityLabel("DefenseClaw, gateway offline")
+            Image("MenuBarShieldSlash")
         case .scanning:
-            Image("MenuBarShield").accessibilityLabel("DefenseClaw, scanning")
-            Image(systemName: "arrow.triangle.2.circlepath").accessibilityHidden(true)
+            Image("MenuBarShield")
+            Image(systemName: "arrow.triangle.2.circlepath")
         case .paused:
-            Image("MenuBarShield").accessibilityLabel("DefenseClaw, monitoring paused")
-            Image(systemName: "pause.fill").accessibilityHidden(true)
+            Image("MenuBarShield")
+            Image(systemName: "pause.fill")
         }
     }
 }

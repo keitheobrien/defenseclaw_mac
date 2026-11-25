@@ -76,12 +76,12 @@ Found and fixed during this pass:
 
 ## Not verified
 
-- The menu bar popover (inline Acknowledge All confirmation, More menu). The
-  status item could not be reached from the test session; the code compiles
-  and the confirmation is a local state toggle in front of the existing
-  `acknowledge` call.
-- Escape closing the detail pane (the key could not be delivered to the app
-  in the background; the handler is unchanged from `main`).
+- The popover opening from the real menu bar item. On the test host the
+  DefenseClawMac status item is not present in the menu bar at all — System
+  Events reports one menu bar for the process, for a Debug build of this
+  branch and of `origin/main` (`185f20a`) alike — so this is the host's menu
+  bar configuration (Bartender 7 is installed), not this branch. The popover
+  view itself was verified through the preview switch; see the addendum.
 - VoiceOver, Increase Contrast and Reduce Motion by ear/eye. Labels, heading
   traits, values and the Reduce Motion checks are in the code and visible in
   the accessibility tree ("Close details", "Dismiss app update", …), but no
@@ -98,3 +98,18 @@ Opening Model Routing and Agent Substrate runs their read-only loaders
 both were cancelled by navigating away and are recorded as Cancelled in
 Activity. The two preview defaults were deleted after use. The Debug build
 replaced the running DefenseClawMac instance for the duration.
+
+## Addendum — popover and Escape (same day)
+
+- Menu bar popover, shown through the Debug-only `dcPreviewPopover` switch
+  (the real `MenuBarPopover` view in a sheet): header, connector lines,
+  enforcement bars and recent alerts render as before. "Acknowledge All…"
+  swaps the footer for the inline confirmation ("Acknowledge all 500
+  alerts?", the severity-class warning, Cancel / Acknowledge All); Cancel
+  restores the footer and the count stayed at 500. The More menu opens with
+  Pause Monitoring, Settings… and Quit DefenseClaw. Acknowledge All, Pause
+  and Quit were not pressed.
+- Escape closes the Alerts detail pane when the app is frontmost.
+- The menu bar shield label is back to plain `Image` / `Text`, as on `main`;
+  the spoken-state modifiers added in pass 5 were removed while ruling them
+  out as the cause of the missing status item.
