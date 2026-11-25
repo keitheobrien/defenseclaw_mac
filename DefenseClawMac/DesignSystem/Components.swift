@@ -294,6 +294,57 @@ struct DiffView: View {
     }
 }
 
+/// Close control for the shared detail pane (`dcInspector`). Escape closes
+/// the pane too.
+struct DCInspectorCloseButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) { Image(systemName: "xmark.circle.fill") }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .help("Close Details (Esc)")
+            .accessibilityLabel("Close details")
+    }
+}
+
+/// One header for every detail pane: selectable title, optional badges or
+/// subtitle line beneath it, close button on the right.
+struct DCInspectorHeader<Accessory: View>: View {
+    let title: String
+    let onClose: () -> Void
+    @ViewBuilder var accessory: Accessory
+
+    init(_ title: String, onClose: @escaping () -> Void, @ViewBuilder accessory: () -> Accessory = { EmptyView() }) {
+        self.title = title
+        self.onClose = onClose
+        self.accessory = accessory()
+    }
+
+    var body: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.headline)
+                    .lineLimit(3)
+                    .textSelection(.enabled)
+                accessory
+            }
+            Spacer(minLength: 8)
+            DCInspectorCloseButton(action: onClose)
+        }
+    }
+}
+
+/// Small caption heading between groups inside a detail pane.
+struct DCInspectorSectionTitle: View {
+    let title: String
+    init(_ title: String) { self.title = title }
+    var body: some View {
+        Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+    }
+}
+
 struct KeyValueGrid: View {
     let pairs: [(String, String)]
     var body: some View {

@@ -68,25 +68,6 @@ struct PoliciesView: View {
                         Text(summary(row)).font(.caption).lineLimit(2)
                     }
                 }
-                if let row = selected {
-                    HStack {
-                        ForEach(actionGroups(row), id: \.self) { group in
-                            Menu(group) {
-                                ForEach(row.actions.filter { $0.group == group && $0.allowed }) { action in
-                                    Button(action.title) {
-                                        acknowledgeWeaker = false
-                                        pending = action
-                                    }
-                                    .disabled(action.mutation && !appState.installationMutationsAllowed)
-                                }
-                            }
-                        }
-                    }.disabled(running || loading || !current)
-                    ScrollView {
-                        Text(row.detail).font(.callout.monospaced()).textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }.frame(minHeight: 110, maxHeight: 240)
-                }
             }
             if !output.isEmpty {
                 DisclosureGroup("Last command output (also in Activity)") {
@@ -96,6 +77,16 @@ struct PoliciesView: View {
             }
         }
         .padding(16)
+        // Keep the controls at the top while the catalog loads.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // Same right-hand detail pane as Alerts, Audit and Logs: labeled
+        // settings, the row's actions, then the runtime's full explanation.
+        .dcInspector(isPresented: Binding(
+            get: { selected != nil },
+            set: { if !$0 { selection = nil } }
+        )) {
+            if let row = selected { policyInspector(row) }
+        }
         .searchable(text: $search, prompt: "Search policy settings and details")
         .task(id: appState.installationGeneration) { await load() }
         .onReceive(NotificationCenter.default.publisher(for: .dcRefreshPanel)) { _ in Task { await load() } }
@@ -121,6 +112,45 @@ struct PoliciesView: View {
                                   || (action.mutation && !appState.installationMutationsAllowed))
                 }
             }.padding(20).frame(width: 560)
+        }
+    }
+
+    private func policyInspector(_ row: PolicyCatalogRow) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                DCInspectorHeader(row.cells.prefix(2).joined(separator: " "), onClose: { selection = nil })
+                KeyValueGrid(pairs: zip(catalog?.columns ?? [], row.cells).map { ($0, $1) }.filter { !$0.1.isEmpty })
+                let groups = actionGroups(row)
+                if !groups.isEmpty {
+                    Divider()
+                    DCInspectorSectionTitle("Actions")
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(groups, id: \.self) { group in
+                            Menu(group) {
+                                ForEach(row.actions.filter { $0.group == group && $0.allowed }) { action in
+                                    Button(action.title) {
+                                        acknowledgeWeaker = false
+                                        pending = action
+                                    }
+                                    .disabled(action.mutation && !appState.installationMutationsAllowed)
+                                }
+                            }
+                            .fixedSize()
+                        }
+                    }
+                    .disabled(running || loading || !current)
+                }
+                if !row.detail.isEmpty {
+                    Divider()
+                    DCInspectorSectionTitle("Details")
+                    Text(row.detail)
+                        .font(.caption.monospaced())
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(12)
         }
     }
 

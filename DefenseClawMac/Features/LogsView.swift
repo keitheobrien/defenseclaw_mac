@@ -384,15 +384,7 @@ struct LogsView: View {
     private func logInspector(_ item: DisplayLogRow) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("Event Details").font(.headline)
-                    Spacer()
-                    Button { selectedRowID = nil } label: {
-                        Image(systemName: "xmark.circle.fill")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Close Inspector")
-                }
+                DCInspectorHeader("Event Details", onClose: { selectedRowID = nil })
                 Text(item.message)
                     .font(.system(.callout, design: .monospaced))
                     .textSelection(.enabled)

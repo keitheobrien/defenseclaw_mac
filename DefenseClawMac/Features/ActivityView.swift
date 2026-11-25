@@ -225,9 +225,7 @@ struct ActivityView: View {
                         .controlSize(.small)
                         .disabled(true)
                     }
-                    Button { appState.activity.selectedID = nil } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.borderless)
-                        .accessibilityLabel("Close command details")
+                    DCInspectorCloseButton { appState.activity.selectedID = nil }
                 }
                 KeyValueGrid(pairs: [
                     ("Status", entry.statusLabel),
@@ -267,13 +265,7 @@ struct ActivityView: View {
 
     private func mutationInspector(_ mutation: ActivityMutation) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text(mutation.action).font(.headline)
-                Spacer()
-                Button { selectedMutation = nil } label: { Image(systemName: "xmark.circle.fill") }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel("Close mutation details")
-            }
+            DCInspectorHeader(mutation.action, onClose: { selectedMutation = nil })
             KeyValueGrid(pairs: [
                 ("Actor", mutation.actor),
                 ("Target", "\(mutation.targetType)/\(mutation.targetID)"),

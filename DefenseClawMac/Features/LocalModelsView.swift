@@ -50,7 +50,7 @@ struct LocalModelsView: View {
             if let row = selected {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text(row.modelID).font(.headline)
+                        DCInspectorHeader(row.modelID, onClose: { selection = nil })
                         Text("\(row.count) observations · \(row.confidenceAccessibilityLabel)")
                         if let lineage = row.provenance {
                             Text("Publisher: \(lineage.publisher)\nCountry: \(lineage.countryDisplay)\nRoot model: \(lineage.rootModel)\nBase models: \(lineage.baseModels.joined(separator: ", "))\nSource: \(lineage.source)")

@@ -264,14 +264,8 @@ struct InventoryView: View {
 
     private func inventoryInspector(_ item: InventoryItem) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.name).font(.headline)
-                    Text(item.category.rawValue).font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button { selectedID = nil } label: { Image(systemName: "xmark.circle.fill") }
-                    .buttonStyle(.borderless)
+            DCInspectorHeader(item.name, onClose: { selectedID = nil }) {
+                Text(item.category.rawValue).font(.caption).foregroundStyle(.secondary)
             }
             KeyValueGrid(pairs: [
                 ("Connector", item.connector),
@@ -754,13 +748,10 @@ struct AIDiscoveryView: View {
 
     private func rowInspector(_ row: AIDiscoveryRow) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text(row.vendor.isEmpty ? row.product : "\(row.vendor) / \(row.product)")
-                    .font(.headline)
-                Spacer()
-                Button { selected = nil } label: { Image(systemName: "xmark.circle.fill") }
-                    .buttonStyle(.borderless)
-            }
+            DCInspectorHeader(
+                row.vendor.isEmpty ? row.product : "\(row.vendor) / \(row.product)",
+                onClose: { selected = nil }
+            )
             KeyValueGrid(pairs: [
                 ("State", row.state),
                 ("Signals", "\(row.count)"),
@@ -1276,18 +1267,10 @@ struct RegistriesView: View {
     }
 
     private func inspectorHeader(_ title: String) -> some View {
-        HStack {
-            Text(title).font(.headline).lineLimit(1)
-            Spacer()
-            Button {
-                selectedSourceID = nil
-                selectedEntryID = nil
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-            }
-            .buttonStyle(.borderless)
-            .help("Close Inspector")
-        }
+        DCInspectorHeader(title, onClose: {
+            selectedSourceID = nil
+            selectedEntryID = nil
+        })
     }
 
     private func messageBanner(_ text: String, systemImage: String, tint: Color) -> some View {
