@@ -194,20 +194,20 @@ private struct MenuBarIcon: View {
     var body: some View {
         switch appState.menuBarState {
         case .healthy:
-            Image("MenuBarShield")
+            Image("MenuBarShield").accessibilityLabel("DefenseClaw, all systems running")
         case .alerting(let count):
-            Image("MenuBarShieldFill")
-            Text("\(count)")
+            Image("MenuBarShieldFill").accessibilityLabel("DefenseClaw, \(count) alerts")
+            Text("\(count)").accessibilityHidden(true)
         case .degraded:
-            Image("MenuBarShieldHalf")
+            Image("MenuBarShieldHalf").accessibilityLabel("DefenseClaw, running with issues")
         case .offline:
-            Image("MenuBarShieldSlash")
+            Image("MenuBarShieldSlash").accessibilityLabel("DefenseClaw, gateway offline")
         case .scanning:
-            Image("MenuBarShield")
-            Image(systemName: "arrow.triangle.2.circlepath")
+            Image("MenuBarShield").accessibilityLabel("DefenseClaw, scanning")
+            Image(systemName: "arrow.triangle.2.circlepath").accessibilityHidden(true)
         case .paused:
-            Image("MenuBarShield")
-            Image(systemName: "pause.fill")
+            Image("MenuBarShield").accessibilityLabel("DefenseClaw, monitoring paused")
+            Image(systemName: "pause.fill").accessibilityHidden(true)
         }
     }
 }

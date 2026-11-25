@@ -122,6 +122,7 @@ struct FirstRunView: View {
                 Image(systemName: "shield.lefthalf.filled")
                     .font(.system(size: 38))
                     .foregroundStyle(Cisco.blue)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Set Up DefenseClaw").font(.title2.weight(.semibold))
                     Text(cliFound
@@ -851,6 +852,7 @@ struct FirstRunView: View {
                 Spacer(minLength: 8)
                 Button { copyToPasteboard(command) } label: { Image(systemName: "doc.on.doc") }
                     .buttonStyle(.borderless).help("Copy Command")
+                    .accessibilityLabel("Copy command")
             }
         }
     }

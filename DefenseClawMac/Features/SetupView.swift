@@ -186,6 +186,7 @@ struct SetupView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(group.title).font(.title3.weight(.semibold))
+                                .accessibilityAddTraits(.isHeader)
                             if !group.caption.isEmpty {
                                 Text(group.caption).font(.caption).foregroundStyle(.secondary)
                             }
@@ -200,6 +201,7 @@ struct SetupView: View {
                 if wizardSearch.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Policy and Runtime").font(.title3.weight(.semibold))
+                            .accessibilityAddTraits(.isHeader)
                         HStack {
                             Button("Model Routing, Budgets & Usage") { appState.selectedPanel = .routing }
                             Button("Guardrail Cascade & Runtime Controls…") { showRuntimeControls = true }
@@ -216,6 +218,7 @@ struct SetupView: View {
                 Divider().padding(.vertical, 4)
 
                 Text("Config Editor").font(.title3.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
                 Text("Typed, sectioned config.yaml editor generated from the installed runtime's own catalog — new runtime settings appear here automatically. Changes are diff-reviewed, saved through the runtime's config writer, and queue a gateway restart.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -385,8 +388,9 @@ struct WizardSheet: View {
                 Image(systemName: wizard.icon).foregroundStyle(Cisco.blue)
                 Text("Setup: \(wizard.title)").font(.headline)
                 Spacer()
-                Button { dismiss() } label: { Image(systemName: "xmark.circle.fill") }
-                    .buttonStyle(.borderless)
+                DCInspectorCloseButton { dismiss() }
+                    .help("Close")
+                    .accessibilityLabel("Close")
             }
             Text(wizard.blurb).font(.caption).foregroundStyle(.secondary)
 
@@ -491,6 +495,7 @@ struct WizardSheet: View {
                 }
                 .buttonStyle(.borderless)
                 .help("Toggle secret visibility")
+                .accessibilityLabel(revealedSecrets.contains(field.key) ? "Hide \(field.label)" : "Show \(field.label)")
             }
         case .choice(let options):
             // A configured value outside the catalog (a custom scanner

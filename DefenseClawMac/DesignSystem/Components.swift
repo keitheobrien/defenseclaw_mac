@@ -31,9 +31,11 @@ struct SeverityBadge: View {
     }
 
     private var background: Color {
-        severity == .info
-            ? Cisco.severityColor(severity).opacity(0.18)
-            : Cisco.severityColor(severity).opacity(0.88)
+        switch severity {
+        case .info: Cisco.severityColor(severity).opacity(0.18)
+        case .critical: Cisco.criticalFill
+        default: Cisco.severityColor(severity).opacity(0.88)
+        }
     }
 
     var body: some View {
@@ -69,6 +71,7 @@ enum DCLabel {
 struct DCDisclosureSection<Content: View>: View {
     let title: String
     @AppStorage private var expanded: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ViewBuilder var content: Content
 
     init(_ title: String, storageKey: String, defaultExpanded: Bool = false, @ViewBuilder content: () -> Content) {
@@ -80,7 +83,7 @@ struct DCDisclosureSection<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Button {
-                withAnimation(.snappy) { expanded.toggle() }
+                withAnimation(reduceMotion ? nil : .snappy) { expanded.toggle() }
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "chevron.right")
@@ -88,6 +91,7 @@ struct DCDisclosureSection<Content: View>: View {
                         .foregroundStyle(.secondary)
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                     Text(title).font(.title3.weight(.semibold))
+                        .accessibilityAddTraits(.isHeader)
                     Spacer()
                 }
                 .contentShape(Rectangle())
@@ -106,6 +110,7 @@ struct StatePill: View {
     var body: some View {
         HStack(spacing: 4) {
             Circle().fill(Cisco.stateColor(raw: raw)).frame(width: 7, height: 7)
+                .accessibilityHidden(true)
             Text(DCLabel.state(raw))
                 .font(.caption.weight(.medium))
         }
@@ -146,7 +151,7 @@ struct StatCard<Content: View>: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.system(size: 26, weight: .bold, design: .rounded))
+                .font(.system(.largeTitle, design: .rounded).weight(.bold))
                 .foregroundStyle(tint)
             detail
         }
@@ -176,8 +181,10 @@ struct DCCard<Content: View>: View {
             HStack(spacing: 6) {
                 if let systemImage {
                     Image(systemName: systemImage).foregroundStyle(Cisco.blue)
+                        .accessibilityHidden(true)
                 }
                 Text(title).font(.headline)
+                    .accessibilityAddTraits(.isHeader)
                 Spacer()
             }
             content
@@ -300,7 +307,13 @@ struct DCInspectorCloseButton: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) { Image(systemName: "xmark.circle.fill") }
+        Button(action: action) {
+            Image(systemName: "xmark.circle.fill")
+                .font(.body)
+                // A comfortable click target, not just the 11-point glyph.
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
             .buttonStyle(.borderless)
             .foregroundStyle(.secondary)
             .help("Close Details (Esc)")
@@ -342,6 +355,7 @@ struct DCInspectorSectionTitle: View {
     init(_ title: String) { self.title = title }
     var body: some View {
         Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            .accessibilityAddTraits(.isHeader)
     }
 }
 
@@ -352,11 +366,11 @@ struct KeyValueGrid: View {
             ForEach(Array(pairs.enumerated()), id: \.offset) { _, pair in
                 GridRow {
                     Text(pair.0)
-                        .font(.caption)
+                        .font(.dcCellSecondary)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: true, vertical: false)
                     Text(pair.1)
-                        .font(.caption)
+                        .font(.dcCell)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
@@ -396,6 +410,9 @@ struct ConfidenceGauge: View {
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Confidence")
+        .accessibilityValue("\(AIConfidence.percent(normalizedValue)) percent")
     }
 }
 

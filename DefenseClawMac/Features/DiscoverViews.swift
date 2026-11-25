@@ -157,14 +157,14 @@ struct InventoryView: View {
                     TableColumn("Version", value: \.version).width(70)
                     TableColumn("Connector") { item in
                         Text(item.connector.isEmpty ? "—" : item.connector)
-                            .font(.caption)
+                            .font(.dcCell)
                             .foregroundStyle(Cisco.blue)
                     }
                     .width(90)
                     TableColumn("Verdict") { item in
                         if item.verdict.isEmpty || item.verdict == "unscanned" {
                             Text(item.verdict.isEmpty ? "—" : item.verdict)
-                                .font(.caption)
+                                .font(.dcCell)
                                 .foregroundStyle(.tertiary)
                         } else {
                             StatePill(raw: item.verdict)
@@ -173,15 +173,15 @@ struct InventoryView: View {
                     .width(100)
                     TableColumn("Status") { item in
                         Text(item.status.isEmpty ? "—" : item.status)
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.dcCell).foregroundStyle(.secondary)
                     }
                     .width(86)
                     TableColumn("Path / Source") { item in
                         Text(item.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
-                            .font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                            .font(.dcCell.monospaced()).foregroundStyle(.secondary).lineLimit(1)
                     }
                     TableColumn("Detail") { item in
-                        Text(item.detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        Text(item.detail).font(.dcCell).foregroundStyle(.secondary).lineLimit(1)
                     }
                 }
             }
@@ -254,7 +254,7 @@ struct InventoryView: View {
                     TableColumn("Memory") { Text("\($0.counts[.memories, default: 0])") }.width(55)
                     TableColumn("Source") { summary in
                         Text(summary.home.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
-                            .font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                            .font(.dcCell.monospaced()).foregroundStyle(.secondary).lineLimit(1)
                     }
                 }
             }
@@ -635,7 +635,7 @@ struct AIDiscoveryView: View {
                 .width(80)
                 TableColumn("Categories") { (r: AIDiscoveryRow) in
                     Text(AIDiscoveryGrouping.csvTruncated(r.categories))
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        .font(.dcCell).foregroundStyle(.secondary).lineLimit(1)
                 }
                 .width(min: 130, ideal: 190)
                 TableColumn("Product") { (r: AIDiscoveryRow) in
@@ -643,50 +643,50 @@ struct AIDiscoveryView: View {
                 }
                 .width(min: 110, ideal: 150)
                 TableColumn("Model") { (r: AIDiscoveryRow) in
-                    Text(r.model).font(.caption).lineLimit(1)
+                    Text(r.model).font(.dcCell).lineLimit(1)
                 }
                 .width(min: 130, ideal: 210)
                 TableColumn("Model status") { (r: AIDiscoveryRow) in
                     Text(AIDiscoveryGrouping.csvTruncated(r.modelStatuses))
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        .font(.dcCell).foregroundStyle(.secondary).lineLimit(1)
                 }
                 .width(min: 100, ideal: 130)
                 TableColumn("Format") { (r: AIDiscoveryRow) in
                     Text(AIDiscoveryGrouping.csvTruncated(r.modelFormats))
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        .font(.dcCell).foregroundStyle(.secondary).lineLimit(1)
                 }
                 .width(min: 70, ideal: 90)
             }
             Group {
                 TableColumn("Component") { (r: AIDiscoveryRow) in
-                    Text(r.componentLabel).font(.caption)
+                    Text(r.componentLabel).font(.dcCell)
                 }
                 .width(90)
                 TableColumn("Version") { (r: AIDiscoveryRow) in
-                    Text(r.version.isEmpty ? "—" : r.version).font(.caption)
+                    Text(r.version.isEmpty ? "—" : r.version).font(.dcCell)
                 }
                 .width(70)
                 TableColumn("Vendor") { (r: AIDiscoveryRow) in
-                    Text(r.vendor).font(.caption)
+                    Text(r.vendor).font(.dcCell)
                 }
                 .width(90)
                 TableColumn("Detectors") { (r: AIDiscoveryRow) in
                     Text(AIDiscoveryGrouping.csvTruncated(r.detectors))
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        .font(.dcCell).foregroundStyle(.secondary).lineLimit(1)
                 }
                 .width(min: 130, ideal: 190)
                 TableColumn("Count") { (r: AIDiscoveryRow) in
-                    Text("\(r.count)").font(.caption.monospacedDigit())
+                    Text("\(r.count)").font(.dcCell.monospacedDigit())
                 }
                 .width(46)
                 TableColumn("Identity") { (r: AIDiscoveryRow) in
                     Text(AIDiscoveryGrouping.formatConfidence(score: r.identityScore, band: r.identityBand))
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.dcCell).foregroundStyle(.secondary)
                 }
                 .width(90)
                 TableColumn("Presence") { (r: AIDiscoveryRow) in
                     Text(AIDiscoveryGrouping.formatConfidence(score: r.presenceScore, band: r.presenceBand))
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.dcCell).foregroundStyle(.secondary)
                 }
                 .width(90)
             }
@@ -702,7 +702,7 @@ struct AIDiscoveryView: View {
                 .width(80)
                 TableColumn("Categories") { (r: AIDiscoveryRow) in
                     Text(AIDiscoveryGrouping.csvTruncated(r.categories))
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        .font(.dcCell).foregroundStyle(.secondary).lineLimit(1)
                 }
                 .width(min: 130, ideal: 190)
                 TableColumn("Product") { (r: AIDiscoveryRow) in
@@ -712,34 +712,34 @@ struct AIDiscoveryView: View {
             }
             Group {
                 TableColumn("Component") { (r: AIDiscoveryRow) in
-                    Text(r.componentLabel).font(.caption)
+                    Text(r.componentLabel).font(.dcCell)
                 }
                 .width(90)
                 TableColumn("Version") { (r: AIDiscoveryRow) in
-                    Text(r.version.isEmpty ? "—" : r.version).font(.caption)
+                    Text(r.version.isEmpty ? "—" : r.version).font(.dcCell)
                 }
                 .width(70)
                 TableColumn("Vendor") { (r: AIDiscoveryRow) in
-                    Text(r.vendor).font(.caption)
+                    Text(r.vendor).font(.dcCell)
                 }
                 .width(90)
                 TableColumn("Detectors") { (r: AIDiscoveryRow) in
                     Text(AIDiscoveryGrouping.csvTruncated(r.detectors))
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        .font(.dcCell).foregroundStyle(.secondary).lineLimit(1)
                 }
                 .width(min: 130, ideal: 190)
                 TableColumn("Count") { (r: AIDiscoveryRow) in
-                    Text("\(r.count)").font(.caption.monospacedDigit())
+                    Text("\(r.count)").font(.dcCell.monospacedDigit())
                 }
                 .width(46)
                 TableColumn("Identity") { (r: AIDiscoveryRow) in
                     Text(AIDiscoveryGrouping.formatConfidence(score: r.identityScore, band: r.identityBand))
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.dcCell).foregroundStyle(.secondary)
                 }
                 .width(90)
                 TableColumn("Presence") { (r: AIDiscoveryRow) in
                     Text(AIDiscoveryGrouping.formatConfidence(score: r.presenceScore, band: r.presenceBand))
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.dcCell).foregroundStyle(.secondary)
                 }
                 .width(90)
             }
@@ -1165,13 +1165,13 @@ struct RegistriesView: View {
             .width(44)
             TableColumn("Last Sync") { source in
                 Text(relativeTimestamp(source.lastSync))
-                    .font(.caption)
+                    .font(.dcCell)
                     .foregroundStyle(.secondary)
             }
             .width(90)
             TableColumn("Status") { source in
                 Text(source.indexError ?? (source.lastStatus.isEmpty ? "—" : source.lastStatus))
-                    .font(.caption)
+                    .font(.dcCell)
                     .foregroundStyle(source.indexError == nil ? Color.secondary : Cisco.red)
                     .lineLimit(1)
             }
@@ -1195,18 +1195,18 @@ struct RegistriesView: View {
                 .width(90)
             TableColumn("Severity") { entry in
                 Text(entry.severity.isEmpty ? "—" : entry.severity.uppercased())
-                    .font(.caption.weight(.semibold))
+                    .font(.dcCell.weight(.semibold))
                     .foregroundStyle(severityColor(entry.severity))
             }
             .width(80)
             TableColumn("Review") { entry in
                 Text(entry.approvalMarker)
-                    .font(.caption)
+                    .font(.dcCell)
                     .foregroundStyle(entry.approved ? Cisco.green : entry.rejected ? Cisco.red : Color.secondary)
             }
             .width(82)
             TableColumn("Location") { entry in
-                Text(entry.location).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                Text(entry.location).font(.dcCell.monospaced()).foregroundStyle(.secondary).lineLimit(1)
             }
         }
     }
@@ -1286,6 +1286,7 @@ struct RegistriesView: View {
             }
             .buttonStyle(.borderless)
             .help("Dismiss")
+            .accessibilityLabel("Dismiss")
         }
         .font(.caption)
         .foregroundStyle(tint)

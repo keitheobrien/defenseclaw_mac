@@ -136,7 +136,7 @@ struct SkillsView: View {
                     .width(105)
                 TableColumn("Name", value: \.name)
                 TableColumn("Description") { item in
-                    Text(item.skillDescription).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    Text(item.skillDescription).font(.dcCell).foregroundStyle(.secondary).lineLimit(2)
                 }
                 TableColumn("Scan") { item in CatalogScanLabel(scan: item.scan) }.width(120)
                 TableColumn("Connector", value: \.connector).width(90)
@@ -253,7 +253,7 @@ struct MCPsView: View {
                 TableColumn("Name", value: \.name)
                 TableColumn("Transport", value: \.transport).width(80)
                 TableColumn("Command / URL") { item in
-                    Text(item.endpoint).font(.caption.monospaced()).lineLimit(1)
+                    Text(item.endpoint).font(.dcCell.monospaced()).lineLimit(1)
                 }
                 TableColumn("Scan") { item in CatalogScanLabel(scan: item.scan) }.width(120)
                 TableColumn("Connector", value: \.connector).width(90)
@@ -462,7 +462,7 @@ struct ToolsView: View {
                 TableColumn("Status") { item in CatalogStatusLabel(status: item.status, verdict: "") }.width(90)
                 TableColumn("Tool", value: \.name)
                 TableColumn("Reason") { item in
-                    Text(item.summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Text(item.summary).font(.dcCell).foregroundStyle(.secondary).lineLimit(1)
                 }
                 TableColumn("Scope", value: \.scope).width(90)
                 TableColumn("Connector", value: \.connector).width(90)
@@ -548,6 +548,7 @@ private struct CatalogActionMenu: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .help("Actions")
+        .accessibilityLabel("Actions")
     }
 }
 
@@ -1003,6 +1004,8 @@ private struct CatalogContainer<Content: View>: View {
                     Spacer()
                     Button { self.error = nil } label: { Image(systemName: "xmark") }
                         .buttonStyle(.borderless)
+                        .help("Dismiss")
+                        .accessibilityLabel("Dismiss error")
                 }
                 .padding(8)
                 .background(Cisco.red.opacity(0.08))

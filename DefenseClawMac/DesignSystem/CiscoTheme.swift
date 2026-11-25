@@ -51,6 +51,9 @@ enum Cisco {
     static let orange = Color(nsColor: .systemOrange)
     static let yellow = Color(nsColor: .systemYellow)
     static let magenta = Color(nsColor: .systemPurple)
+    /// Fill behind white text (critical badge, sidebar count). The system red
+    /// is too light for white 10-point text; this one clears 4.5:1.
+    static let criticalFill = Color.adaptive(light: 0xC9000F, dark: 0xD70015)
 
     // Surfaces. Content cards use translucent system fills so they sit on
     // whatever is behind them (window, sheet, popover, Liquid Glass sidebar
@@ -86,6 +89,14 @@ enum Cisco {
     }
 }
 
+extension Font {
+    /// Primary text in table cells and detail-pane values (12 pt). Text
+    /// styles, never fixed sizes, so system text-size settings apply.
+    static let dcCell = Font.callout
+    /// Secondary table text, identifiers and detail-pane labels (11 pt).
+    static let dcCellSecondary = Font.subheadline
+}
+
 enum DCMetrics {
     static let floatingCornerRadius: CGFloat = 12
 }
@@ -96,14 +107,17 @@ extension View {
     /// Content cards deliberately do not use glass — it is reserved for the
     /// control and navigation layer.
     @ViewBuilder
-    func dcFloatingSurface(tint: Color? = nil, fallback: Color) -> some View {
+    func dcFloatingSurface(tint: Color? = nil, fallback: Color, fallbackForeground: Color? = nil) -> some View {
         if #available(macOS 26.0, *) {
-            glassEffect(
+            // Tinted glass changes with appearance and what is behind it, so
+            // text uses the adaptive primary color instead of fixed white.
+            foregroundStyle(.primary).glassEffect(
                 tint.map { Glass.regular.tint($0) } ?? Glass.regular,
                 in: .rect(cornerRadius: DCMetrics.floatingCornerRadius)
             )
         } else {
-            background(fallback, in: RoundedRectangle(cornerRadius: DCMetrics.floatingCornerRadius))
+            foregroundStyle(fallbackForeground ?? Color.primary)
+                .background(fallback, in: RoundedRectangle(cornerRadius: DCMetrics.floatingCornerRadius))
         }
     }
 }

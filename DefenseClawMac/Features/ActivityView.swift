@@ -123,28 +123,28 @@ struct ActivityView: View {
             Table(commandEntries, selection: selection) {
                 TableColumn("Started") { entry in
                     Text(entry.startedAt, format: .dateTime.month().day().hour().minute().second())
-                        .font(.caption.monospacedDigit())
+                        .font(.dcCell.monospacedDigit())
                 }
                 .width(126)
                 TableColumn("Command") { entry in
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(entry.title).font(.caption.weight(.medium)).lineLimit(1)
-                        Text(entry.command).font(.caption2.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                        Text(entry.title).font(.dcCell.weight(.medium)).lineLimit(1)
+                        Text(entry.command).font(.dcCellSecondary.monospaced()).foregroundStyle(.secondary).lineLimit(1)
                     }
                 }
                 TableColumn("Status") { entry in
                     Label(entry.statusLabel, systemImage: statusIcon(entry.status))
-                        .font(.caption)
+                        .font(.dcCell)
                         .foregroundStyle(statusColor(entry.status))
                 }
                 .width(100)
                 TableColumn("Duration") { entry in
-                    Text(durationLabel(entry.duration)).font(.caption.monospacedDigit())
+                    Text(durationLabel(entry.duration)).font(.dcCell.monospacedDigit())
                 }
                 .width(72)
                 TableColumn("Side Effects") { entry in
                     Text(entry.sideEffects.isEmpty ? "—" : entry.sideEffects.joined(separator: " · "))
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        .font(.dcCell).foregroundStyle(.secondary).lineLimit(1)
                 }
                 .width(min: 130, ideal: 200)
             }

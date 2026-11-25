@@ -23,6 +23,7 @@ import Charts
 struct OverviewView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("gatewayAdministratorMode") private var gatewayAdministratorMode = false
     @State private var summary: (blockedSkills: Int, allowedSkills: Int, blockedMCPs: Int, allowedMCPs: Int, totalScans: Int, activeAlerts: Int) = (0, 0, 0, 0, 0, 0)
     @State private var hourly: [HourlyPoint] = []
@@ -195,7 +196,7 @@ struct OverviewView: View {
                     }
                     if all.count > 3 {
                         Button(showAllNotices ? "Show Fewer" : "Show \(all.count - 3) More") {
-                            withAnimation(.snappy) { showAllNotices.toggle() }
+                            withAnimation(reduceMotion ? nil : .snappy) { showAllNotices.toggle() }
                         }
                         .buttonStyle(.link)
                         .font(.caption)
@@ -488,7 +489,7 @@ struct OverviewView: View {
             .clipShape(RoundedRectangle(cornerRadius: 6))
             if appState.configurationRows.count > 4 {
                 Button {
-                    withAnimation(.snappy) { configurationExpanded.toggle() }
+                    withAnimation(reduceMotion ? nil : .snappy) { configurationExpanded.toggle() }
                 } label: {
                     Label(
                         configurationExpanded
@@ -918,7 +919,7 @@ struct OverviewView: View {
                     .width(130)
                     TableColumn("Delivery") { row in
                         Text(row.routing.nonEmpty ?? "—")
-                            .font(.caption.monospacedDigit())
+                            .font(.dcCell.monospacedDigit())
                             .foregroundStyle(Cisco.sky)
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -926,7 +927,7 @@ struct OverviewView: View {
                     }
                     TableColumn("Endpoint") { row in
                         Text(row.endpoint)
-                            .font(.caption.monospaced())
+                            .font(.dcCell.monospaced())
                             .foregroundStyle(.tertiary)
                             .lineLimit(1)
                             .truncationMode(.middle)

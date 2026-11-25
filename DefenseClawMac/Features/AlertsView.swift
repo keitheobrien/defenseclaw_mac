@@ -98,9 +98,9 @@ struct AlertsView: View {
                 Table(rows, selection: $selection, columnCustomization: $columnCustomization) {
                     TableColumn("Time") { row in
                         Text(row.timestamp, format: .dateTime.hour().minute().second())
-                            .font(.caption.monospacedDigit())
+                            .font(.dcCell.monospacedDigit())
                     }
-                    .width(76)
+                    .width(86)
                     .customizationID("time")
                     .disabledCustomizationBehavior(.visibility)
                     TableColumn("Severity") { row in SeverityBadge(severity: row.severity) }
@@ -108,25 +108,25 @@ struct AlertsView: View {
                         .customizationID("severity")
                         .disabledCustomizationBehavior(.visibility)
                     TableColumn("Kind") { row in
-                        Text(row.kind).font(.caption).foregroundStyle(.secondary)
+                        Text(row.kind).font(.dcCell).foregroundStyle(.secondary)
                     }
                     .width(64)
                     .customizationID("kind")
-                    TableColumn("Action") { row in Text(row.action).font(.caption).lineLimit(1) }
+                    TableColumn("Action") { row in Text(row.action).font(.dcCell).lineLimit(1) }
                         .width(min: 90, ideal: 130, max: 240)
                         .customizationID("action")
                     TableColumn("Target") { row in
-                        Text(row.target).font(.caption).lineLimit(1)
+                        Text(row.target).font(.dcCell).lineLimit(1)
                     }
                     .width(min: 70, ideal: 140, max: 320)
                     .customizationID("target")
                     TableColumn("Details") { row in
-                        Text(row.details).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        Text(row.details).font(.dcCell).foregroundStyle(.secondary).lineLimit(2)
                     }
                     .width(min: 180, ideal: 360)
                     .customizationID("details")
                     TableColumn("Run") { row in
-                        Text(row.runID).font(.caption2.monospaced()).foregroundStyle(.tertiary).lineLimit(1)
+                        Text(row.runID).font(.dcCellSecondary.monospaced()).foregroundStyle(.tertiary).lineLimit(1)
                     }
                     .width(80)
                     .customizationID("run")

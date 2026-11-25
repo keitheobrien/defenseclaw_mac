@@ -152,7 +152,7 @@ struct MainWindow: View {
                 .font(.caption2.weight(.bold))
                 .padding(.horizontal, 6)
                 .padding(.vertical, 1)
-                .background(Cisco.red, in: Capsule())
+                .background(Cisco.criticalFill, in: Capsule())
                 .foregroundStyle(.white)
                 .accessibilityLabel("\(appState.unackedAlerts.filter { $0.severity > .info }.count) unacknowledged alerts")
         case .overview:
@@ -220,8 +220,7 @@ struct MainWindow: View {
             }
         }
         .padding(10)
-        .foregroundStyle(.white)
-        .dcFloatingSurface(tint: Cisco.blue, fallback: Cisco.blue.opacity(0.95))
+        .dcFloatingSurface(tint: Cisco.blue, fallback: Cisco.blue.opacity(0.95), fallbackForeground: .white)
         .padding(.top, 6)
     }
 
@@ -335,8 +334,7 @@ struct MainWindow: View {
                 .controlSize(.small)
         }
         .padding(10)
-        .foregroundStyle(.black)
-        .dcFloatingSurface(tint: Cisco.orange, fallback: Cisco.orange.opacity(0.92))
+        .dcFloatingSurface(tint: Cisco.orange, fallback: Cisco.orange.opacity(0.92), fallbackForeground: .black)
         .padding(.top, 6)
     }
 }

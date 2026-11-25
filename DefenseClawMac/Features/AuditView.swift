@@ -163,32 +163,32 @@ struct AuditView: View {
         Table(visibleEvents, selection: $selection, columnCustomization: $columnCustomization) {
             TableColumn("Time") { e in
                 Text(e.timestamp, format: .dateTime.month().day().hour().minute().second())
-                    .font(.caption.monospacedDigit())
+                    .font(.dcCell.monospacedDigit())
             }
-            .width(130)
+            .width(150)
             .customizationID("time")
             .disabledCustomizationBehavior(.visibility)
             TableColumn("Severity") { e in SeverityBadge(severity: e.severity) }
                 .width(86)
                 .customizationID("severity")
             TableColumn("Type") { e in
-                Text(e.eventType).font(.caption).foregroundStyle(.secondary)
+                Text(e.eventType).font(.dcCell).foregroundStyle(.secondary)
             }
             .width(70)
             .customizationID("type")
-            TableColumn("Action") { e in Text(e.action).font(.caption).lineLimit(1) }
+            TableColumn("Action") { e in Text(e.action).font(.dcCell).lineLimit(1) }
                 .width(min: 90, ideal: 140, max: 240)
                 .customizationID("action")
-            TableColumn("Target") { e in Text(e.target).font(.caption).lineLimit(1) }
+            TableColumn("Target") { e in Text(e.target).font(.dcCell).lineLimit(1) }
                 .width(min: 70, ideal: 150, max: 320)
                 .customizationID("target")
             TableColumn("Details") { e in
-                Text(e.details).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                Text(e.details).font(.dcCell).foregroundStyle(.secondary).lineLimit(2)
             }
             .width(min: 180, ideal: 360)
             .customizationID("details")
             TableColumn("Run") { e in
-                Text(e.runID).font(.caption2.monospaced()).foregroundStyle(.tertiary).lineLimit(1)
+                Text(e.runID).font(.dcCellSecondary.monospaced()).foregroundStyle(.tertiary).lineLimit(1)
             }
             .width(76)
             .customizationID("run")
