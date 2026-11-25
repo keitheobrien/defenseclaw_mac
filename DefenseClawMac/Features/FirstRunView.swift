@@ -397,8 +397,11 @@ struct FirstRunView: View {
                 }
             }
         }
-        Section {
-            DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
+        // A plain toggle rather than a DisclosureGroup: disclosure rows in a
+        // grouped Form do not expand reliably on macOS.
+        Section("Advanced") {
+            Toggle("Show advanced options", isOn: $showAdvanced)
+            if showAdvanced {
                 Picker("Scanner Mode", selection: $scannerMode) {
                     Text("Local").tag("local")
                     Text("Remote").tag("remote")

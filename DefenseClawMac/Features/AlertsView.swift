@@ -113,7 +113,7 @@ struct AlertsView: View {
                     .width(64)
                     .customizationID("kind")
                     TableColumn("Action") { row in Text(row.action).font(.dcCell).lineLimit(1) }
-                        .width(min: 90, ideal: 130, max: 240)
+                        .width(min: 90, ideal: 170, max: 260)
                         .customizationID("action")
                     TableColumn("Target") { row in
                         Text(row.target).font(.dcCell).lineLimit(1)
@@ -366,7 +366,7 @@ struct AlertsView: View {
             HStack(spacing: 12) {
                 ForEach(Self.alertSeverities, id: \.self) { sev in
                     let count = connectorScopedAlerts.filter { $0.severity == sev }.count
-                    StatCard(title: sev.rawValue, value: "\(count)", tint: Cisco.severityColor(sev))
+                    StatCard(title: sev.rawValue, value: "\(count)", tint: Cisco.severityTextColor(sev))
                 }
             }
             if !detectionOnlyLine.isEmpty {

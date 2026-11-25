@@ -74,6 +74,16 @@ enum Cisco {
         }
     }
 
+    /// Severity color for large text on a card. System yellow and cyan are
+    /// too pale to read as text in light mode, so those two darken there.
+    static func severityTextColor(_ s: Severity) -> Color {
+        switch s {
+        case .medium: Color.adaptive(light: 0x8A6500, dark: 0xFFD60A)
+        case .low: Color.adaptive(light: 0x00709E, dark: 0x64D2FF)
+        default: severityColor(s)
+        }
+    }
+
     static func stateColor(_ s: EntityState) -> Color {
         switch s {
         case .active: green

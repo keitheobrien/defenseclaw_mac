@@ -206,6 +206,10 @@ final class AppState {
     /// First-run sheet dismissal for this launch (Open Activity / Esc); the
     /// sheet re-presents next launch while no configuration exists.
     var firstRunDismissed = false
+    /// Stop is the one gateway action that removes live monitoring, so both
+    /// entry points (Overview and the Gateway menu) ask first. The main
+    /// window presents the dialog.
+    var gatewayStopConfirmationPresented = false
     var firstRunSetupInProgress = false
     var firstRunSetupNeedsCompletion = false
     var runtimeBannerDismissed = false
@@ -2130,6 +2134,11 @@ final class AppState {
                 refreshOnSuccess: true
             )
         }
+    }
+
+    func requestGatewayStop() {
+        AppDelegate.openMainWindow()
+        gatewayStopConfirmationPresented = true
     }
 
     static func gatewayActionTitle(_ action: String) -> String {

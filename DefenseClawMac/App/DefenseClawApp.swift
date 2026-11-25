@@ -108,7 +108,7 @@ struct DefenseClawApp: App {
                     .disabled(appState.gatewayReachable || gatewayControlsLocked)
                 Button(AppState.gatewayActionTitle("Restart")) { appState.runGatewayLifecycle("restart") }
                     .disabled(!appState.gatewayReachable || gatewayControlsLocked)
-                Button(AppState.gatewayActionTitle("Stop")) { appState.runGatewayLifecycle("stop") }
+                Button(AppState.gatewayActionTitle("Stop") + "…") { appState.requestGatewayStop() }
                     .disabled(!appState.gatewayReachable || gatewayControlsLocked)
                 Divider()
                 Button("Gateway Settings…") {

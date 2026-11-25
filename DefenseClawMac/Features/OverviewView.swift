@@ -288,7 +288,7 @@ struct OverviewView: View {
             Menu("Gateway") {
                 Button(gatewayActionTitle("Restart")) { runGatewayLifecycle("restart") }
                     .disabled(locked)
-                Button(gatewayActionTitle("Stop")) { runGatewayLifecycle("stop") }
+                Button(gatewayActionTitle("Stop") + "…") { appState.requestGatewayStop() }
                     .disabled(locked)
                 Divider()
                 Button("Gateway Status") {

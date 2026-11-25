@@ -40,6 +40,10 @@ struct MainWindow: View {
             .navigationSplitViewColumnWidth(min: 190, ideal: 210)
         } detail: {
             panelView(selectedPanel)
+                // Panels whose content is short (an empty state, a loading
+                // line) stay pinned under the toolbar instead of floating
+                // to the middle of the window.
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .navigationTitle(selectedPanel.title)
                 // Banners sit in the layout (not an overlay) so they push the
                 // panel down instead of covering what the person is reading.
@@ -50,11 +54,27 @@ struct MainWindow: View {
         // installDetected (that flag means "config.yaml exists" and feeds
         // guardrail notices).
         .sheet(isPresented: Binding(
-            get: { (!appState.installDetected || appState.firstRunSetupNeedsCompletion) && !appState.firstRunDismissed },
+            get: { (!appState.installDetected || appState.firstRunSetupNeedsCompletion || Self.previewFirstRun) && !appState.firstRunDismissed },
             set: { if !$0 { appState.firstRunDismissed = true } }
         )) {
             FirstRunView()
                 .environment(appState)
+        }
+        .confirmationDialog(
+            "Stop the gateway?",
+            isPresented: Binding(
+                get: { appState.gatewayStopConfirmationPresented },
+                set: { appState.gatewayStopConfirmationPresented = $0 }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(AppState.gatewayActionTitle("Stop"), role: .destructive) {
+                appState.runGatewayLifecycle("stop")
+            }
+            .disabled(!appState.installationMutationsAllowed || appState.gatewayStartupInProgress)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Live monitoring stops until the gateway is started again, and agent hooks follow their configured failure mode. Audit, Logs, Activity, and alert history remain available.")
         }
         .sheet(isPresented: commandPaletteBinding) {
             CommandPaletteView()
@@ -90,6 +110,19 @@ struct MainWindow: View {
         PanelID(rawValue: selectedPanelRaw) ?? .overview
     }
 
+    // Design-review switches, compiled into Debug builds only:
+    //   defaults write <bundle id> dcPreviewBanners -bool YES
+    //   defaults write <bundle id> dcPreviewFirstRun -bool YES
+    // They only make existing views visible; their buttons keep their real
+    // behavior, so do not press them against a live install.
+    #if DEBUG
+    private static let previewBanners = UserDefaults.standard.bool(forKey: "dcPreviewBanners")
+    private static let previewFirstRun = UserDefaults.standard.bool(forKey: "dcPreviewFirstRun")
+    #else
+    private static let previewBanners = false
+    private static let previewFirstRun = false
+    #endif
+
     private func sidebarRows(_ panels: [PanelID]) -> some View {
         ForEach(panels) { panel in
             Label {
@@ -113,11 +146,11 @@ struct MainWindow: View {
         }()
         let showUpdate = appState.availableUpdate != nil && !appState.updateBannerDismissed
         let showRuntime = appState.availableRuntimeUpdate != nil && !appState.runtimeBannerDismissed
-        if showToken || showUpdate || showRuntime {
+        if showToken || showUpdate || showRuntime || Self.previewBanners {
             VStack(spacing: 6) {
-                if showToken { tokenBanner }
-                if showUpdate { updateBanner }
-                if showRuntime { runtimeUpdateBanner }
+                if showToken || Self.previewBanners { tokenBanner }
+                if showUpdate || Self.previewBanners { updateBanner }
+                if showRuntime || Self.previewBanners { runtimeUpdateBanner }
             }
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 12)
@@ -194,6 +227,7 @@ struct MainWindow: View {
     private var updateBanner: some View {
         HStack(spacing: 10) {
             Image(systemName: "arrow.down.circle.fill")
+                .foregroundStyle(Cisco.blue)
             VStack(alignment: .leading, spacing: 1) {
                 Text("DefenseClaw for macOS \(appState.availableUpdate?.tag ?? "") is available")
                     .font(.callout.weight(.semibold))
@@ -214,13 +248,16 @@ struct MainWindow: View {
                 }
                 Button { appState.updateBannerDismissed = true } label: {
                     Image(systemName: "xmark")
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.borderless)
                 .accessibilityLabel("Dismiss app update")
             }
         }
         .padding(10)
-        .dcFloatingSurface(tint: Cisco.blue, fallback: Cisco.blue.opacity(0.95), fallbackForeground: .white)
+        .dcFloatingSurface(fallback: Cisco.surfaceOpaque)
+        .overlay(RoundedRectangle(cornerRadius: DCMetrics.floatingCornerRadius).strokeBorder(Cisco.blue.opacity(0.7)))
         .padding(.top, 6)
     }
 
@@ -264,6 +301,8 @@ struct MainWindow: View {
                 }
                 Button { appState.runtimeBannerDismissed = true } label: {
                     Image(systemName: "xmark")
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.borderless)
                 .accessibilityLabel("Dismiss runtime update")
@@ -286,6 +325,8 @@ struct MainWindow: View {
                 }
                 Button { appState.runtimeBannerDismissed = true } label: {
                     Image(systemName: "xmark")
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.borderless)
                 .accessibilityLabel("Dismiss runtime update")
@@ -328,13 +369,15 @@ struct MainWindow: View {
     private var tokenBanner: some View {
         HStack {
             Image(systemName: "key.slash")
+                .foregroundStyle(Cisco.orange)
             Text("Gateway token rejected — config.yaml token may have been rotated.")
                 .font(.callout)
             Button("Reload Config") { appState.reloadConfig() }
                 .controlSize(.small)
         }
         .padding(10)
-        .dcFloatingSurface(tint: Cisco.orange, fallback: Cisco.orange.opacity(0.92), fallbackForeground: .black)
+        .dcFloatingSurface(fallback: Cisco.surfaceOpaque)
+        .overlay(RoundedRectangle(cornerRadius: DCMetrics.floatingCornerRadius).strokeBorder(Cisco.orange.opacity(0.7)))
         .padding(.top, 6)
     }
 }
