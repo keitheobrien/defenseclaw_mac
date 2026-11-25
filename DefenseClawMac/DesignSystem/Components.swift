@@ -57,6 +57,48 @@ enum DCLabel {
         let spaced = trimmed.replacingOccurrences(of: "_", with: " ").lowercased()
         return spaced.prefix(1).uppercased() + spaced.dropFirst()
     }
+
+    /// Capitalizes the first letter and leaves the rest (names, env vars) as is.
+    static func sentence(_ raw: String) -> String {
+        raw.prefix(1).uppercased() + raw.dropFirst()
+    }
+}
+
+/// Collapsible page section with a remembered open/closed state — keeps
+/// secondary detail one click away instead of in one long scroll.
+struct DCDisclosureSection<Content: View>: View {
+    let title: String
+    @AppStorage private var expanded: Bool
+    @ViewBuilder var content: Content
+
+    init(_ title: String, storageKey: String, defaultExpanded: Bool = false, @ViewBuilder content: () -> Content) {
+        self.title = title
+        _expanded = AppStorage(wrappedValue: defaultExpanded, storageKey)
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                withAnimation(.snappy) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                    Text(title).font(.title3.weight(.semibold))
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+            .accessibilityHint(expanded ? "Collapses this section" : "Expands this section")
+            if expanded { content }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
 }
 
 struct StatePill: View {

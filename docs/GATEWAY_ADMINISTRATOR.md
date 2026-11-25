@@ -4,7 +4,7 @@ Administrator mode gives a compatible installed runtime the permissions needed t
 
 Administrator mode does not add sensors to an older runtime. The published DefenseClaw 0.8.10 payload predates the new Runtime planes and root access to operator-owned configuration; those features require a compatible newer/source runtime. The Mac app preserves the runtime you installed.
 
-1. In **Settings → Connection**, enable **Run gateway as administrator**. The same switch is available in **Overview → Quick Actions**.
+1. In **Settings → Connection**, enable **Run gateway as administrator**. **Overview → Gateway → Gateway Settings…** opens the same pane.
 2. Choose **Start Gateway as Administrator** or **Restart Gateway as Administrator** in Overview. Complete the macOS background-service approval if requested. Once the service is approved, each action requests native administrator authorization.
 3. If macOS requests background-service approval, use **Background Service Settings…**, allow DefenseClaw, and retry Start or Restart. Connection settings show the service's current approval status.
 4. For Runtime **agent actions**, open **Full Disk Access…** and add `/usr/bin/eslogger`. Use the add button and **⌘⇧G** to enter that path. Full Disk Access granted to iTerm does not transfer to the background gateway. Restart the gateway after granting access.

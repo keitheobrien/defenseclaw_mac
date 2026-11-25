@@ -30,6 +30,7 @@ struct OverviewView: View {
     @State private var doctorOutput = ""
     @State private var showDoctorSheet = false
     @State private var configurationExpanded = false
+    @State private var showAllNotices = false
     @State private var appliedPolicy: [String: String] = [:]
     @State private var appliedPolicyError: String?
     @State private var appliedPolicyCacheKey = ""
@@ -55,38 +56,45 @@ struct OverviewView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 14) {
+                // Layout (not TUI order): status and what to do about it
+                // first, the four headline numbers next, then live detail;
+                // reference material is collapsed until asked for.
+                statusHeader
                 noticesCard
-                // Hero row: System Health · Scanners · Enforcement —
-                // the three at-a-glance status blocks, all equal height.
-                // fixedSize pins the row to its tallest card; fillHeight on
-                // each card stretches the shorter ones to match.
+                enforcementTilesCard
+                if !overviewConnectorRows.isEmpty { connectorCard }
                 HStack(alignment: .top, spacing: 14) {
                     servicesCard
                         .frame(maxWidth: .infinity)
                     scannersCard
                         .frame(maxWidth: .infinity)
-                    enforcementTilesCard
-                        .frame(maxWidth: .infinity)
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 quickActionsCard
                 SandboxOverviewCard()
-                configurationCard
-                if !appliedPolicy.isEmpty || appliedPolicyError != nil {
-                    DCCard("Effective policy\(scopeSuffix)", systemImage: "person.badge.shield.checkmark") {
-                        if let appliedPolicyError {
-                            Text(appliedPolicyError).font(.caption).foregroundStyle(Cisco.orange)
-                        } else {
-                            KeyValueGrid(pairs: appliedPolicy.keys.sorted().map { ($0, appliedPolicy[$0] ?? "") })
+                DCDisclosureSection("Activity", storageKey: "overview.section.activity", defaultExpanded: true) {
+                    activityCard
+                }
+                DCDisclosureSection("Health Checks and Discovered Agents", storageKey: "overview.section.doctor") {
+                    HStack(alignment: .top, spacing: 14) {
+                        doctorCard
+                        aiCard
+                    }
+                }
+                DCDisclosureSection("Configuration", storageKey: "overview.section.configuration") {
+                    configurationCard
+                    if !appliedPolicy.isEmpty || appliedPolicyError != nil {
+                        DCCard("Effective policy\(scopeSuffix)", systemImage: "person.badge.shield.checkmark") {
+                            if let appliedPolicyError {
+                                Text(appliedPolicyError).font(.caption).foregroundStyle(Cisco.orange)
+                            } else {
+                                KeyValueGrid(pairs: appliedPolicy.keys.sorted().map { ($0, appliedPolicy[$0] ?? "") })
+                            }
                         }
                     }
                 }
-                if !overviewConnectorRows.isEmpty { connectorCard }
-                observabilityCard
-                activityCard
-                HStack(alignment: .top, spacing: 14) {
-                    doctorCard
-                    aiCard
+                DCDisclosureSection("Observability", storageKey: "overview.section.observability") {
+                    observabilityCard
                 }
             }
             .padding(16)
@@ -155,9 +163,10 @@ struct OverviewView: View {
     /// "What needs attention" (TUI build_notices): top-3 notices in emission
     /// order with severity symbols (the TUI's [!]/[*]/[>] glyphs), or the quiet fallback line.
     private var noticesCard: some View {
-        let notices = Array(appState.overviewNotices.prefix(3))
+        let all = appState.overviewNotices
+        let notices = showAllNotices ? all : Array(all.prefix(3))
         return DCCard("What Needs Attention", systemImage: "exclamationmark.bubble") {
-            if notices.isEmpty {
+            if all.isEmpty {
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(Cisco.green)
@@ -166,7 +175,7 @@ struct OverviewView: View {
                         .font(.callout)
                 }
             } else {
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: 6) {
                     ForEach(notices) { notice in
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Image(systemName: noticeSymbol(notice.level).name)
@@ -175,10 +184,129 @@ struct OverviewView: View {
                             Text(notice.message)
                                 .font(.callout)
                                 .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 8)
+                            if let action = notice.action {
+                                noticeActionButton(action)
+                                    .controlSize(.small)
+                                    .fixedSize()
+                            }
                         }
+                    }
+                    if all.count > 3 {
+                        Button(showAllNotices ? "Show Fewer" : "Show \(all.count - 3) More") {
+                            withAnimation(.snappy) { showAllNotices.toggle() }
+                        }
+                        .buttonStyle(.link)
+                        .font(.caption)
                     }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func noticeActionButton(_ action: OverviewNotice.Action) -> some View {
+        switch action {
+        case .startGateway:
+            Button(gatewayActionTitle("Start")) { runGatewayLifecycle("start") }
+                .disabled(!appState.installationMutationsAllowed || appState.gatewayStartupInProgress)
+        case .openSetup:
+            Button("Open Setup") { appState.selectedPanel = .setup }
+        case .runHealthCheck:
+            Button("Run Health Check") { runDoctor() }
+                .disabled(doctorRunning || !appState.installationMutationsAllowed)
+        case .openAlerts:
+            Button("Open Alerts") { appState.openAlerts(filter: .all) }
+        }
+    }
+
+    // MARK: Status header
+
+    private var overallStatus: (symbol: String, tint: Color, title: String) {
+        switch appState.menuBarState {
+        case .healthy: ("checkmark.shield.fill", Cisco.green, "All Systems Running")
+        case .alerting(let count): ("exclamationmark.shield.fill", Cisco.orange, "\(count) Alert\(count == 1 ? "" : "s") to Review")
+        case .degraded: ("exclamationmark.triangle.fill", Cisco.orange, "Running with Issues")
+        case .offline: ("shield.slash.fill", Cisco.red, "Gateway Offline")
+        case .scanning: ("arrow.triangle.2.circlepath", Cisco.blue, "Scanning")
+        case .paused: ("pause.circle.fill", Color.secondary, "Monitoring Paused")
+        }
+    }
+
+    private var statusDetail: String {
+        guard appState.gatewayReachable else {
+            return "Live monitoring is stopped. Audit, Logs, Activity, and alert history remain available."
+        }
+        let secs = max(appState.health.uptimeMs / 1000, 0)
+        let uptime = secs > 86400 ? "\(secs / 86400)d" : secs > 3600 ? "\(secs / 3600)h" : "\(secs / 60)m"
+        let connectors = max(appState.health.connectors.count, overviewConnectorRows.count)
+        var parts = ["Up \(uptime)"]
+        if connectors > 0 { parts.append("\(connectors) connector\(connectors == 1 ? "" : "s")") }
+        if appState.config.guardrailEnabled {
+            parts.append("Guardrail \(appState.config.guardrailMode?.nonEmpty ?? "on")")
+        } else {
+            parts.append("Guardrail off")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// One glance: the same state the menu bar shield shows, in words, with
+    /// the gateway control beside it.
+    private var statusHeader: some View {
+        let status = overallStatus
+        return HStack(alignment: .center, spacing: 14) {
+            Image(systemName: status.symbol)
+                .font(.system(size: 32))
+                .foregroundStyle(status.tint)
+                .frame(width: 40)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(status.title).font(.title2.weight(.semibold))
+                Text(statusDetail)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityElement(children: .combine)
+            Spacer(minLength: 12)
+            if appState.gatewayStartupInProgress {
+                ProgressView().controlSize(.small)
+            }
+            gatewayControl
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Cisco.surfacePanel, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    @ViewBuilder
+    private var gatewayControl: some View {
+        let locked = !appState.installationMutationsAllowed || appState.gatewayStartupInProgress
+        if appState.gatewayReachable {
+            Menu("Gateway") {
+                Button(gatewayActionTitle("Restart")) { runGatewayLifecycle("restart") }
+                    .disabled(locked)
+                Button(gatewayActionTitle("Stop")) { runGatewayLifecycle("stop") }
+                    .disabled(locked)
+                Divider()
+                Button("Gateway Status") {
+                    runOverviewCommand(title: "Gateway status", binary: "defenseclaw-gateway", arguments: ["status"], category: "info")
+                }
+                Button("Show Provenance") {
+                    runOverviewCommand(title: "Show gateway provenance", binary: "defenseclaw-gateway", arguments: ["provenance", "show"], category: "info")
+                }
+                Divider()
+                Button("Gateway Settings…") {
+                    appState.selectedSettingsTab = .connection
+                    openSettings()
+                }
+            }
+            .fixedSize()
+        } else {
+            Button(gatewayActionTitle("Start")) { runGatewayLifecycle("start") }
+                .buttonStyle(.borderedProminent)
+                .disabled(locked)
         }
     }
 
@@ -221,13 +349,6 @@ struct OverviewView: View {
                         Label("Open Inventory", systemImage: "shippingbox")
                     }
                     Button {
-                        runGatewayLifecycle(appState.gatewayReachable ? "restart" : "start")
-                    } label: {
-                        Label(gatewayActionTitle(appState.gatewayReachable ? "Restart" : "Start"),
-                              systemImage: appState.gatewayReachable ? "arrow.clockwise.circle" : "play.circle")
-                    }
-                    .disabled(!appState.installationMutationsAllowed || appState.gatewayStartupInProgress)
-                    Button {
                         runDoctor()
                     } label: {
                         Label("Run Doctor", systemImage: "stethoscope")
@@ -240,20 +361,6 @@ struct OverviewView: View {
                         Button("Check Credentials") {
                             runOverviewCommand(title: "Check credentials", arguments: ["keys", "check"], category: "info")
                         }
-                        Button("Gateway Status") {
-                            runOverviewCommand(title: "Gateway status", binary: "defenseclaw-gateway", arguments: ["status"], category: "info")
-                        }
-                        Button("Show Provenance") {
-                            runOverviewCommand(title: "Show gateway provenance", binary: "defenseclaw-gateway", arguments: ["provenance", "show"], category: "info")
-                        }
-                        Button(gatewayActionTitle("Restart")) {
-                            runGatewayLifecycle("restart")
-                        }
-                        .disabled(!appState.installationMutationsAllowed || appState.gatewayStartupInProgress)
-                        Button(gatewayActionTitle("Stop")) {
-                            runGatewayLifecycle("stop")
-                        }
-                        .disabled(!appState.installationMutationsAllowed || appState.gatewayStartupInProgress)
                         Divider()
                         Button("Open Command Palette") { appState.commandPalettePresented = true }
                     } label: {
@@ -262,28 +369,6 @@ struct OverviewView: View {
                     Spacer()
                 }
                 .controlSize(.small)
-
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack {
-                        Toggle("Run gateway as administrator", isOn: $gatewayAdministratorMode)
-                            .toggleStyle(.switch)
-                            .controlSize(.small)
-                            .fixedSize()
-                            .disabled(!appState.installationMutationsAllowed)
-                        Spacer()
-                        Button("Gateway Permissions…") {
-                            appState.selectedSettingsTab = .connection
-                            openSettings()
-                        }
-                        .controlSize(.small)
-                    }
-                    Text(gatewayAdministratorMode
-                         ? "Uses your installed gateway with macOS authorization. Runtime agent actions also require Full Disk Access."
-                         : "Enable administrator mode for Runtime monitoring across the machine, then start or restart the gateway.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
 
                 if let reason = appState.installationReadOnlyReason {
                     Divider()
@@ -324,8 +409,8 @@ struct OverviewView: View {
                             Text(svc.name)
                                 .font(.callout.weight(.medium))
                                 .frame(width: 92, alignment: .leading)
-                            Text(svc.state)
-                                .font(.caption.monospaced())
+                            Text(DCLabel.state(svc.state))
+                                .font(.caption)
                                 .foregroundStyle(Cisco.stateColor(raw: svc.state))
                                 .frame(width: 66, alignment: .leading)
                             Text(svc.detail)
@@ -563,8 +648,8 @@ struct OverviewView: View {
         let scoped = appState.scopedEnforcementMetrics
         let fleet = appState.overviewEnforcementMetrics
         let filtered = !scopeConnector.isEmpty
-        return DCCard("Enforcement\(scopeSuffix)", systemImage: "checkmark.shield", fillHeight: true) {
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 10) {
+        return DCCard("Enforcement\(scopeSuffix)", systemImage: "checkmark.shield") {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4), spacing: 10) {
                 Button {
                     appState.openLogs(.init(stream: .otel, preset: .hooks))
                 } label: {
@@ -722,7 +807,7 @@ struct OverviewView: View {
                         Text(s.name)
                             .font(.callout.weight(.medium))
                         Spacer(minLength: 8)
-                        Text(s.detail)
+                        Text(DCLabel.sentence(s.detail))
                             .font(.callout)
                             .foregroundStyle(scannerColor(s.level))
                             .lineLimit(1)
@@ -1249,19 +1334,7 @@ struct OverviewView: View {
     }
 
     private func runGatewayLifecycle(_ action: String) {
-        let effect: String
-        switch action {
-        case "start": effect = "Gateway started"
-        case "stop": effect = "Gateway stopped"
-        default: effect = "Gateway restarted"
-        }
-        runOverviewCommand(
-            title: gatewayActionTitle(action.capitalized),
-            binary: "defenseclaw-gateway",
-            arguments: [action],
-            category: "daemon",
-            effects: [effect]
-        )
+        appState.runGatewayLifecycle(action)
     }
 
     private func runOverviewCommand(

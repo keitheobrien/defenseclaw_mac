@@ -2105,6 +2105,38 @@ final class AppState {
         return Self.knownConnectors.compactMap { best[$0] }
     }
 
+    /// Gateway start / stop / restart, shared by Overview and the Gateway
+    /// menu. Runs `defenseclaw-gateway <action>` through runCommand and shows
+    /// Activity so the live output is visible. `action` comes only from the
+    /// fixed UI call sites.
+    func runGatewayLifecycle(_ action: String) {
+        guard ["start", "stop", "restart"].contains(action) else { return }
+        let effect: String
+        switch action {
+        case "start": effect = "Gateway started"
+        case "stop": effect = "Gateway stopped"
+        default: effect = "Gateway restarted"
+        }
+        selectedPanel = .activity
+        Task {
+            _ = await runCommand(
+                title: Self.gatewayActionTitle(action.capitalized),
+                binary: "defenseclaw-gateway",
+                arguments: [action],
+                mutation: true,
+                category: "daemon",
+                origin: "Overview",
+                successEffects: [effect],
+                refreshOnSuccess: true
+            )
+        }
+    }
+
+    static func gatewayActionTitle(_ action: String) -> String {
+        UserDefaults.standard.bool(forKey: "gatewayAdministratorMode")
+            ? "\(action) Gateway as Administrator" : "\(action) Gateway"
+    }
+
     var overviewNotices: [OverviewNotice] {
         var notices: [OverviewNotice] = []
         let gatewayState = (health.subsystem("gateway")?.state ?? "")
@@ -2121,13 +2153,14 @@ final class AppState {
         )
 
         if gatewayBroken && guardrailOff && !skillScannerAvailable {
-            notices.append(.init(level: .info, message: "First time? Head to the Setup panel to configure DefenseClaw."))
+            notices.append(.init(level: .info, message: "First time? Head to the Setup panel to configure DefenseClaw.", action: .openSetup))
         }
         if gatewayBroken {
             notices.append(.init(level: .error, message: gatewayStartupError
                 ?? (gatewayStartupInProgress
                     ? "Starting the gateway automatically…"
-                    : "Gateway is offline - use Start Gateway in Quick Actions")))
+                    : "Gateway is offline"),
+                action: gatewayStartupInProgress ? nil : .startGateway))
         } else if gatewayStandalone {
             let details = health.subsystem("gateway")?.details ?? [:]
             if let hint = (details["hint"]?.nonEmpty ?? details["summary"]?.nonEmpty) {
@@ -2145,34 +2178,35 @@ final class AppState {
             let names = unmanaged.map { friendlyConnectorName($0.name) }.joined(separator: ", ")
             notices.append(.init(
                 level: .warn,
-                message: "Detected but not configured: \(names) - add from the Connectors card or Setup"
+                message: "Detected but not configured: \(names) - add from the Connectors card or Setup",
+                action: .openSetup
             ))
         }
         if installDetected, guardrailOff {
-            notices.append(.init(level: .warn, message: "LLM guardrail not configured - set it up in Setup → Guardrail"))
+            notices.append(.init(level: .warn, message: "LLM guardrail not configured - set it up in Setup → Guardrail", action: .openSetup))
         }
         if !skillScannerAvailable {
             notices.append(.init(level: .warn, message: "skill-scanner unavailable - repair the DefenseClaw installation"))
         }
         if silentBypassCount > 0 {
-            notices.append(.init(level: .warn, message: "\(silentBypassCount) silent LLM bypass event(s) in the last 5m - see Alerts -> egress"))
+            notices.append(.init(level: .warn, message: "\(silentBypassCount) silent LLM bypass event(s) in the last 5m - see Alerts -> egress", action: .openAlerts))
         }
         if let doctor = doctorCache, !doctor.isEmpty {
             let contradicted = doctor.checks.filter { liveHealthContradicts($0) }
             let staleFailures = contradicted.filter { $0.status == "fail" }.count
             let effectiveFailed = max(doctor.failed - staleFailures, 0)
             if effectiveFailed > 0 {
-                notices.append(.init(level: .error, message: "Doctor found \(effectiveFailed) failure(s) - see the Doctor card or run: defenseclaw doctor"))
+                notices.append(.init(level: .error, message: "Doctor found \(effectiveFailed) failure(s) - see the Doctor card or run: defenseclaw doctor", action: .runHealthCheck))
             } else if !contradicted.isEmpty {
-                notices.append(.init(level: .info, message: "Doctor cache shows \(contradicted.count) stale failure(s) that /health disagrees with - run Health Check to refresh"))
+                notices.append(.init(level: .info, message: "Doctor cache shows \(contradicted.count) stale failure(s) that /health disagrees with - run Health Check to refresh", action: .runHealthCheck))
             } else if doctor.isStale() {
-                notices.append(.init(level: .info, message: "Doctor cache is stale - run Health Check to re-probe"))
+                notices.append(.init(level: .info, message: "Doctor cache is stale - run Health Check to re-probe", action: .runHealthCheck))
             }
             let missing = doctor.missingRequiredCredentials
             if !missing.isEmpty {
                 let preview = missing.prefix(2).joined(separator: ", ")
                 let overflow = missing.count > 2 ? " (+\(missing.count - 2) more)" : ""
-                notices.append(.init(level: .error, message: "Missing required API key(s): \(preview)\(overflow) - run: defenseclaw keys fill-missing"))
+                notices.append(.init(level: .error, message: "Missing required API key(s): \(preview)\(overflow) - run: defenseclaw keys fill-missing", action: .openSetup))
             }
         }
         // TUI parity: health=None (gateway unreachable) skips this block —

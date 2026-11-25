@@ -1034,7 +1034,7 @@ actor CLIRunner {
             var metadata = stat()
             if lstat(protectedState, &metadata) == 0, metadata.st_uid == 0,
                access(protectedState, R_OK) != 0 {
-                return CLIResult(exitCode: 77, output: "This installation has gateway state owned by root. Enable Run gateway as administrator in Overview or Settings → Connection, then retry this action.\n")
+                return CLIResult(exitCode: 77, output: "This installation has gateway state owned by root. Enable Run gateway as administrator in Settings → Connection, then retry this action.\n")
             }
         }
         guard let binary = locateBinary(named: binaryName) else {

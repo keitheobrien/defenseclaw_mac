@@ -34,6 +34,10 @@ struct DefenseClawApp: App {
         AppDelegate.startApplication = { [weak state] in state?.start() }
     }
 
+    private var gatewayControlsLocked: Bool {
+        !appState.installationMutationsAllowed || appState.gatewayStartupInProgress
+    }
+
     @ViewBuilder
     private func goButton(_ panel: PanelID, index: Int) -> some View {
         let button = Button(panel.title) { appState.selectedPanel = panel }
@@ -96,6 +100,21 @@ struct DefenseClawApp: App {
                     if groupIndex > 0 { Divider() }
                     ForEach(group.panels) { panel in
                         goButton(panel, index: ordered.firstIndex(of: panel) ?? ordered.count)
+                    }
+                }
+            }
+            CommandMenu("Gateway") {
+                Button(AppState.gatewayActionTitle("Start")) { appState.runGatewayLifecycle("start") }
+                    .disabled(appState.gatewayReachable || gatewayControlsLocked)
+                Button(AppState.gatewayActionTitle("Restart")) { appState.runGatewayLifecycle("restart") }
+                    .disabled(!appState.gatewayReachable || gatewayControlsLocked)
+                Button(AppState.gatewayActionTitle("Stop")) { appState.runGatewayLifecycle("stop") }
+                    .disabled(!appState.gatewayReachable || gatewayControlsLocked)
+                Divider()
+                Button("Gateway Settings…") {
+                    appState.selectedSettingsTab = .connection
+                    if NSApp.responds(to: Selector(("showSettingsWindow:"))) {
+                        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
                     }
                 }
             }
