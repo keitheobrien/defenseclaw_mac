@@ -34,6 +34,17 @@ enum PanelID: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    /// Sidebar order, shared by the main window and the Go menu so ⌘1–⌘9/⌘0
+    /// always follow what is on screen. An empty title is an unlabeled group.
+    /// Layout only — panel features and semantics still mirror the TUI.
+    static let sidebarGroups: [(title: String, panels: [PanelID])] = [
+        ("", [.overview]),
+        ("Monitor", [.alerts, .logs, .audit]),
+        ("Protect", [.policies, .sandboxes, .skills, .mcps, .plugins, .tools]),
+        ("Discover", [.inventory, .aiDiscovery, .aiRuntime, .registries]),
+        ("System", [.setup, .routing, .substrate, .activity]),
+    ]
+
     var title: String {
         switch self {
         case .overview: "Overview"
@@ -42,12 +53,12 @@ enum PanelID: String, CaseIterable, Identifiable {
         case .audit: "Audit"
         case .activity: "Activity"
         case .skills: "Skills"
-        case .mcps: "MCPs"
+        case .mcps: "MCP Servers"
         case .plugins: "Plugins"
         case .tools: "Tools"
         case .inventory: "Inventory"
         case .aiDiscovery: "AI Discovery"
-        case .aiRuntime: "Runtime"
+        case .aiRuntime: "Runtime Sensors"
         case .registries: "Registries"
         case .setup: "Setup"
         case .sandboxes: "Sandboxes"

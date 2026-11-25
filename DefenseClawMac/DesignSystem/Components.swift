@@ -47,12 +47,24 @@ struct SeverityBadge: View {
     }
 }
 
+enum DCLabel {
+    /// Display form of a runtime state token: "not_configured" becomes
+    /// "Not configured". Short all-caps tokens (ON, OK) pass through. Display
+    /// only — comparisons and colors keep using the raw runtime value.
+    static func state(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.count <= 3, trimmed == trimmed.uppercased() { return trimmed }
+        let spaced = trimmed.replacingOccurrences(of: "_", with: " ").lowercased()
+        return spaced.prefix(1).uppercased() + spaced.dropFirst()
+    }
+}
+
 struct StatePill: View {
     let raw: String
     var body: some View {
         HStack(spacing: 4) {
             Circle().fill(Cisco.stateColor(raw: raw)).frame(width: 7, height: 7)
-            Text(raw.lowercased())
+            Text(DCLabel.state(raw))
                 .font(.caption.weight(.medium))
         }
         .padding(.horizontal, 8)

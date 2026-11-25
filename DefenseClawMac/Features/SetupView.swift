@@ -401,7 +401,7 @@ struct WizardSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }
-                Button("Review →") { phase = .review }
+                Button("Review") { phase = .review }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
                     .tint(Cisco.blue)
@@ -485,7 +485,7 @@ struct WizardSheet: View {
             Spacer()
             HStack {
                 if !wizard.interactiveOnly {
-                    Button("← Back") { phase = .form }
+                    Button("Back") { phase = .form }
                 }
                 Spacer()
                 Button("Cancel") { dismiss() }

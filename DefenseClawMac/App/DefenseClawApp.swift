@@ -34,6 +34,18 @@ struct DefenseClawApp: App {
         AppDelegate.startApplication = { [weak state] in state?.start() }
     }
 
+    @ViewBuilder
+    private func goButton(_ panel: PanelID, index: Int) -> some View {
+        let button = Button(panel.title) { appState.selectedPanel = panel }
+        if index < 9 {
+            button.keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
+        } else if index == 9 {
+            button.keyboardShortcut("0", modifiers: .command)
+        } else {
+            button
+        }
+    }
+
     var body: some Scene {
         Window("DefenseClaw", id: "main") {
             MainWindow()
@@ -57,12 +69,37 @@ struct DefenseClawApp: App {
                 .disabled(appState.updateOperationInProgress)
             }
             CommandGroup(after: .toolbar) {
-                Button("Refresh Panel") {
+                Button("Refresh") {
                     NotificationCenter.default.post(name: .dcRefreshPanel, object: nil)
                 }
                 .keyboardShortcut("r", modifiers: .command)
+
+                Button("Command Palette…") {
+                    appState.commandPalettePresented = true
+                }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
+
+                // The TUI's `m` key: step the shared connector filter
+                // All → conn0 → conn1 → … → All across every panel.
+                Button("Next Connector Filter") {
+                    appState.cycleConnectorFilter()
+                }
+                .keyboardShortcut("m", modifiers: [.command, .shift])
+                .disabled(appState.activeConnectorNames.count <= 1)
+
+                Divider()
             }
-            CommandMenu("Monitor") {
+            // Follows the sidebar: ⌘1–⌘9 then ⌘0 for the first ten panels.
+            CommandMenu("Go") {
+                let ordered = PanelID.sidebarGroups.flatMap(\.panels)
+                ForEach(Array(PanelID.sidebarGroups.enumerated()), id: \.offset) { groupIndex, group in
+                    if groupIndex > 0 { Divider() }
+                    ForEach(group.panels) { panel in
+                        goButton(panel, index: ordered.firstIndex(of: panel) ?? ordered.count)
+                    }
+                }
+            }
+            CommandMenu("Actions") {
                 Button("Run Health Check") {
                     appState.selectedPanel = .overview
                     DispatchQueue.main.async {
@@ -85,63 +122,26 @@ struct DefenseClawApp: App {
                         || !appState.installationMutationsAllowed
                 )
 
-                // The TUI's `m` key: step the shared connector filter
-                // All → conn0 → conn1 → … → All across every panel.
-                Button("Cycle Connector Filter") {
-                    appState.cycleConnectorFilter()
-                }
-                .keyboardShortcut("m", modifiers: [.control])
-                .disabled(appState.activeConnectorNames.count <= 1)
-            }
-            CommandMenu("Commands") {
-                Button("Command Palette…") {
-                    appState.commandPalettePresented = true
-                }
-                .keyboardShortcut("p", modifiers: [.command, .shift])
-
-                Divider()
-
-                // The TUI's Y yank / Ctrl+S export / Shift+D diagnose chrome.
-                Button("Copy Last Command Output") {
-                    appState.copyLastCommandOutput()
-                }
-                .keyboardShortcut("y", modifiers: [.control])
-
-                Button("Export Last Command Output") {
-                    appState.exportLastCommandOutput()
-                }
-                .keyboardShortcut("s", modifiers: [.control])
-                .disabled(!appState.installationMutationsAllowed)
-
                 Button("Diagnose in Background") {
                     appState.runBackgroundDiagnose()
                 }
                 .keyboardShortcut("d", modifiers: [.command, .shift])
                 .disabled(appState.diagnoseRunning || !appState.installationMutationsAllowed)
-            }
-            CommandMenu("Go") {
-                ForEach(Array(PanelID.allCases.enumerated()), id: \.element) { index, panel in
-                    if index < 9 {
-                        Button(panel.title) { appState.selectedPanel = panel }
-                            .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
-                    } else if index == 9 {
-                        Button(panel.title) { appState.selectedPanel = panel }
-                            .keyboardShortcut("0", modifiers: .command)
-                    } else if panel == .policies {
-                        Button(panel.title) { appState.selectedPanel = panel }
-                            .keyboardShortcut("p", modifiers: [.command, .option])
-                    } else if panel == .sandboxes {
-                        Button(panel.title) { appState.selectedPanel = panel }
-                            .keyboardShortcut("b", modifiers: [.command, .shift])
-                    } else if panel == .setup {
-                        // ⌘⇧3 would collide with macOS's screenshot hotkey.
-                        Button(panel.title) { appState.selectedPanel = panel }
-                            .keyboardShortcut("s", modifiers: [.command, .shift])
-                    } else {
-                        Button(panel.title) { appState.selectedPanel = panel }
-                            .keyboardShortcut(KeyEquivalent(Character("\(index - 9)")), modifiers: [.command, .shift])
-                    }
+
+                Divider()
+
+                // The TUI's Y yank / Ctrl+S export, on Command like the rest
+                // of the Mac.
+                Button("Copy Last Command Output") {
+                    appState.copyLastCommandOutput()
                 }
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+
+                Button("Export Last Command Output…") {
+                    appState.exportLastCommandOutput()
+                }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
+                .disabled(!appState.installationMutationsAllowed)
             }
             CommandGroup(replacing: .help) {
                 Link(

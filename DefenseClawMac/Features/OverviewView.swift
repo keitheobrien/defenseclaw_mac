@@ -153,15 +153,15 @@ struct OverviewView: View {
     }
 
     /// "What needs attention" (TUI build_notices): top-3 notices in emission
-    /// order with [!]/[*]/[>] severity glyphs, or the quiet fallback line.
+    /// order with severity symbols (the TUI's [!]/[*]/[>] glyphs), or the quiet fallback line.
     private var noticesCard: some View {
         let notices = Array(appState.overviewNotices.prefix(3))
         return DCCard("What Needs Attention", systemImage: "exclamationmark.bubble") {
             if notices.isEmpty {
                 HStack(spacing: 6) {
-                    Text("[OK]")
-                        .font(.caption.weight(.bold).monospaced())
+                    Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(Cisco.green)
+                        .accessibilityLabel("OK")
                     Text("Runtime signals are quiet.")
                         .font(.callout)
                 }
@@ -169,9 +169,9 @@ struct OverviewView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     ForEach(notices) { notice in
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text(noticeGlyph(notice.level))
-                                .font(.caption.weight(.bold).monospaced())
+                            Image(systemName: noticeSymbol(notice.level).name)
                                 .foregroundStyle(noticeColor(notice.level))
+                                .accessibilityLabel(noticeSymbol(notice.level).label)
                             Text(notice.message)
                                 .font(.callout)
                                 .textSelection(.enabled)
@@ -182,11 +182,13 @@ struct OverviewView: View {
         }
     }
 
-    private func noticeGlyph(_ level: OverviewNotice.Level) -> String {
+    /// The TUI's [!]/[*]/[>] severity glyphs as symbols; shape differs per
+    /// level so color is never the only signal.
+    private func noticeSymbol(_ level: OverviewNotice.Level) -> (name: String, label: String) {
         switch level {
-        case .error: "[!]"
-        case .warn: "[*]"
-        case .info: "[>]"
+        case .error: ("xmark.octagon.fill", "Error")
+        case .warn: ("exclamationmark.triangle.fill", "Warning")
+        case .info: ("info.circle.fill", "Info")
         }
     }
 
@@ -509,7 +511,7 @@ struct OverviewView: View {
                         .foregroundStyle(.tertiary)
                     Spacer()
                     if !scopeConnector.isEmpty {
-                        Button("Open \(friendlyConnectorName(scopeConnector)) Alerts →") {
+                        Button("Open \(friendlyConnectorName(scopeConnector)) Alerts") {
                             appState.openAlerts(filter: .all)
                         }
                         .controlSize(.small)
@@ -528,7 +530,7 @@ struct OverviewView: View {
     /// row scopes every view; re-selecting All via the chip clears it). The
     /// setter is a no-op on single-connector installs — the TUI's
     /// normalize_filter keeps those permanently at All, and every clear
-    /// affordance (chip, ⌃M, caption) is hidden there.
+    /// affordance (chip, ⌘⇧M, caption) is hidden there.
     private var connectorRowSelection: Binding<String?> {
         Binding(
             get: { appState.connectorFilter.isEmpty ? nil : appState.connectorFilter },
@@ -929,9 +931,11 @@ struct OverviewView: View {
                     Divider()
                     ForEach(Array(box.checks.enumerated()), id: \.offset) { _, check in
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text("[\(check.badge)]")
-                                .font(.caption2.weight(.bold).monospaced())
+                            Image(systemName: badgeSymbol(check.badge))
+                                .font(.caption)
                                 .foregroundStyle(badgeColor(check.badge))
+                                .accessibilityLabel(check.badge.capitalized)
+                                .help(check.badge.capitalized)
                             Text(check.label).font(.caption)
                             Text(check.detail)
                                 .font(.caption2)
@@ -958,6 +962,15 @@ struct OverviewView: View {
         if part.hasSuffix(" warn") { return Cisco.orange }
         if part.hasSuffix(" stale") { return Cisco.blue }
         return .secondary
+    }
+
+    private func badgeSymbol(_ badge: String) -> String {
+        switch badge {
+        case "FAIL": "xmark.octagon.fill"
+        case "WARN": "exclamationmark.triangle.fill"
+        case "STALE": "clock.badge.exclamationmark"
+        default: "minus.circle"
+        }
     }
 
     private func badgeColor(_ badge: String) -> Color {
@@ -1039,9 +1052,10 @@ struct OverviewView: View {
                     // Rich-panel parity: first 8 rows + "+N more".
                     ForEach(box.rows) { row in
                         HStack(spacing: 8) {
-                            Text(row.badge)
-                                .font(.caption2.weight(.bold).monospaced())
+                            Text(aiBadgeTitle(row.badge))
+                                .font(.caption2.weight(.semibold))
                                 .foregroundStyle(aiBadgeColor(row.badge))
+                                .frame(width: 52, alignment: .leading)
                             Text(row.name)
                                 .font(.caption)
                                 .lineLimit(1)
@@ -1064,10 +1078,19 @@ struct OverviewView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
-                    Button("See all →") { appState.selectedPanel = .aiDiscovery }
+                    Button("See All") { appState.selectedPanel = .aiDiscovery }
                         .controlSize(.small)
                 }
             }
+        }
+    }
+
+    private func aiBadgeTitle(_ badge: String) -> String {
+        switch badge {
+        case "[NEW]": "New"
+        case "[CHG]": "Changed"
+        case "[GONE]": "Gone"
+        default: "Known"
         }
     }
 

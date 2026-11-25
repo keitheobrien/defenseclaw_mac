@@ -52,9 +52,14 @@ enum Cisco {
     static let yellow = Color(nsColor: .systemYellow)
     static let magenta = Color(nsColor: .systemPurple)
 
-    // Surfaces
-    static let surfacePanel = Color.adaptive(light: 0xF5F7FA, dark: 0x111B2C)
-    static let surfaceRaised = Color.adaptive(light: 0xFFFFFF, dark: 0x16233A)
+    // Surfaces. Content cards use translucent system fills so they sit on
+    // whatever is behind them (window, sheet, popover, Liquid Glass sidebar
+    // edge) and follow appearance, Increase Contrast and Reduce Transparency.
+    // Raised tiles stack on panels, so the stronger fill reads as one step up.
+    static let surfacePanel = Color(nsColor: .quaternarySystemFill)
+    static let surfaceRaised = Color(nsColor: .tertiarySystemFill)
+    /// Opaque surface for floating chrome on systems without Liquid Glass.
+    static let surfaceOpaque = Color.adaptive(light: 0xFFFFFF, dark: 0x16233A)
 
     static func severityColor(_ s: Severity) -> Color {
         switch s {
@@ -78,5 +83,27 @@ enum Cisco {
 
     static func stateColor(raw: String) -> Color {
         stateColor(EntityState.classify(raw))
+    }
+}
+
+enum DCMetrics {
+    static let floatingCornerRadius: CGFloat = 12
+}
+
+extension View {
+    /// Floating chrome (banners, callouts that sit above content): Liquid
+    /// Glass on macOS 26 and later, the previous opaque fill before that.
+    /// Content cards deliberately do not use glass — it is reserved for the
+    /// control and navigation layer.
+    @ViewBuilder
+    func dcFloatingSurface(tint: Color? = nil, fallback: Color) -> some View {
+        if #available(macOS 26.0, *) {
+            glassEffect(
+                tint.map { Glass.regular.tint($0) } ?? Glass.regular,
+                in: .rect(cornerRadius: DCMetrics.floatingCornerRadius)
+            )
+        } else {
+            background(fallback, in: RoundedRectangle(cornerRadius: DCMetrics.floatingCornerRadius))
+        }
     }
 }

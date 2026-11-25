@@ -23,33 +23,17 @@ struct MainWindow: View {
     @Environment(\.openWindow) private var openWindow
     @SceneStorage("main.selectedPanel") private var selectedPanelRaw = PanelID.overview.rawValue
 
-    private let groups: [(String, [PanelID])] = [
-        ("Monitor", [.overview, .alerts, .logs, .audit, .activity]),
-        ("Govern", [.skills, .mcps, .plugins, .tools, .policies, .sandboxes, .routing, .substrate]),
-        ("Discover", [.inventory, .aiDiscovery, .aiRuntime, .registries]),
-        ("Configure", [.setup]),
-    ]
-
     var body: some View {
         // Keep sidebar visibility under NavigationSplitView/user control.
         // Coupling it to inspector lifecycle events can create a re-entrant
         // AppKit constraint pass while SwiftUI is inserting the inspector.
         NavigationSplitView {
             List(selection: selectedPanelBinding) {
-                ForEach(groups, id: \.0) { group in
-                    Section(group.0) {
-                        ForEach(group.1) { panel in
-                            Label {
-                                HStack {
-                                    Text(panel.title)
-                                    Spacer()
-                                    badge(for: panel)
-                                }
-                            } icon: {
-                                Image(systemName: panel.systemImage)
-                            }
-                            .tag(panel)
-                        }
+                ForEach(PanelID.sidebarGroups, id: \.title) { group in
+                    if group.title.isEmpty {
+                        Section { sidebarRows(group.panels) }
+                    } else {
+                        Section(group.title) { sidebarRows(group.panels) }
                     }
                 }
             }
@@ -57,19 +41,9 @@ struct MainWindow: View {
         } detail: {
             panelView(selectedPanel)
                 .navigationTitle(selectedPanel.title)
-        }
-        .overlay(alignment: .top) {
-            VStack(spacing: 6) {
-                if let err = appState.lastGatewayError, case .unauthorized = err {
-                    tokenBanner
-                }
-                if appState.availableUpdate != nil, !appState.updateBannerDismissed {
-                    updateBanner
-                }
-                if appState.availableRuntimeUpdate != nil, !appState.runtimeBannerDismissed {
-                    runtimeUpdateBanner
-                }
-            }
+                // Banners sit in the layout (not an overlay) so they push the
+                // panel down instead of covering what the person is reading.
+                .safeAreaInset(edge: .top, spacing: 0) { banners }
         }
         // A real (writable) binding so the environment DismissAction works —
         // dismissal is remembered for this launch only, never faked as
@@ -116,6 +90,41 @@ struct MainWindow: View {
         PanelID(rawValue: selectedPanelRaw) ?? .overview
     }
 
+    private func sidebarRows(_ panels: [PanelID]) -> some View {
+        ForEach(panels) { panel in
+            Label {
+                HStack {
+                    Text(panel.title)
+                    Spacer()
+                    badge(for: panel)
+                }
+            } icon: {
+                Image(systemName: panel.systemImage)
+            }
+            .tag(panel)
+        }
+    }
+
+    @ViewBuilder
+    private var banners: some View {
+        let showToken: Bool = {
+            if let err = appState.lastGatewayError, case .unauthorized = err { return true }
+            return false
+        }()
+        let showUpdate = appState.availableUpdate != nil && !appState.updateBannerDismissed
+        let showRuntime = appState.availableRuntimeUpdate != nil && !appState.runtimeBannerDismissed
+        if showToken || showUpdate || showRuntime {
+            VStack(spacing: 6) {
+                if showToken { tokenBanner }
+                if showUpdate { updateBanner }
+                if showRuntime { runtimeUpdateBanner }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+        }
+    }
+
     private var selectedPanelBinding: Binding<PanelID> {
         Binding(
             get: { selectedPanel },
@@ -145,11 +154,13 @@ struct MainWindow: View {
                 .padding(.vertical, 1)
                 .background(Cisco.red, in: Capsule())
                 .foregroundStyle(.white)
+                .accessibilityLabel("\(appState.unackedAlerts.filter { $0.severity > .info }.count) unacknowledged alerts")
         case .overview:
             if case .degraded = appState.menuBarState {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.caption2)
                     .foregroundStyle(Cisco.orange)
+                    .accessibilityLabel("Degraded")
             }
         default:
             EmptyView()
@@ -209,8 +220,8 @@ struct MainWindow: View {
             }
         }
         .padding(10)
-        .background(Cisco.blue.opacity(0.95), in: RoundedRectangle(cornerRadius: 8))
         .foregroundStyle(.white)
+        .dcFloatingSurface(tint: Cisco.blue, fallback: Cisco.blue.opacity(0.95))
         .padding(.top, 6)
     }
 
@@ -282,8 +293,8 @@ struct MainWindow: View {
             }
         }
         .padding(10)
-        .background(Cisco.surfaceRaised, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Cisco.green.opacity(0.6)))
+        .dcFloatingSurface(fallback: Cisco.surfaceOpaque)
+        .overlay(RoundedRectangle(cornerRadius: DCMetrics.floatingCornerRadius).strokeBorder(Cisco.green.opacity(0.6)))
         .padding(.top, 6)
     }
 
@@ -324,8 +335,8 @@ struct MainWindow: View {
                 .controlSize(.small)
         }
         .padding(10)
-        .background(Cisco.orange.opacity(0.92), in: RoundedRectangle(cornerRadius: 8))
         .foregroundStyle(.black)
+        .dcFloatingSurface(tint: Cisco.orange, fallback: Cisco.orange.opacity(0.92))
         .padding(.top, 6)
     }
 }
