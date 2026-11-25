@@ -65,7 +65,7 @@ struct PoliciesView: View {
                         Text(row.cells.prefix(2).joined(separator: " ")).font(.callout.weight(.medium))
                     }.width(min: 160, ideal: 220)
                     TableColumn("Effective settings") { row in
-                        Text(summary(row)).font(.dcCell).lineLimit(2)
+                        Text(summary(row)).font(.dcCell).lineLimit(1)
                     }
                 }
             }

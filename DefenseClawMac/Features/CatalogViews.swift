@@ -136,7 +136,7 @@ struct SkillsView: View {
                     .width(105)
                 TableColumn("Name", value: \.name)
                 TableColumn("Description") { item in
-                    Text(item.skillDescription).font(.dcCell).foregroundStyle(.secondary).lineLimit(2)
+                    Text(item.skillDescription).font(.dcCell).foregroundStyle(.secondary).lineLimit(1)
                 }
                 TableColumn("Scan") { item in CatalogScanLabel(scan: item.scan) }.width(120)
                 TableColumn("Connector", value: \.connector).width(90)

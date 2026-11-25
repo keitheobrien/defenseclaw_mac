@@ -121,7 +121,7 @@ struct AlertsView: View {
                     .width(min: 70, ideal: 140, max: 320)
                     .customizationID("target")
                     TableColumn("Details") { row in
-                        Text(row.details).font(.dcCell).foregroundStyle(.secondary).lineLimit(2)
+                        Text(row.details).font(.dcCell).foregroundStyle(.secondary).lineLimit(1)
                     }
                     .width(min: 180, ideal: 360)
                     .customizationID("details")

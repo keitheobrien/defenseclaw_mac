@@ -125,13 +125,14 @@ struct ActivityView: View {
                     Text(entry.startedAt, format: .dateTime.month().day().hour().minute().second())
                         .font(.dcCell.monospacedDigit())
                 }
-                .width(126)
+                .width(160)
+                // One line per row: a two-line cell is taller than the
+                // table's row height, and rows added while the table is on
+                // screen were clipped. The invocation gets its own column.
                 TableColumn("Command") { entry in
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(entry.title).font(.dcCell.weight(.medium)).lineLimit(1)
-                        Text(entry.command).font(.dcCellSecondary.monospaced()).foregroundStyle(.secondary).lineLimit(1)
-                    }
+                    Text(entry.title).font(.dcCell.weight(.medium)).lineLimit(1)
                 }
+                .width(min: 140, ideal: 200, max: 320)
                 TableColumn("Status") { entry in
                     Label(entry.statusLabel, systemImage: statusIcon(entry.status))
                         .font(.dcCell)
@@ -142,6 +143,11 @@ struct ActivityView: View {
                     Text(durationLabel(entry.duration)).font(.dcCell.monospacedDigit())
                 }
                 .width(72)
+                TableColumn("Invocation") { entry in
+                    Text(entry.command).font(.dcCellSecondary.monospaced()).foregroundStyle(.secondary)
+                        .lineLimit(1).truncationMode(.middle)
+                }
+                .width(min: 160, ideal: 320)
                 TableColumn("Side Effects") { entry in
                     Text(entry.sideEffects.isEmpty ? "—" : entry.sideEffects.joined(separator: " · "))
                         .font(.dcCell).foregroundStyle(.secondary).lineLimit(1)
@@ -166,22 +172,22 @@ struct ActivityView: View {
             )) {
                 TableColumn("Time") { mutation in
                     Text(mutation.timestamp, format: .dateTime.month().day().hour().minute())
-                        .font(.caption.monospacedDigit())
+                        .font(.dcCell.monospacedDigit())
                 }
-                .width(110)
-                TableColumn("Actor") { mutation in Text(mutation.actor).font(.caption) }.width(90)
-                TableColumn("Action") { mutation in Text(mutation.action).font(.caption) }.width(min: 100, ideal: 140)
+                .width(130)
+                TableColumn("Actor") { mutation in Text(mutation.actor).font(.dcCell) }.width(90)
+                TableColumn("Action") { mutation in Text(mutation.action).font(.dcCell) }.width(min: 100, ideal: 140)
                 TableColumn("Target") { mutation in
                     Text(mutation.targetType.isEmpty ? mutation.targetID : "\(mutation.targetType)/\(mutation.targetID)")
-                        .font(.caption).lineLimit(1)
+                        .font(.dcCell).lineLimit(1)
                 }
                 TableColumn("Version Change") { mutation in
                     Text(mutation.versionFrom.isEmpty && mutation.versionTo.isEmpty ? "—" : "\(mutation.versionFrom) to \(mutation.versionTo)")
-                        .font(.caption2.monospaced()).foregroundStyle(.secondary)
+                        .font(.dcCellSecondary.monospaced()).foregroundStyle(.secondary)
                 }
                 .width(110)
                 TableColumn("Reason") { mutation in
-                    Text(mutation.reason).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    Text(mutation.reason).font(.dcCell).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
         }
