@@ -106,6 +106,65 @@ struct SetupView: View {
     @State private var activeWizard: WizardDefinition?
     @State private var showRedactionPolicy = false
     @State private var showRuntimeControls = false
+    @State private var wizardSearch = ""
+
+    /// Presentation grouping for the setup wizards. Layout only: the wizard
+    /// catalog is TUIWizards.all, and any wizard not named here lands in
+    /// "More" so a newly ported one is never hidden.
+    private static let groupOrder: [(title: String, caption: String, ids: [String])] = [
+        ("Essentials", "What most installs need: agents, keys, the model, and the gateway.",
+         ["connector", "credentials", "llm", "guardrail", "gateway"]),
+        ("Protection", "Scanners, enforcement actions, sandboxing, and discovery.",
+         ["skill-scanner", "mcp-scanner", "guardrail-actions", "sandbox", "acp-guard",
+          "ai-discovery", "trusted-paths", "token-rotation"]),
+        ("Integrations", "Send findings and telemetry elsewhere, or add external catalogs and providers.",
+         ["ai-defense", "splunk", "splunk-dashboards", "galileo", "local-observability",
+          "observability", "webhooks", "notification-routing", "registries", "custom-providers"]),
+    ]
+
+    private var wizardGroups: [(title: String, caption: String, wizards: [WizardDefinition])] {
+        let query = wizardSearch.trimmingCharacters(in: .whitespaces).lowercased()
+        func matches(_ wizard: WizardDefinition) -> Bool {
+            query.isEmpty || wizard.title.lowercased().contains(query) || wizard.blurb.lowercased().contains(query)
+        }
+        var remaining = TUIWizards.all
+        var groups: [(title: String, caption: String, wizards: [WizardDefinition])] = []
+        for group in Self.groupOrder {
+            let wizards = group.ids.compactMap { id in remaining.first { $0.id == id } }
+            remaining.removeAll { group.ids.contains($0.id) }
+            let visible = wizards.filter(matches)
+            if !visible.isEmpty { groups.append((group.title, group.caption, visible)) }
+        }
+        let rest = remaining.filter(matches)
+        if !rest.isEmpty { groups.append(("More", "", rest)) }
+        return groups
+    }
+
+    private func wizardTile(_ wizard: WizardDefinition) -> some View {
+        Button {
+            activeWizard = wizard
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Image(systemName: wizard.icon)
+                        .font(.title3)
+                        .foregroundStyle(Cisco.blue)
+                    Text(wizard.title).font(.headline)
+                    Spacer()
+                }
+                Text(wizard.blurb)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(12)
+            .frame(height: 92)
+            .background(Cisco.surfacePanel, in: RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .disabled(!appState.installationMutationsAllowed)
+    }
 
     var body: some View {
         ScrollView {
@@ -118,42 +177,39 @@ struct SetupView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Cisco.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
                 }
-                Text("Setup Areas").font(.title3.weight(.semibold))
-                HStack {
-                    Button("Model Routing, Budgets & Usage") { appState.selectedPanel = .routing }
-                    Button("Guardrail Cascade & Runtime Controls…") { showRuntimeControls = true }
-                    Button("Agent Substrate") { appState.selectedPanel = .substrate }
+                if !wizardSearch.isEmpty, wizardGroups.isEmpty {
+                    Text("No setup areas match “\(wizardSearch)”.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                 }
-                .disabled(!Runtime1010Features.supported(appState.installedRuntimeVersion))
-                Button { showRedactionPolicy = true } label: {
-                    Label("Redaction Policy — inspect profiles, buckets, destinations, and routes", systemImage: "eye.slash")
-                }
-                .disabled(appState.runtimeSetupCommands?.contains("redaction") != true)
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 230), spacing: 12)], spacing: 12) {
-                    ForEach(TUIWizards.all) { wizard in
-                        Button {
-                            activeWizard = wizard
-                        } label: {
-                            VStack(alignment: .leading, spacing: 6) {
-                                HStack {
-                                    Image(systemName: wizard.icon)
-                                        .font(.title3)
-                                        .foregroundStyle(Cisco.blue)
-                                    Text(wizard.title).font(.headline)
-                                    Spacer()
-                                }
-                                Text(wizard.blurb)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .multilineTextAlignment(.leading)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                ForEach(wizardGroups, id: \.title) { group in
+                    VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(group.title).font(.title3.weight(.semibold))
+                            if !group.caption.isEmpty {
+                                Text(group.caption).font(.caption).foregroundStyle(.secondary)
                             }
-                            .padding(12)
-                            .frame(height: 92)
-                            .background(Cisco.surfacePanel, in: RoundedRectangle(cornerRadius: 10))
                         }
-                        .buttonStyle(.plain)
-                        .disabled(!appState.installationMutationsAllowed)
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 230), spacing: 12)], spacing: 12) {
+                            ForEach(group.wizards) { wizard in
+                                wizardTile(wizard)
+                            }
+                        }
+                    }
+                }
+                if wizardSearch.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Policy and Runtime").font(.title3.weight(.semibold))
+                        HStack {
+                            Button("Model Routing, Budgets & Usage") { appState.selectedPanel = .routing }
+                            Button("Guardrail Cascade & Runtime Controls…") { showRuntimeControls = true }
+                            Button("Agent Substrate") { appState.selectedPanel = .substrate }
+                        }
+                        .disabled(!Runtime1010Features.supported(appState.installedRuntimeVersion))
+                        Button { showRedactionPolicy = true } label: {
+                            Label("Redaction Policy — inspect profiles, buckets, destinations, and routes", systemImage: "eye.slash")
+                        }
+                        .disabled(appState.runtimeSetupCommands?.contains("redaction") != true)
                     }
                 }
 
@@ -167,6 +223,7 @@ struct SetupView: View {
             }
             .padding(16)
         }
+        .searchable(text: $wizardSearch, prompt: "Search setup areas")
         .sheet(item: $activeWizard) { wizard in
             WizardSheet(wizard: wizard)
                 .environment(appState)
