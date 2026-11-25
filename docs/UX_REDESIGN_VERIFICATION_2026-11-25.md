@@ -76,12 +76,6 @@ Found and fixed during this pass:
 
 ## Not verified
 
-- The popover opening from the real menu bar item. On the test host the
-  DefenseClawMac status item is not present in the menu bar at all — System
-  Events reports one menu bar for the process, for a Debug build of this
-  branch and of `origin/main` (`185f20a`) alike — so this is the host's menu
-  bar configuration (Bartender 7 is installed), not this branch. The popover
-  view itself was verified through the preview switch; see the addendum.
 - VoiceOver, Increase Contrast and Reduce Motion by ear/eye. Labels, heading
   traits, values and the Reduce Motion checks are in the code and visible in
   the accessibility tree ("Close details", "Dismiss app update", …), but no
@@ -113,3 +107,11 @@ replaced the running DefenseClawMac instance for the duration.
 - The menu bar shield label is back to plain `Image` / `Text`, as on `main`;
   the spoken-state modifiers added in pass 5 were removed while ruling them
   out as the cause of the missing status item.
+
+## Addendum 2 — real menu bar item
+
+The missing status item was Bartender 7 hiding it. With Bartender stopped,
+the shield ("500") is in the menu bar and System Events reports the status
+menu bar for the process. Clicking it opens the popover; "Acknowledge All…"
+shows the inline confirmation without closing the popover; Cancel restores
+the footer with the count still at 500; clicking the shield again closes it.
